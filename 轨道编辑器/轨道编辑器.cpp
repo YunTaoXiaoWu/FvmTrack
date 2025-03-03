@@ -5,6 +5,7 @@ const char versionString[] = "轨道编辑器%s by -云涛晓雾-";
 
 //1. 编辑器位置常数
 const int wndWidth = 1340, wndHeight = 775;//窗口宽度和高度
+const int tipHeight = 27;//提示高度
 const int recordWndWidth = 262, recordWndHeight = 775;//录制轨道时的新窗口尺寸
 const int maxCommonNum = 260, maxSlotNum = 21, minTime = 1, maxTime = 960;//最大背包容量、卡槽数；最小、最大轨道时间
 const int modeX = 1188, modeY = 30, modeWidth = 112, modeHeight = 45;//选项卡位置
@@ -28,22 +29,22 @@ const int trackSlotX = 40, trackSlotY = trackY, trackSlotWidth = trackX - trackS
 const int pageX = modeX, pageY = mapGridY + 3 * waveHeight + 6 * trackHeight + 20, pageWidth = modeWidth / 4, pageHeight = 30;//翻页框
 const int stackX = modeX, stackY = 332, stackWidth = modeWidth, stackHeight = 31;//堆叠区
 const int moveX = trackSlotX, moveY = 30, moveWidth = 26, moveHeight = 42;//轨道编辑方向键
-const int playerX = 140, playerY = roleSlotY, playerTitleWidth = 40, playerOptionWidth = 60, playerDistance = 480;//[1P]字样宽度；[1P]和[2P]的距离
-
+const int playerX = 140, playerHeight = roleSlotY, playerTitleWidth = 40, playerOptionWidth = 60, playerDistance = 480;//[1P]字样宽度；[1P]和[2P]的距离
+const int skillX = playerX + 2 * playerDistance - 25, skillY = 5, skillWidth = 20, skillHeight = 20;//刷技能勾选框
 //2. 生产信息常数
 const int fireworkYield[17] = { 450, 486, 522, 558, 612, 666, 738, 810, 882, 954, 1098, 1242, 1386, 1602, 1818, 2250, 2700 };//花火龙产值
-const int RabbitFactor[2][17] = {//不转和一转炎焱兔的增幅倍数*100
+const int rabbitFactor[2][17] = {//不转和一转炎焱兔的增幅倍数*100
   { 110, 115, 120, 125, 130, 135, 140, 145, 150, 160, 170, 180, 200, 220, 240, 260, 280 },
   { 140, 145, 150, 155, 160, 165, 170, 175, 180, 190, 200, 210, 230, 250, 270, 290, 310 } };
 int initialEnergy, isDay, InnateFire, InnateCup;//初始火苗，是否为白天，初始小火，初始酒杯
-const int Yield[6][16] = {//产火宝石单轮产量
+const int weaponYield[6][16] = {//产火宝石单轮产量
   { 25, 25, 25, 50, 50, 50, 75, 75, 75, 100, 125, 130, 135, 145, 155, 165 },//回火
   { 20, 25, 30, 40, 50, 60, 69, 78, 90, 120, 180, 200, 220, 240, 260, 280 },//产能
   { 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100, 110, 120, 130, 140, 150 },//生产
   { 6, 12, 18, 24, 30, 36, 48, 60, 72, 96, 120, 130, 140, 150, 160, 180 },//光能
   { 20, 30, 40, 50, 60, 75, 90, 105, 120, 135, 150, 170, 190, 210, 230, 260 },//神佑
   { 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100, 105, 110, 115, 125, 140 } };//转化
-const int Period[6][16] = {//生产间隔
+const int weaponPeriod[6][16] = {//产火宝石生产间隔
   { 40, 40, 35, 40, 35, 30, 35, 30, 20, 20, 15, 15, 15, 15, 15, 15 },//回火
   { 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20 },//产能
   { 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25 },//生产
@@ -77,6 +78,7 @@ const int trackSlotNumPerPage = 13;//每页显示的卡槽数量
 IMAGE imageBackup;//编辑器图像备份
 int commonPage = 1;//防御卡背包当前页数
 int lastClickMessage;//上次鼠标点击信息：单击1xxxxyyyy，右击2xxxxyyyy，无消息0
+char lastTip[200];//上一次显示的提示（用于判断要不要更新提示）
 int isWaveUsed;//按波变阵是否使用过
 HWND hWndEditor;
 HCURSOR crossCursor;//十字光标
@@ -173,9 +175,10 @@ struct RecordType
 char fullTrackPath[2][maxPath];//轨道文件完整路径
 char shortTrackPath[2][maxPath];//轨道文件相对路径
 char trackName[2][maxPath];//轨道文件名
-char tempTrackForSave[maxPath];//保存用的临时临时轨道文件
+char tempTrackForSave[maxPath];//SaveTrack用的临时轨道文件
 int tower[2];//魔塔层数
 int quitTime[2];//退出时间
+bool isSkillMode;//是否刷技能模式
 int roleLocNum[2], roleLoc[2][63];//两个人物的放置次数，人物1/2位置(最多允许放63个)
 int SlotNum[2];//卡槽数
 int realSlotNum[2];//（录制轨道）游戏中识别到的卡槽数
@@ -220,6 +223,7 @@ struct AutoTableType
   char minCard[10];//优化卡片
 };
 AutoTableType autoTable;//自动布轨面板
+
 
 //账号account名称为name的卡在几号卡槽？不在返回-1
 int GetOrder(int account, const char *name)
@@ -439,7 +443,7 @@ void AddRabbit(int account, int order, int rabbitRow, int rabbitColumn)
   for (int row = rabbitRow - radius; row <= rabbitRow + radius; row++)
     for (int column = rabbitColumn - radius; column <= rabbitColumn + radius; column++)
       if (row >= 1 && row <= 7 && column >= 1 && column <= 9)
-        rab.amplify[row][column] = RabbitFactor[isTransfered][slot.star];
+        rab.amplify[row][column] = rabbitFactor[isTransfered][slot.star];
 }
 //使用最近加入的炎焱兔更新增幅表（用于新增炎焱兔时）
 void UpdateLatestRabbit(int account)
@@ -571,14 +575,14 @@ void FillWeaponSpit(int account)
     int yieldStar = i == 5 ? weapon[account][6] : weapon[account][i];
     if (yieldStar == -1)//没有产火宝石则跳过
       continue;
-    int yield = Yield[i][yieldStar];//产量
+    int yield = weaponYield[i][yieldStar];//产量
     if (i == 5) //榴弹炮根据榴弹类型计算产量
       yield *= weapon[account][7];
     else if (i == 0 && GetRoleNum() == 2)//回火宝石双人模式衰减
       yield = yield * 3 / 5;
 
     int periodStar = weapon[account][i];//决定周期的宝石星级
-    int period = (periodStar == -1) ? 20 : Period[i][periodStar];//生产周期（榴弹无疾风为20秒）
+    int period = (periodStar == -1) ? 20 : weaponPeriod[i][periodStar];//生产周期（榴弹无疾风为20秒）
     int offset = i == 5 ? 3 : 0;//风化要多等3秒才能砸出火，其余武器都是在周期整数倍吐火
     FillSingleWeaponSpit(account, yield, period, offset);
   }
@@ -1239,8 +1243,8 @@ int MapX = 302, MapY = 105, MapWidth = 60, MapHeight = 64;//地图1行1列横、
 int ExitCount;//计数达到3结束录制
 /*图像显示*/
 int isMapCatched = 1;//是否已经抓取地图
-IMAGE MapImage;//地图图像
-int IsMapImageCatched;//地图图像是否已经载入
+IMAGE mapImage;//地图图像
+int isMapImageCatched;//地图图像是否已经载入
 
 const int maxBackupNum = 256;
 char backupList[maxBackupNum][maxPath];
@@ -1252,16 +1256,15 @@ void ClearBackup()
   {
     char direct[maxPath];
     sprintf_s(direct, "自动备份\\轨道文件\\%s\\", backupList[order]);
-    ClearDirect(direct, ".txt");
-    RemoveDirectory(direct);
+    DeleteFolder(direct);
   }
 }
+//清理本编辑器的自动备份文件夹
 void ClearThisBackup()
 {
   char direct[maxPath];
   sprintf_s(direct, "自动备份\\轨道文件\\%s\\", runTimeString);
-  ClearDirect(direct, ".txt");
-  RemoveDirectory(direct);
+  DeleteFolder(direct);
 }
 /*自动转化函数*/
 int TransformStopSignal;//自动转化结束信号，1=结束程序
@@ -1283,10 +1286,10 @@ DWORD __stdcall AutoTransform(void *Title)//自动转化（无参数）
   return 0;
 }
 /*对话框函数*/
-struct INPUTBOXPARAMS
+struct InputBoxParam
 {
-  char *dest;
-  const char *prompt, *title, *defaultStr;//输入对象，提示语，标题，初始文本
+  char *dest;//输入对象
+  const char *prompt, *title, *defaultStr;//提示语，标题，初始文本
   int maxLength;//最大长度
 };
 //输入框过程函数
@@ -1296,7 +1299,7 @@ INT_PTR CALLBACK InputDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
   {
   case WM_INITDIALOG:
   {
-    INPUTBOXPARAMS *params = (INPUTBOXPARAMS *)lParam;// 获取传入的参数
+    InputBoxParam *params = (InputBoxParam *)lParam;// 获取传入的参数
     //设置输入框位置
     RECT Desktop, Dialog;
     GetWindowRect(GetDesktopWindow(), &Desktop);
@@ -1320,11 +1323,11 @@ INT_PTR CALLBACK InputDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     {
       KillTimer(hDlg, 1);// 第一次处理就销毁定时器
       // 获取文本编辑框的句柄
-      HWND hwndEdit = GetDlgItem(hDlg, IDC_EDIT1);
-      if (hwndEdit != NULL)
+      HWND hEdit = GetDlgItem(hDlg, IDC_EDIT1);
+      if (hEdit != NULL)
       {
-        SetFocus(hwndEdit);// 设置焦点到文本编辑框
-        SendMessage(hwndEdit, EM_SETSEL, 0, -1);// 选中文本编辑框中的所有文本
+        SetFocus(hEdit);// 设置焦点到文本编辑框
+        SendMessage(hEdit, EM_SETSEL, 0, -1);// 选中文本编辑框中的所有文本
       }
     }
     break;
@@ -1332,7 +1335,7 @@ INT_PTR CALLBACK InputDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
     {
       // 获取编辑框中的内容
-      INPUTBOXPARAMS *params = (INPUTBOXPARAMS *)GetWindowLongPtr(hDlg, DWLP_USER);
+      InputBoxParam *params = (InputBoxParam *)GetWindowLongPtr(hDlg, DWLP_USER);
       GetDlgItemText(hDlg, IDC_EDIT1, params->dest, params->maxLength);
       EndDialog(hDlg, IDOK);// 结束对话框
       return TRUE;
@@ -1529,7 +1532,7 @@ char itemName[maxItemNum][10] = {};//图像名称
 void LoadItem()
 {
   char path[maxPath] = {};
-  int filesNum = GetFileList("用户参数\\自定图像\\*.bmp", itemList, maxItemNum);//查找所有bmp文件
+  int filesNum = GetFileList("用户参数\\自定图像\\*.png", itemList, maxItemNum);//查找所有png文件
   itemNum = 0;
   for (int i = 0; i < filesNum && i < maxItemNum; i++)
   {
@@ -1847,9 +1850,10 @@ int DragDialog(const char *path)
     hWndEditor, DragDialogProc, (LPARAM)path);
 }
 // 自定义的InputBox函数
-int NewInputBox(char *dest, int maxLength = maxPath, const char *prompt = "", const char *title = "输入", char *defaultStr = "")
+int NewInputBox(char *dest, int maxLength = maxPath, const char *prompt = "",
+  const char *title = "输入", const char *defaultStr = "")
 {
-  INPUTBOXPARAMS params = {}; //显示对话框并传递参数
+  InputBoxParam params = {}; //显示对话框并传递参数
   params.dest = dest;
   params.prompt = prompt;
   params.title = title;
@@ -1885,9 +1889,9 @@ int InputNum(int *pNum, int mininum, int maximun, const char *prompt = "", const
   }
   return 0;//取消输入
 }
-//输入字符串到dest，直到满足范围Min~Max为止。输入成功则返回1，否则返回0
+//输入字符串到dest，直到isLegal(输入)为真。输入成功则返回1，否则返回0
 template <size_t size>
-int InputString(char(&dest)[size], int isLegal(const char *str), const char *prompt = "", const char *title = "输入")
+int InputWaveString(char(&dest)[size], int isLegal(const char *str), const char *prompt = "", const char *title = "输入")
 {
   char illegalPrompt[500];//输入不规范的提示
   sprintf_s(illegalPrompt, "您的输入不规范，请重新输入（示例：1.5）。\n%s", prompt);
@@ -1895,7 +1899,7 @@ int InputString(char(&dest)[size], int isLegal(const char *str), const char *pro
   sprintf_s(existPrompt, "您输入的波次已存在，请重新输入。\n%s", prompt);
   const char *errorPrompt[2] = { illegalPrompt, existPrompt };//错误提示
 
-  char destCopy[11] = {};
+  char destCopy[100] = {};
   strcpy_s(destCopy, dest);//初始文本：自然数的原值
 
   int inputButton = NewInputBox(destCopy, size, prompt, title, destCopy);//输入文本到destCopy
@@ -2020,9 +2024,10 @@ int GetArea(int originX, int originY)
       return 40;//40：添加2P轨道指令
   }
 
-  int row, column, width, height, level, common;
-  int x = (int)(originX / ratio);
-  int y = (int)(originY / ratio);
+  int x = (int)(originX / ratio + 0.5);
+  int y = (int)(originY / ratio + 0.5);
+  if (x < 0 || y < 0 || x >= wndWidth || y >= wndHeight)
+    return 0;
 
   if (x >= modeX && x < modeX + modeWidth && y >= modeY && y < modeY + 2 * modeHeight)//切换模式
   {
@@ -2040,11 +2045,9 @@ int GetArea(int originX, int originY)
 
   if (mode == 1)//阵型编辑模式
   {
-    if (x >= modeX && x < modeX + modeWidth && y >= modeY + modeHeight && y < modeY + 2 * modeHeight)
-      return 2;//轨道编辑切换按钮
     if (x >= bagOptionX && x < bagOptionX + 2 * bagOptionWidth && y >= bagOptionY && y < bagOptionY + bagOptionHeight)
       return 10 + (x - bagOptionX) / bagOptionWidth;//10=防御卡背包，11=生产信息
-    if (x >= playerX && x < playerX + accountNum * playerDistance && y < playerY) //1P/2P轨道切换
+    if (x >= playerX && x < playerX + accountNum * playerDistance && y < playerHeight) //1P/2P轨道切换
     {
       int account = (x - playerX) / playerDistance;
       int dx = x - playerX - account * playerDistance;
@@ -2053,12 +2056,15 @@ int GetArea(int originX, int originY)
       else
         return 30 + account;//复制xP路径
     }
-    if (accountNum == 1 && x >= playerX + playerDistance && x < playerX + playerDistance + 110 && y < playerY)
+    if (accountNum == 1 && x >= playerX + playerDistance && x < playerX + playerDistance + 110 && y < playerHeight)
       return 40; //添加2P
-    if (accountNum == 2 && x >= playerX + 2 * playerDistance && x < playerX + 2 * playerDistance + playerOptionWidth && y < playerY) //1P/2P轨道切换
+    if (accountNum == 2 && x >= playerX + 2 * playerDistance && x < playerX + 2 * playerDistance + playerOptionWidth && y < playerHeight) //1P/2P轨道切换
       return 50; //移除2P
     if (x >= roleSlotX && x < roleSlotX + 16 * roleSlotWidth && y >= mapGridY + 7 * mapGridHeight)
       return 60; //编辑注释
+    if (accountNum == 1 && x >= skillX && x < skillX + skillWidth && y >= skillY
+      && y < skillY + skillHeight)
+      return 70; //刷技能勾选框
     if (x >= mapSlotX && x < mapSlotX + 15 * mapSlotWidth && y >= mapSlotY && y < mapSlotY + mapSlotHeight)
     {
       int n = (x - mapSlotX) / mapSlotWidth;
@@ -2087,11 +2093,11 @@ int GetArea(int originX, int originY)
     {
       if (x >= bagX && x < bagX + 2 * bagWidth && y >= bagY && y < bagY + 14 * bagHeight)
       {
-        row = (y - bagY) / bagHeight;
-        column = (x - bagX) / bagWidth;
-        common = row * 2 + column;
+        int row = (y - bagY) / bagHeight;
+        int column = (x - bagX) / bagWidth;
+        int common = row * 2 + column;
         int result = 200 + row * 2 + column;//200-225=常用卡组，226=新增卡片
-        if (result == 227)
+        if (result == 227) //227=背包向左翻页 228=背包向右翻页
         {
           if (x - bagX - bagWidth < 18)
             return 227;
@@ -2157,26 +2163,37 @@ int GetArea(int originX, int originY)
       return 800 + (y - stackY) / stackHeight;//800-808=深度0-8
     if (x >= stackX && x < stackX + stackWidth && y >= stackY + maxViewStack * stackHeight && y < stackY + 10 * stackHeight)
     {
-      if (x <= stackX + stackWidth / 3) return 809;
-      else if (x >= stackX + stackWidth - stackWidth / 3) return 811;
-      else return 810;
+      if (x <= stackX + stackWidth / 3)
+        return 809;
+      else if (x >= stackX + stackWidth - stackWidth / 3)
+        return 811;
+      else
+        return 810;
     }
     if (x >= mapGridX && x < mapGridX + 9 * mapGridWidth && y >= mapGridY && y < mapGridY + 7 * mapGridHeight)
     {
-      row = (y - mapGridY) / mapGridHeight;
-      column = (x - mapGridX) / mapGridWidth;
-      height = y - mapGridY - row * mapGridHeight;//剩余高度
-      width = x - mapGridX - column * mapGridWidth;//剩余宽度
+      int row = (y - mapGridY) / mapGridHeight;
+      int column = (x - mapGridX) / mapGridWidth;
+      int height = y - mapGridY - row * mapGridHeight;//剩余高度
+      int width = x - mapGridX - column * mapGridWidth;//剩余宽度
+      int level = 0;
       if (height <= 9)//最上层
       {
-        if (width < 10) level = 6;//左：幻鸡
-        else if (width < 25) level = 0;//中：铲子
-        else level = 5;//右：冷却层
+        if (width < 10)
+          level = 6;//左：幻鸡
+        else if (width < 25)
+          level = 0;//中：铲子
+        else
+          level = 5;//右：冷却层
       }
-      else if (height <= 28) level = 4;//第二：升级层
-      else if (height <= 47) level = 3;//第三：主层
-      else if (height <= 66) level = 2;//第四：护罩层
-      else level = 1;//最下：承载层
+      else if (height <= 28)
+        level = 4;//第二：升级层
+      else if (height <= 47)
+        level = 3;//第三：主层
+      else if (height <= 66)
+        level = 2;//第四：护罩层
+      else
+        level = 1;//最下：承载层
       return 1011 + level * 100 + row * 10 + column;//1x11-1x79=地图（x=层级）
     }
     return 0;//不属于上述情况，视为空白区，返回0
@@ -2185,16 +2202,19 @@ int GetArea(int originX, int originY)
   {
     if (x >= modeX && x < modeX + modeWidth && y >= modeY && y < modeY + modeHeight)
       return 1;//阵型编辑切换按钮
-    if (x >= playerX && x < playerX + accountNum * playerDistance && y < playerY) //1P/2P轨道切换
+    if (x >= playerX && x < playerX + accountNum * playerDistance && y < playerHeight) //1P/2P轨道切换
     {
       int account = (x - playerX) / playerDistance;
       int dx = x - playerX - account * playerDistance;
       if (dx < playerTitleWidth)
         return 20 + account;//选择xP
+      else
+        return 30 + account;//xP火苗显示
     }
-    if (accountNum == 1 && x >= playerX + playerDistance && x < playerX + playerDistance + 110 && y < playerY)
+
+    if (accountNum == 1 && x >= playerX + playerDistance && x < playerX + playerDistance + 110 && y < playerHeight)
       return 40; //添加2P
-    if (accountNum == 2 && x >= playerX + 2 * playerDistance && x < playerX + 2 * playerDistance + playerOptionWidth && y < playerY) //1P/2P轨道切换
+    if (accountNum == 2 && x >= playerX + 2 * playerDistance && x < playerX + 2 * playerDistance + playerOptionWidth && y < playerHeight) //1P/2P轨道切换
       return 50; //移除2P
     //轨道卡槽
     if (x >= trackSlotX && x < trackSlotX + trackSlotWidth
@@ -2227,6 +2247,8 @@ int GetArea(int originX, int originY)
       int n = (y - buttonY) / buttonHeight;
       return 612 + n;
     }
+    if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
+      return 700 + (y - undoY) / undoHeight;//700=撤销，701=恢复
     if (x >= pageX && x < pageX + 4 * pageWidth && y >= pageY && y < pageY + 4 * pageHeight)
       return 801 + (y - pageY) / pageHeight * 4 + (x - pageX) / pageWidth;//801-810=翻页按钮
     if (x >= moveX && x < moveX + 3 * moveWidth && y >= moveY && y < moveY + moveHeight)
@@ -2242,9 +2264,7 @@ int GetArea(int originX, int originY)
       if (n == 1)
         return 903;//902-903=上下
     }
-    if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
-      return 700 + (y - undoY) / undoHeight;//700=撤销，701=恢复
-    if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= zero && y < trackY - trackHeight)
+    if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= playerHeight && y < trackY - trackHeight)
       return 2000 + (x - trackX) / timelineWidth;//2000-2600=时间轴
     if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= trackY - trackHeight && y < trackY + (min(SlotNum[curAccount], trackSlotNumPerPage) + 1) * trackHeight)
     {
@@ -2378,30 +2398,41 @@ void ChangeSlot(int account, int order, int common)//将卡槽与常用卡组对
   Slot[account][order].sunNum = bag[account][common].sunNum;
   Slot[account][order].transfer = bag[account][common].transfer;
 }
-void ExchangeSlot(int account, int a, int b)//交换两个卡槽的卡片（不涉及地图信息的修改）
+//交换两个卡槽的卡片（不涉及地图信息的修改）
+void ExchangeSlot(int account, int order0, int order1)
 {
-  SlotType TempSlot = Slot[account][a];
-  Slot[account][a] = Slot[account][b];
-  Slot[account][b] = TempSlot;
+  SlotType tempSlot = Slot[account][order0];
+  Slot[account][order0] = Slot[account][order1];
+  Slot[account][order1] = tempSlot;
   int temp;
   for (int times = 0; times <= maxPlantTimes; times++)
   {
-    temp = Loc[account][a][times];
-    Loc[account][a][times] = Loc[account][b][times];
-    Loc[account][b][times] = temp;
+    temp = Loc[account][order0][times];
+    Loc[account][order0][times] = Loc[account][order1][times];
+    Loc[account][order1][times] = temp;
   }
   for (int times = 0; times <= maxPlantTimes; times++)
   {
-    temp = Moment[account][a][times];
-    Moment[account][a][times] = Moment[account][b][times];
-    Moment[account][b][times] = temp;
+    temp = Moment[account][order0][times];
+    Moment[account][order0][times] = Moment[account][order1][times];
+    Moment[account][order1][times] = temp;
   }
   for (int t = 0; t <= maxTime; t++)
   {
-    temp = Track[account][a][t];
-    Track[account][a][t] = Track[account][b][t];
-    Track[account][b][t] = temp;
+    temp = Track[account][order0][t];
+    Track[account][order0][t] = Track[account][order1][t];
+    Track[account][order1][t] = temp;
   }
+}
+//将卡槽order0插入到order1位置
+void InsertSlot(int account, int order0, int order1)
+{
+  if (order0 < order1)
+    for (int order = order0; order < order1; order++)
+      ExchangeSlot(account, order, order + 1);
+  else
+    for (int order = order0; order > order1; order--)
+      ExchangeSlot(account, order, order - 1);
 }
 //写入错误信息到info，返回出错的行数line
 int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *content, const char *tip)
@@ -2409,46 +2440,45 @@ int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *cont
   fclose(f);//关闭文件
   if (path == NULL) //没有填写path，则不需要记录info
     return line;
-  int Maxlen = 20;
-  char ShortPath[100], ShortContent[100];
-  int len = strlen(path);
-  if (len > Maxlen)
+  int maxlen = 20;
+  char shortPath[100], shortContent[100];
+  int length = strlen(path);
+  if (length > maxlen)
   {
-    if (IsChineseSecond(path, len - Maxlen))
-      sprintf_s(ShortPath, "...%s", path + len - Maxlen + 1);//只显示最后39字节
+    if (IsChineseSecond(path, length - maxlen))
+      sprintf_s(shortPath, "...%s", path + length - maxlen + 1);//只显示最后39字节
     else
-      sprintf_s(ShortPath, "...%s", path + len - Maxlen);//显示最后40字节
+      sprintf_s(shortPath, "...%s", path + length - maxlen);//显示最后40字节
   }
   else
-    strcpy_s(ShortPath, path);//完整显示
-  len = strlen(content);
-  if (len > Maxlen)
+    strcpy_s(shortPath, path);//完整显示
+  length = strlen(content);
+  if (length > maxlen)
   {
-    if (IsChineseFirst(content, Maxlen - 1))
+    if (IsChineseFirst(content, maxlen - 1))
     {
-      strncpy_s(ShortContent, content, Maxlen - 1);
-      ShortContent[Maxlen - 1] = 0;
+      strncpy_s(shortContent, content, maxlen - 1);
+      shortContent[maxlen - 1] = 0;
     }
     else
     {
-      strncpy_s(ShortContent, content, Maxlen);
-      ShortContent[Maxlen] = 0;
+      strncpy_s(shortContent, content, maxlen);
+      shortContent[maxlen] = 0;
     }
-    strcat_s(ShortContent, "...");
+    strcat_s(shortContent, "...");
   }
   else
-    strcpy_s(ShortContent, content);
+    strcpy_s(shortContent, content);
 
-  for (size_t i = 0; i < strlen(ShortContent); i++) //tab改空格
-  {
-    if (ShortContent[i] == '\t')
-      ShortContent[i] = ' ';
-  }
+  size_t len = strlen(shortContent);
+  for (size_t i = 0; i < len; i++) //tab改空格
+    if (shortContent[i] == '\t')
+      shortContent[i] = ' ';
 
   if (tip == NULL)
-    sprintf_s(info, "文件【%s】\n第%d行出错：%s\n请修改或删除该文件后重试。", ShortPath, line, ShortContent);
+    sprintf_s(info, "文件【%s】\n第%d行出错：%s\n请修改或删除该文件后重试。", shortPath, line, shortContent);
   else
-    sprintf_s(info, "文件【%s】\n第%d行出错：%s\n（%s）\n请修改或删除该文件后重试。", ShortPath, line, ShortContent, tip);
+    sprintf_s(info, "文件【%s】\n第%d行出错：%s\n（%s）\n请修改或删除该文件后重试。", shortPath, line, shortContent, tip);
   return line;
 }
 //检查账号account的轨道文件有哪些波次，填写WaveExist。
@@ -2496,6 +2526,9 @@ void ClearWave(int account)
   Slot[account][0] = shovel;//卡槽0设为铲子
   Slot[account][maxSlotNum + 1] = jewel;//最后一个卡槽设为宝石
 }
+//bool isWaterUsed;//开水壶是否使用过
+//bool isPuddingUsed;//布丁是否使用过
+//bool isPuddingInSlot12;
 //从文件当前位置读取波次信息到账号account的内存中，指定读取slotNum张卡片。返回出错的行数
 int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &line, char(&info)[1000])
 {
@@ -2734,6 +2767,17 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
       }
       name = strtok_s(NULL, "\t", &nextName);
     }
+
+    ////开水壶开启了极限成阵或有轨道，视为使用过
+    //if (strcmp(slot.name, "开水壶") == 0 && (slot.limit || Moment[account][order][1]))
+    //  isWaterUsed = true;
+
+    ////布丁开启了极限成阵，或有轨道，视为使用过
+    //if (strcmp(slot.name, "布丁") == 0 && (slot.limit || Moment[account][order][1]))
+    //  isPuddingUsed = true;
+
+    //if (strcmp(slot.name, "布丁") == 0 && order == 12)
+    //  isPuddingInSlot12 = true;
   }
   return 0;
 }
@@ -2761,7 +2805,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   SlotNum[account] = 0;//预设参数和状态清零
   tower[account] = 0;
 
-  if (_access(path, 0) != zero)//如果文件不存在，则不进行读取
+  if (!FileExist(path))//如果文件不存在，则不进行读取
   {
     strcpy_s(info, "轨道文件不存在。");
     return -1;
@@ -2873,6 +2917,14 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   {
     if (quitTime[account] < zero || quitTime[account] > 960)
       return WriteInfo(info, f, path, line, s, "退出时间范围为0~960");
+    fgets(f, s);
+    line++;
+  }
+
+  //读取刷技能模式
+  if (strstr(s, "刷技能模式=") == s)
+  {
+    isSkillMode = atoi(s + 11) != 0;
     fgets(f, s);
     line++;
   }
@@ -3083,16 +3135,25 @@ void SaveHead(int account, FILE *fout, int SlotNumVariation = 0)
   }
   fprintf(fout, "魔塔层数=%d\n", tower[account]);
   fprintf(fout, "退出时间=%d\n", quitTime[account]);
+  fprintf(fout, "刷技能模式=%d\n", isSkillMode ? 1 : 0);
   fprintf(fout, "卡槽数=%d\n", SlotNum[account] + SlotNumVariation);
 }
-#define ADD_TO_SLOT 0
-#define DELETE_FROM_SLOT 1
-#define EXCHANGE_SLOT 2
-#define CHANGE_SLOT 3
+//提示轨道文件已删除或移动，然后退出程序
+void ReportNoTrack()
+{
+  PopMessage(hWndEditor, "轨道文件已删除或移动，\n请重新打开该文件再操作。");
+  exit(0);
+}
+const int ADD_TO_SLOT = 0;
+const int DELETE_FROM_SLOT = 1;
+const int EXCHANGE_SLOT = 2;
+const int CHANGE_SLOT = 3;
+const int INSERT_SLOT = 4;
 //四大卡槽修改操作 operation: 0=AddToSlot,1=DeleteFromSlot,2=ExchangeSlot,3=ChangeSlot
 void SlotOperation(int account, int operation, int para1, int para2 = 0)
 {
-  Copy(fullTrackPath[account], tempTrackForSave);//当前轨道复制到临时文件
+  if (!Copy(fullTrackPath[account], tempTrackForSave)) //当前轨道复制到临时文件
+    ReportNoTrack();
   FILE *fin, *fout;
   fopen_s(&fin, tempTrackForSave, "r");//输入轨道：复制的临时文件
   fopen_s(&fout, fullTrackPath[account], "w");//输出轨道：TrackFile[account]
@@ -3122,11 +3183,12 @@ void SlotOperation(int account, int operation, int para1, int para2 = 0)
         DeleteFromSlot(account, para1);
       else if (operation == EXCHANGE_SLOT)
         ExchangeSlot(account, para1, para2);
+      else if (operation == INSERT_SLOT)
+        InsertSlot(account, para1, para2);
       else if (operation == CHANGE_SLOT)
         ChangeSlot(account, para1, para2);
       SaveCurrentWave(account, fout);//写入波次信息
     }
-
   fclose(fin);
   fclose(fout);
   remove(tempTrackForSave);
@@ -3149,20 +3211,22 @@ void ExchangeSlot_File(int account, int order1, int order2)
 {
   SlotOperation(account, EXCHANGE_SLOT, order1, order2);
 }
+//在轨道文件中连续交换卡槽
+void InsertSlot_File(int account, int order1, int order2)
+{
+  SlotOperation(account, INSERT_SLOT, order1, order2);
+}
 //在轨道文件中替换卡槽
 void ChangeSlot_File(int account, int order, int common)
 {
   SlotOperation(account, CHANGE_SLOT, order, common);
   SelectDepth(1);//选中最高深度
 }
-#undef ADD_TO_SLOT
-#undef DELETE_FROM_SLOT
-#undef EXCHANGE_SLOT
-#undef CHANGE_SLOT
 //保存当前波次轨道
 void SaveTrackTo(int account, char *path)
 {
-  Copy(fullTrackPath[account], tempTrackForSave);//当前轨道复制到临时文件
+  if (!Copy(fullTrackPath[account], tempTrackForSave)) //当前轨道复制到临时文件
+    ReportNoTrack();
   FILE *fin, *fout;
   fopen_s(&fin, tempTrackForSave, "r");//输入轨道：复制的临时文件
   fopen_s(&fout, path, "w");//输出轨道：path
@@ -3315,7 +3379,8 @@ void Repeat()
 //波次操作（operation 0=创建 1=复制 2=删除）
 void WaveOperation(int account, int targetTotalWave, int operation)
 {
-  Copy(fullTrackPath[account], tempTrackForSave);//当前轨道复制到临时文件
+  if (!Copy(fullTrackPath[account], tempTrackForSave)) //当前轨道复制到临时文件
+    ReportNoTrack();
   FILE *fin, *fout;
   fopen_s(&fin, tempTrackForSave, "r");//输入轨道：复制的临时文件
   fopen_s(&fout, fullTrackPath[account], "w");//输出轨道：TrackFile[account]
@@ -3393,8 +3458,14 @@ void CopyWave(int account, int targetTotalWave)
 {
   if (curTotalWave[account] == targetTotalWave)
     return; //不允许原地复制
+
+  //继承信息是否需要删除
+  bool isRetainCleared = (curTotalWave[account] == 0 && targetTotalWave > 0)
+    || (curTotalWave[account] > 0 && targetTotalWave == 0);
+
   WaveOperation(account, targetTotalWave, 1);
-  if (targetTotalWave == 0) //目标波次为第0波，删除继承信息
+
+  if (isRetainCleared) //删除继承信息
     for (int order = 0; order <= maxSlotNum + 1; order++)
       Slot[account][order].retain = 0;
 }
@@ -3410,10 +3481,16 @@ void MoveWave(int account, int targetTotalWave)
 {
   if (curTotalWave[account] == 0 || curTotalWave[account] == targetTotalWave)
     return; //不允许移动第0波，也不允许原地移动
-  int originTotalWave = curTotalWave[account];
+
+  //继承信息是否需要删除
+  bool isRetainCleared = (curTotalWave[account] == 0 && targetTotalWave > 0)
+    || (curTotalWave[account] > 0 && targetTotalWave == 0);
+
+  int oldTotalWave = curTotalWave[account];
   CopyWave(account, targetTotalWave);
-  DeleteWave(account, originTotalWave);
-  if (targetTotalWave == 0) //目标波次为第0波，删除继承信息
+  DeleteWave(account, oldTotalWave);
+
+  if (isRetainCleared)  //删除继承信息
     for (int order = 0; order <= maxSlotNum + 1; order++)
       Slot[account][order].retain = 0;
 }
@@ -3810,7 +3887,7 @@ void SaveProduction()//保存生产信息
 void ViewZoom()
 {
   settextcolor(RGB(255, 255, 255));
-  PrintHorizontalAdjustButton(zoomX, zoomY, zoomWidth, zoomHeight); //显示缩放比例
+  PaintHorizontalAdjust(zoomX, zoomY, zoomWidth, zoomHeight); //显示缩放比例
   char zoomString[10];
   sprintf_s(zoomString, "%d %%", zoom);
   CenterView(zoomString, zoomX + zoomWidth / 2, zoomY + zoomHeight / 2);
@@ -3832,8 +3909,8 @@ void ViewMode()
 }
 void ViewMapSlotCard(int order)//显示卡槽卡片
 {
-  int size;
   int left, top;
+  COLORREF slotColor = levelColor[Slot[curAccount][order].level];//卡片颜色
   if (order <= 14)
   {
     left = mapSlotX + order * mapSlotWidth;
@@ -3852,19 +3929,29 @@ void ViewMapSlotCard(int order)//显示卡槽卡片
     settextcolor(RGB(255, 0, 0));
   }
   else
-    settextcolor(levelColor[Slot[curAccount][order].level]);
+    settextcolor(slotColor);
 
+  //显示卡槽序号
   CenterView(order, left + mapSlotWidth / 2 - 20, top + mapSlotHeight / 2 - 30);
+  //显示卡片名称
   CenterView(Slot[curAccount][order].name, left + mapSlotWidth / 2, top + mapSlotHeight / 2);
-  char cdstr[10];
-  sprintf_s(cdstr, "%ds", Slot[curAccount][order].cd);
-  CenterView(cdstr, left + mapSlotWidth / 2, top + mapSlotHeight / 2 + 30);
-  size = GetFontSize();
+  //显示卡片CD
+  char cdString[10];
+  sprintf_s(cdString, "%ds", Slot[curAccount][order].cd);
+  CenterView(cdString, left + mapSlotWidth / 2, top + mapSlotHeight / 2 + 30);
+
+  //显示补阵和索敌
+  int size = GetFontSize();
   SetFontSize(16);
-  if (Slot[curAccount][order].repair == 1)
-    CenterView("补", left + mapSlotWidth / 2 + 22, top + 14);
-  if (Slot[curAccount][order].search == 1)
-    CenterView("索", left + mapSlotWidth / 2 + 6, top + 14);
+
+  COLORREF currentColor = gettextcolor();
+
+  settextcolor(Slot[curAccount][order].repair ? currentColor : RGB(128, 128, 128));
+  CenterView("补", left + mapSlotWidth / 2 + 22, top + 14);
+
+  settextcolor(Slot[curAccount][order].search ? currentColor : RGB(128, 128, 128));
+  CenterView("索", left + mapSlotWidth / 2 + 6, top + 14);
+
   SetFontSize(size);
 }
 void ViewRoleSlot()//显示人物槽
@@ -3939,7 +4026,7 @@ void ViewCommonCard()//显示全部常用卡片
   int MaxCommonPage = (bagNum[curAccount] - 1) / 26 + 1;
   sprintf_s(PageString, "%d/%d", commonPage, MaxCommonPage);
   CenterView(PageString, bagX + 3 * bagWidth / 2, bagY + 27 * bagHeight / 2);
-  PrintHorizontalAdjustButton(bagX + bagWidth, bagY + 13 * bagHeight, bagWidth, bagHeight);
+  PaintHorizontalAdjust(bagX + bagWidth, bagY + 13 * bagHeight, bagWidth, bagHeight);
 }
 //根据isDark计算暗化颜色
 COLORREF DarkColor(COLORREF origin, int isDark)
@@ -4002,7 +4089,8 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
   }
   /*对幻幻鸡的特殊处理：先查询其复制的卡牌和层级，再执行显示*/
   if (level == 6) //如果是幻鸡层级，左上角显示蓝色实心圆点，空层级时显示空心圆点
-  {//只有模仿层级没有普通卡时，才显示幻幻鸡。
+  {
+    //只有模仿层级没有普通卡时，才显示幻幻鸡。
     if (DepthSelected == depth + 1) //如果选中了最高深度上面的空深度
       rectangle(mapGridX + (column - 1) * mapGridWidth + 2, mapGridY + (row - 1) * mapGridHeight + 2, mapGridX + (column - 1) * mapGridWidth + 8, mapGridY + (row - 1) * mapGridHeight + 8);
     else
@@ -4167,9 +4255,9 @@ void ViewTrackSlotCard(int order)//显示轨道卡片
     settextcolor(levelColor[Slot[curAccount][order].level]);
   /*卡片名称、冷却、编号*/
   CenterView(Slot[curAccount][order].name, trackSlotX + trackSlotWidth / 2 - 19, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 1);
-  char CdString[10];
-  sprintf_s(CdString, "%ds", Slot[curAccount][order].cd);
-  CenterView(CdString, trackSlotX + trackSlotWidth / 2 + 35, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 1);
+  char cdString[10];
+  sprintf_s(cdString, "%ds", Slot[curAccount][order].cd);
+  CenterView(cdString, trackSlotX + trackSlotWidth / 2 + 35, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 1);
   int size = GetFontSize();
   SetFontSize(14);
   if (order == maxSlotNum + 1)
@@ -4188,19 +4276,20 @@ void ViewTrackSlotCard(int order)//显示轨道卡片
     CenterView(Message, trackSlotX - textwidth(Message) / 2 - 5, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 9);
   }
 
+  COLORREF currentColor = gettextcolor();
   SetFontSize(size);
 
-  if (Slot[curAccount][order].lock == 1) //如果该卡片开启了锁定轨道
-    CenterView("×", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 - 14);
-  if (Slot[curAccount][order].limit == 1) //如果该卡片开启了极限补阵
-    CenterView("∞", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
-  if (Slot[curAccount][order].independent == 1) //如果该卡片开启了独立计时
-  {
-    size = GetFontSize();
-    SetFontSize(16);
-    CenterView("in", trackSlotX + 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
-    SetFontSize(size);
-  }
+  settextcolor(Slot[curAccount][order].lock ? currentColor : RGB(128, 128, 128));
+  CenterView("×", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 - 14);
+
+  settextcolor(Slot[curAccount][order].limit ? currentColor : RGB(128, 128, 128));
+  CenterView("∞", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
+
+  size = GetFontSize();
+  SetFontSize(16);
+  settextcolor(Slot[curAccount][order].independent ? currentColor : RGB(128, 128, 128));
+  CenterView("in", trackSlotX + 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
+  SetFontSize(size);
 }
 void ViewTrackSlotCard()//显示全部轨道卡片
 {
@@ -4456,7 +4545,7 @@ void ViewTrack()
     int floor = order > maxSlotNum ? -1 : order - firstTrackSlot;//宝石（22号槽）显示位置为-1
     if (Slot[curAccount][order].retain == 1)
     {
-      char retainString[30] = "无效继承";
+      char retainString[30] = "使用默认轨道";
       if (curTotalWave[curAccount] > 0)
       {
         int totalWaveRetained = 0;//被继承的波次
@@ -4567,14 +4656,6 @@ void ViewPage()
     }
   SetFontSize(size);
 }
-//绘制靶形光标
-void PaintTargetCursor(int cx, int cy)
-{
-  circle(cx, cy, 8);
-  circle(cx, cy, 4);
-  line(cx - 8, cy, cx + 8, cy);
-  line(cx, cy - 8, cx, cy + 8);
-}
 //显示波次区
 void ViewWave()
 {
@@ -4629,7 +4710,7 @@ void ViewMapButtons()
   settextcolor(RGB(255, 255, 255));
   CenterView("地图", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
   PaintTargetCursor(buttonX + 12, buttonY + buttonHeight / 2);
-  if (IsMapImageCatched == 1)
+  if (isMapImageCatched == 1)
     CenterView("×", buttonX + buttonWidth - 12, buttonY + buttonHeight / 2);
 }
 void ViewMove()
@@ -4652,20 +4733,24 @@ void ViewMove()
   settextstyle(&Font);
   SetFontSize(size);
 }
-void ViewDebugInfo()
+//显示顶部信息（1P/2P轨道路径和火苗）
+void ViewTopInfo()
 {
-  char Message[1000];
-
+  char message[1000];
   settextcolor(RGB(255, 255, 255));
-  if (accountNum == 1)
+  if (accountNum == 1) //单轨模式显示“添加2P轨道”和“刷技能”
+  {
     outtextxy(playerX + playerDistance, 5, "[添加2P轨道]");
+    outtextxy(playerX + 2 * playerDistance, 5, "刷技能");
+    PaintCheckBox(skillX, skillY, skillWidth, skillHeight, 0);
+    if (isSkillMode)
+      PaintCheck(skillX, skillY, skillWidth, skillHeight, 0);
+  }
   else
     CenterView("[移除]", playerX + playerDistance * 2 + playerOptionWidth / 2, 15);
 
   if (mode == 1)
   {
-    sprintf_s(Message, "注释：%s", notation[curAccount]);
-    outtextxy(roleSlotX, wndHeight - 27, Message);
     outtextxy(roleSlotX, 5, "轨道路径：");
     for (int account = 0; account < accountNum; account++)
     {
@@ -4673,18 +4758,18 @@ void ViewDebugInfo()
         settextcolor(RGB(255, 0, 0));
       else
         settextcolor(RGB(255, 255, 255));
-      sprintf_s(Message, "[%dP]", account + 1);
-      outtextxy(playerX + playerDistance * account, 5, Message);
+      sprintf_s(message, "[%dP]", account + 1);
+      outtextxy(playerX + playerDistance * account, 5, message);
       settextcolor(RGB(255, 255, 255));
       GetShortPath(fullTrackPath[account], shortTrackPath[account]);//获取相对路径
-      TruncateString(Message, shortTrackPath[account], playerDistance - playerTitleWidth - 20);
-      outtextxy(playerX + playerDistance * account + playerTitleWidth, 5, Message);
+      Truncate(message, shortTrackPath[account], playerDistance - playerTitleWidth - 20);
+      outtextxy(playerX + playerDistance * account + playerTitleWidth, 5, message);
     }
   }
   else if (mode == 2)
   {
-    sprintf_s(Message, "第%03d秒：", timeSelected);
-    outtextxy(roleSlotX, 5, Message);
+    sprintf_s(message, "第%03d秒：", timeSelected);
+    outtextxy(roleSlotX, 5, message);
     for (int account = 0; account < accountNum; account++)
     {
       CountEnergy();//计算能量值
@@ -4692,48 +4777,187 @@ void ViewDebugInfo()
         settextcolor(RGB(255, 0, 0));
       else
         settextcolor(RGB(255, 255, 255));
-      sprintf_s(Message, "[%dP]", account + 1);
-      outtextxy(playerX + playerDistance * account, 5, Message);
-      sprintf_s(Message, "%d (生产%d 消耗%d)",
+      sprintf_s(message, "[%dP]", account + 1);
+      outtextxy(playerX + playerDistance * account, 5, message);
+      sprintf_s(message, "%d (生产%d 消耗%d)",
         energy[account][timeSelected], totalCollect[account][timeSelected], totalCost[account][timeSelected]);
-      int MessageWidth = textwidth(Message);//字符串宽度
+      int MessageWidth = textwidth(message);//字符串宽度
       settextcolor(RGB(255, 255, 255));
-      outtextxy(playerX + playerDistance * account + playerTitleWidth, 5, Message);
+      outtextxy(playerX + playerDistance * account + playerTitleWidth, 5, message);
       for (int t = 0; t <= maxTime; t++)
         if (energy[account][t] < zero)
         {
           settextcolor(RGB(255, 128, 0));
-          sprintf_s(Message, " 第%03d秒缺火", t);
-          outtextxy(playerX + playerDistance * account + playerTitleWidth + MessageWidth, 5, Message);
+          sprintf_s(message, " 第%03d秒缺火", t);
+          outtextxy(playerX + playerDistance * account + playerTitleWidth + MessageWidth, 5, message);
           break;
         }
     }
   }
+}
+//显示底部信息
+void ViewBottomInfo()
+{
+  settextcolor(WHITE);
 #ifdef _DEBUG
-
+  char message[1000];
   settextcolor(RGB(255, 255, 255));
   if (mode == 1 || mode == 2)
   {
-    outtextxy(850, WndHeight - 27, TracePrint);
-    sprintf_s(Message, "状态%d", State);//显示当前状态（调试用）
-    outtextxy(950, WndHeight - 27, Message);
-    sprintf_s(Message, "区域%d", area);//显示当前点击区域（调试用）
-    outtextxy(1050, WndHeight - 27, Message);
-    sprintf_s(Message, "备份%d/%d", CurrentBackup, BackupNum);
-    outtextxy(1150, WndHeight - 27, Message);
-    if (State / 1000 == 1)
+    outtextxy(850, wndHeight - tipHeight, tracePrint);
+    sprintf_s(message, "状态%d", state);//显示当前状态（调试用）
+    outtextxy(950, wndHeight - tipHeight, message);
+    sprintf_s(message, "区域%d", area);//显示当前点击区域（调试用）
+    outtextxy(1050, wndHeight - tipHeight, message);
+    sprintf_s(message, "备份%d/%d", currentBackup, backupNum);
+    outtextxy(1150, wndHeight - tipHeight, message);
+    if (state / 1000 == 1)
     {
-      sprintf_s(Message, "深度%d", Map[curAccount][State % 100 / 10][State % 10].depthSelected[State % 1000 / 100]);
-      outtextxy(1250, WndHeight - 27, Message);
+      sprintf_s(message, "深度%d", Map[curAccount][state % 100 / 10][state % 10].depthSelected[state % 1000 / 100]);
+      outtextxy(1250, wndHeight - tipHeight, message);
     }
   }
   else if (mode == 3)
   {
-    sprintf_s(Message, "区域%d", area);
-    outtextxy(180, 5, Message);//显示当前点击区域（调试用）
-    outtextxy(0, RecordWndHeight - 30, TracePrint);
+    sprintf_s(message, "区域%d", area);
+    outtextxy(180, 5, message);//显示当前点击区域（调试用）
+    outtextxy(0, recordWndHeight - 30, tracePrint);
   }
 #endif
+}
+//显示上一次提示信息
+void ViewLastTip()
+{
+  settextcolor(WHITE);
+  settextcolor(strstr(lastTip, "注释：") == lastTip ? WHITE : RGB(255, 255, 0));
+  outtextxy(roleSlotX, wndHeight - tipHeight, lastTip);
+  ViewBottomInfo();
+}
+//显示提示语句
+void ViewTip(const char *tip)
+{
+  if (strcmp(lastTip, tip) == 0)
+    return;
+
+  strcpy_s(lastTip, tip);
+  BeginBatchDraw();
+  solidrectangle(0, wndHeight - tipHeight, wndWidth, wndHeight);
+  ViewLastTip();
+  EndBatchDraw();
+}
+//获取提示信息内容
+int GetTip(int mode, int area, char(&tip)[200])
+{
+  if (area == 1)
+    return strcpy_s(tip, "阵型编辑：用于设置放卡位置。右击此处清空阵型。");
+  if (area == 2)
+    return strcpy_s(tip, "轨道编辑：用于设置放卡时间。右击此处清空轨道。");
+  for (int account = 0; account < 2; account++)
+    if (area == 20 + account)
+      return sprintf_s(tip, "单击切换到%dP轨道。", account + 1);
+  if (area == 40)
+    return strcpy_s(tip, "单击添加2P轨道。");
+  if (area == 50)
+    return strcpy_s(tip, "单击移除2P轨道。");
+  if (area >= 600 && area <= 611)
+    return strcpy_s(tip, "按波变阵：在关卡到达指定波次后变换阵型，详见使用手册4.3。");
+  if (area == 700)
+    return strcpy_s(tip, "撤销：返回上一步操作。");
+  if (area == 701)
+    return strcpy_s(tip, "恢复：恢复被撤销的操作。");
+
+  if (mode == 1)
+  {
+    /*
+    if (area == 10)
+      return strcpy_s(tip, "防御卡背包：设置卡片生产（需要计算火苗时填写）、冷却、层级等信息。");
+    if (area == 11)
+      return strcpy_s(tip, "生产信息：设置武器和环境产火（需要计算火苗时填写）。");
+      */
+    for (int account = 0; account < 2; account++)
+      if (area == 30 + account)
+        return sprintf_s(tip, "%dP轨道路径（即保存位置）。单击可复制。", account + 1);
+    if (area == 70)
+      return sprintf_s(tip, "刷技能：勾选后，无需携带卡组，按住Ctrl点击放卡位置即可完成刷技能轨道制作。");
+    if (area / 100 == 1)
+      return strcpy_s(tip, "卡槽：单击选中，右击删除。选中后右击其他卡槽交换位置，右击本卡清空阵型。");
+    if (area / 100 == 4)
+      return strcpy_s(tip, "补阵：每次放卡优先放在阵型中第一个空缺位置。需设置轨道才能生效。");
+    if (area / 100 == 5)
+      return strcpy_s(tip, "索敌：每次放卡优先放在出怪的行数。需开启极限成阵才能生效。");
+    if (area >= 200 && area <= 225)
+      return strcpy_s(tip, "防御卡背包：单击添加到卡槽，右击编辑或删除卡片。");
+    if (area == 300)
+      return strcpy_s(tip, "1P人物：选中后可以往地图中添加多个人物位置，右击清空1P阵型和轨道。");
+    if (area == 310)
+    {
+      if (roleLocNum[1] == 0)
+        return strcpy_s(tip, "单击添加2P。");
+      else if (accountNum == 2)
+        return strcpy_s(tip, "2P人物：选中后可以往地图中添加多个人物位置，右击清空2P阵型和轨道。");
+      else
+        return strcpy_s(tip, "2P人物：选中后可以往地图中添加多个人物位置，右击删除2P。");
+    }
+    if (area == 615)
+      return strcpy_s(tip, "将靶形光标拖至游戏窗口内可截取地图，方便观察地形。");
+    if (area >= 800 && area <= 808)
+      return strcpy_s(tip, "堆叠区：选中地图中的卡片后单击堆叠区空位，即可在这一格叠加卡片。");
+    if (area == 809)
+      return strcpy_s(tip, "切换到堆叠区最低层卡片。");
+    if (area == 810)
+      return strcpy_s(tip, "切换到堆叠区最高层卡片。");
+    if (area == 811)
+      return strcpy_s(tip, "切换到堆叠区空位（用于添加卡片）。");
+
+    //if (area / 1000 == 1)
+     // return strcpy_s(tip, "地图：单击卡片选中（选中后单击其他格子可进行移动），右击卡片删除。");
+    return sprintf_s(tip, "注释：%s", notation[curAccount]);
+  }
+  else if (mode == 2)
+  {
+    for (int account = 0; account < 2; account++)
+      if (area == 30 + account)
+        return sprintf_s(tip, "%dP火苗计算值。", account + 1);
+    if (area / 100 == 1)
+      return strcpy_s(tip, "卡槽：选中后可以使用上方箭头调节CD或移动轨道。双击可自动布轨。右击清空轨道。");
+    if (area / 100 == 2)
+      return strcpy_s(tip, "编号：单击开启轨道继承，详见使用手册4.3。");
+    if (area / 100 == 3)
+      return strcpy_s(tip, "独立计时：该卡片使用精确计时，适用于补云洞、放海盐等操作。");
+    if (area / 100 == 4)
+      return strcpy_s(tip, "锁定轨道：令该卡不参与自动布轨。");
+    if (area / 100 == 5)
+      return strcpy_s(tip, "极限成阵：卡槽亮起时立即放置。按住Ctrl后单击可设置放卡条件。");
+    if (area == 612)
+      return strcpy_s(tip, "录制轨道：将手动放卡操作录制成轨道文件。");
+    if (area == 613)
+      return strcpy_s(tip, "自动布轨：根据火苗计算结果自动安排放卡时间。需填写卡片数据和生产信息才可使用。");
+    if (area == 614)
+      return strcpy_s(tip, "魔塔：进入指定魔塔层数执行轨道。可用于刷技能。");
+    if (area == 615)
+      return strcpy_s(tip, "定时退出：到达指定时间后主动退出关卡。用于跨服刷威望等情形。");
+    if (area / 100 == 8)
+      return strcpy_s(tip, "翻页：点击数字快速翻页。一页为一分钟。");
+    if (area == 900 || area == 901)
+      return strcpy_s(tip, "左右箭头：点击进行翻页。选中卡槽后点击可整体平移轨道。");
+    if (area == 902 || area == 903)
+      return strcpy_s(tip, "上下箭头：用于卡槽数≥14时滚动显示。选中卡槽后点击可调节CD。");
+    if (area / 1000 == 2)
+      return strcpy_s(tip, "时间轴：点击刻度查看对应时间的火苗计算值。");
+    return strcpy_s(tip, "");
+  }
+  return strcpy_s(tip, "");
+}
+//显示提示信息
+void RepaintTip()
+{
+  //根据当前鼠标位置决定提示信息
+  POINT point;
+  GetCursorPos(&point);
+  ScreenToClient(hWndEditor, &point);
+  char tip[200];
+  GetTip(mode, GetArea(point.x, point.y), tip);
+  ViewTip(tip);
 }
 //显示轨道功能按钮
 void ViewTrackButtons()
@@ -4855,9 +5079,9 @@ void ViewEditCommon()
     strcpy_s(OptionString[6], TransferName[bag[curAccount][bagMode].transfer]);//转职名称
     if (bag[curAccount][bagMode].style == 6) //炎焱兔：显示增幅倍率
       if (bag[curAccount][bagMode].transfer >= 1)
-        sprintf_s(OptionString[7], "%d.%02d", RabbitFactor[1][bag[curAccount][bagMode].star] / 100, RabbitFactor[1][bag[curAccount][bagMode].star] % 100);
+        sprintf_s(OptionString[7], "%d.%02d", rabbitFactor[1][bag[curAccount][bagMode].star] / 100, rabbitFactor[1][bag[curAccount][bagMode].star] % 100);
       else
-        sprintf_s(OptionString[7], "%d.%02d", RabbitFactor[0][bag[curAccount][bagMode].star] / 100, RabbitFactor[0][bag[curAccount][bagMode].star] % 100);
+        sprintf_s(OptionString[7], "%d.%02d", rabbitFactor[0][bag[curAccount][bagMode].star] / 100, rabbitFactor[0][bag[curAccount][bagMode].star] % 100);
   }
   int size = GetFontSize();
   for (int i = 0; i < 9; i++)//9行参数
@@ -4978,8 +5202,8 @@ void RepaintMap()
   BeginBatchDraw();
   solidrectangle(0, 0, wndWidth, wndHeight);
 
-  if (IsMapImageCatched == 1)
-    putimage(mapGridX, mapGridY, &MapImage);
+  if (isMapImageCatched)
+    putimage(mapGridX, mapGridY, &mapImage);
 
   ViewRoleSlot();//移动人物按钮内容
   ViewMapSlotCard();//卡槽内容
@@ -5006,7 +5230,8 @@ void RepaintMap()
   ViewMapButtons();
   PaintGrid(2, 1, undoX, undoY, undoWidth, undoHeight);//撤销按钮
   ViewUndo();
-  ViewDebugInfo();//显示调试信息
+  ViewTopInfo();
+  ViewLastTip();
   EndBatchDraw();
   /*备份图像，减少重绘占用*/
   setaspectratio(1, 1);
@@ -5046,8 +5271,8 @@ void RepaintTrack()
   PaintGrid(2, 1, undoX, undoY, undoWidth, undoHeight);//撤销按钮
   ViewUndo();
   ViewMove();//移动轨道按钮
-
-  ViewDebugInfo();//显示调试信息（包括火苗产量）
+  ViewTopInfo();//显示火苗产量
+  ViewLastTip();
   EndBatchDraw();
   /*备份图像，减少重绘占用*/
   setaspectratio(1, 1);
@@ -5719,7 +5944,7 @@ void AddCommonCard()
 void EditNotation()
 {
   CreateThread(NULL, 0, AutoTransform, (void *)"注释", 0, NULL);//运行自动转化
-  NewInputBox(notation[curAccount], 101, "可在此补充配置要求或提示信息，不超过50字。", "注释", notation[curAccount]);
+  NewInputBox(notation[curAccount], 121, "可在此补充配置要求或提示信息，不超过60字。", "注释", notation[curAccount]);
   TransformStopSignal = 1;
 }
 //波次字符串m.n是否符合格式；额外检查“波次已存在”
@@ -5754,7 +5979,7 @@ void EditNewWave(SHORT ctrl, SHORT shift)
     prompt = "将当前波次移动到输入波次（m.n）。\n大波m范围0~23，小波n范围0~11，可以只输入大波。";
   }
   char waveString[6] = {};
-  int result = InputString(waveString, IsWaveLegalForEdit, prompt, title);//输入波次
+  int result = InputWaveString(waveString, IsWaveLegalForEdit, prompt, title);//输入波次
   if (result == 0)
     return;
   int mainWave = 0, smallWave = 0;
@@ -6068,7 +6293,7 @@ void RepaintRecord()
     }
     setlinecolor(RGB(255, 255, 255));
   }
-  ViewDebugInfo();
+  ViewBottomInfo();
   EndBatchDraw();
 }
 //录制轨道：恢复放卡
@@ -6430,9 +6655,9 @@ void RecordTrack()
 void RepaintOld()
 {
   BeginBatchDraw();
-  solidrectangle(0, 0, wndWidth, wndHeight);
+  solidrectangle(0, 0, wndWidth, wndHeight - tipHeight - 1);
   setaspectratio(1, 1);
-  putimage(0, 0, &imageBackup);
+  putimage(0, 0, (int)(wndWidth * ratio), (int)((wndHeight - tipHeight - 1) * ratio), &imageBackup, 0, 0);
   setaspectratio(ratio, ratio);
   EndBatchDraw();
 }
@@ -6464,9 +6689,10 @@ int IsGameWindow(HWND hWndGame)
 //载入地图图像
 int LoadMapImage(IMAGE *pGridImage)
 {
-  if (_access("用户参数\\地图.bmp", 0)) //如果不存在地图文件
+  char path[] = "用户参数\\地图.png";
+  if (!FileExist(path)) //如果不存在地图文件
     return 0;
-  loadimage(pGridImage, "用户参数\\地图.bmp", mapGridWidth * 9, mapGridHeight * 7);
+  loadimage(pGridImage, path, mapGridWidth * 9, mapGridHeight * 7);
   DWORD *grid = GetImageBuffer(pGridImage);
   for (int i = 0; i < mapGridWidth * 9 * mapGridHeight * 7; i++)//每个点RGB减半
     grid[i] = RGB(GetRValue(grid[i]) / 2, GetGValue(grid[i]) / 2, GetBValue(grid[i]) / 2);
@@ -6490,8 +6716,8 @@ int GrabMap()
     hWndGame = GetGameWindowFromServer(hWndPointed);
   else //不是游戏窗口则返回0
     return 0;
-  WindowToBitmap(hWndGame, "用户参数\\地图.bmp", 304, 111, 536, 451);//截取地图
-  IsMapImageCatched = LoadMapImage(&MapImage);//载入地图图像并记录
+  WindowToBitmap(hWndGame, "用户参数\\地图.png", 304, 111, 536, 451);//截取地图
+  isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
   return 1;
 }
 //返回第n个存在的波次，点击“+”返回-1，点击空位返回-2
@@ -6717,7 +6943,7 @@ bool RemovePlus(const char *path, char(&newPath)[maxPath])
   return true;
 }
 //在轨道名称结尾添加"+"。成功返回true，失败返回false
-bool AddPlus(const char *path, char(&newPath)[maxPath])
+bool AddPlusInTrack(const char *path, char(&newPath)[maxPath])
 {
   int length = strlen(path);
   if (length < 4) //长度小于4返回false
@@ -6889,26 +7115,27 @@ void EditMap()
           PrintToClipboard(shortTrackPath[account]);
           MessageBox(hWndEditor, message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
         }
-        //添加2P轨道
-        if (area == 40)
+        if (area == 40) //添加2P轨道
         {
           char trackPath2P[maxPath];
-          AddPlus(fullTrackPath[0], trackPath2P);
+          AddPlusInTrack(fullTrackPath[0], trackPath2P);
           //如果trackPath2P（Track+.txt)不存在，生成初始轨道
-          if (_access(trackPath2P, 0) != 0)
+          if (!FileExist(trackPath2P))
             OutputRes("初始轨道", "TEXT", trackPath2P);
           OpenTrack2P(trackPath2P);
           state = 0;
         }
-        //移除2P轨道（保留2P人物位置）
-        if (area == 50)
+        if (area == 50) //移除2P轨道（保留2P人物）
         {
           accountNum = 1;
           curAccount = 0;
           state = 0;
         }
-        if (area == 60)
+        if (area == 60) //编辑注释
           EditNotation();
+        if (area == 70) //切换刷技能模式
+          isSkillMode = !isSkillMode;
+
         if (area / 100 == 2)//点击常用卡组：添加到卡槽
         {
           if (area == 226)//新增卡片
@@ -6954,9 +7181,9 @@ void EditMap()
           GrabMap();
         if (area == 616)
         {
-          IsMapImageCatched = 0;
-          if (!_access("用户参数\\地图.bmp", 0))
-            remove("用户参数\\地图.bmp");
+          isMapImageCatched = 0;
+          if (FileExist("用户参数\\地图.png"))
+            remove("用户参数\\地图.png");
         }
         if (area == 700)//撤销按钮
           if (IsUndoAllowed())
@@ -7285,10 +7512,10 @@ void EditMap()
               else if (Map[curAccount][row][column].depthSelected[level0] == Map[curAccount][row][column].depth[level0])
               {
                 //如果目标层级选中了空深度
-                if (Slot[curAccount][order].retain == 0) //没开启继承才能放置卡片
-                  AddToGrid(curAccount, order, area % 100 / 10, area % 10);
-                else
+                if (curTotalWave[curAccount] > 0 && Slot[curAccount][order].retain)
                   MessageBox(hWndEditor, "启用继承的卡无法放置。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+                else
+                  AddToGrid(curAccount, order, area % 100 / 10, area % 10);
               }
               else if (Map[curAccount][row][column].depth[level] > zero)
                 state = 1000 + level * 100 + row * 10 + column;//否则改为选中点击的层级
@@ -7360,7 +7587,13 @@ void EditMap()
           {
             //右击其他卡槽，且两个卡槽都不是铲子，则交换卡槽位置
             if (area != state && area != 100 && state != 100)
-              ExchangeSlot_File(curAccount, state - 100, area - 100);
+            {
+              GetAsyncKeyState(VK_SHIFT);
+              if (GetAsyncKeyState(VK_SHIFT))
+                InsertSlot_File(curAccount, state - 100, area - 100);
+              else
+                ExchangeSlot_File(curAccount, state - 100, area - 100);
+            }
             //右击本卡槽，清空阵型
             if (area == state)
               DeleteMap(curAccount, state - 100);
@@ -7452,6 +7685,8 @@ void EditMap()
       LoadTrack();
       RepaintMap();
     }
+    else //没有鼠标按下，就重绘提示
+      RepaintTip();
     sleepTime++;
     if (sleepTime % 10 == zero)
       Sleep(1);
@@ -7517,9 +7752,9 @@ void EditTrack()//模块二：编辑轨道
         if (area == 40)
         {
           char trackPath2P[maxPath];
-          AddPlus(fullTrackPath[0], trackPath2P);
+          AddPlusInTrack(fullTrackPath[0], trackPath2P);
           //如果trackPath2P（Track+.txt)不存在，生成初始轨道
-          if (_access(trackPath2P, 0) != 0)
+          if (!FileExist(trackPath2P))
             OutputRes("初始轨道", "TEXT", trackPath2P);
           OpenTrack2P(trackPath2P);
           state = 0;
@@ -7552,16 +7787,16 @@ void EditTrack()//模块二：编辑轨道
         if (area / 100 == 2) //点击卡槽左上角：继承模式
         {
           int order = area - 200;
-          if (Slot[curAccount][order].retain == 0)
-          {
-            if (curTotalWave[curAccount] > 0) //不是第0波则开启继承，否则无视
-            {
-              Slot[curAccount][order].retain = 1;
-              DeleteMapAndTrack(curAccount, order);//清空阵型和轨道
-            }
-          }
-          else
+          if (Slot[curAccount][order].retain)
             Slot[curAccount][order].retain = 0;
+          else
+          {
+            Slot[curAccount][order].retain = 1;
+            if (curTotalWave[curAccount] == 0)
+              DeleteTrack(curAccount, order);//清空轨道
+            else
+              DeleteMapAndTrack(curAccount, order);//清空阵型和轨道
+          }
         }
         if (area / 100 == 3) //点击卡槽左下角：独立计时
         {
@@ -7719,7 +7954,12 @@ void EditTrack()//模块二：编辑轨道
             if (Slot[curAccount][order].retain == 0) //没开启继承才能添加轨道
               AddTrack(curAccount, order, t);
             else
-              MessageBox(hWndEditor, "启用继承的卡无法添加轨道。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+            {
+              if (curTotalWave[curAccount] == 0)
+                PopMessage(hWndEditor, "使用默认轨道的卡无法添加轨道。");
+              else
+                PopMessage(hWndEditor, "启用继承的卡无法添加轨道。");
+            }
           }
           else if (order > zero) //点击第0秒，自动补满所有轨道
           {
@@ -7767,6 +8007,8 @@ void EditTrack()//模块二：编辑轨道
       LoadTrack();
       RepaintTrack();
     }
+    else //没有鼠标按下，就重绘提示
+      RepaintTip();
     sleepTime++;
     if (sleepTime % 10 == zero)
       Sleep(1);
@@ -7833,11 +8075,11 @@ void CheckAppendix()
     fgets(f, appendix[++appendixNum]);
   fclose(f);
   for (int i = 0; i < appendixNum; i++)
-    if (_access(appendix[i], 0))
+    if (!FileExist(appendix[i]))
     {
-      char Message[100];
-      sprintf_s(Message, "缺少依赖文件夹：\n%s\n请确保更新完整，且不要把软件移出文件夹。", appendix[i]);
-      MessageBox(NULL, Message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+      char message[100];
+      sprintf_s(message, "缺少依赖文件夹：\n%s\n请确保更新完整，且不要把软件移出文件夹。", appendix[i]);
+      MessageBox(NULL, message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
       exit(0);
     }
 }
@@ -7851,13 +8093,100 @@ void CreateBackupFolder()
     time(&currentTime);
     GetTimeStringForFolder(runTimeString, currentTime);//记录本次启动的时间
     sprintf_s(backupPath, "自动备份\\轨道文件\\%s", runTimeString);
-    if (_access(backupPath, 0))//如果文件夹不存在，则退出循环
+    if (!FileExist(backupPath))//如果文件夹不存在，则退出循环
       break;
     Sleep(100);
   };
   CreatePath(backupPath);//创建本次自动备份文件夹
   sprintf_s(tempTrackForSave, "自动备份\\轨道文件\\%s\\temp.txt", runTimeString);
 }
+/*
+char fewTrack[100][maxPath];
+int fewTrackNum;
+char waterTrack[100][maxPath];
+int waterTrackNum;
+const int maxFileNum = 128;
+char fileList[maxFileNum][maxPath];
+//重排文件夹folder内的轨道卡组
+void RearrangeDeck(const char *folder)
+{
+  if (!PathFileExistsA(folder))
+    return;
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.txt", folder);
+
+  char trackPath[maxPath] = {};
+  int filesNum = GetFileList(searchPath, fileList, maxFileNum);//查找所有txt文件
+
+  for (int i = 0; i < filesNum; i++)
+  {
+    sprintf_s(trackPath, "%s\\%s", folder, fileList[i]);
+    int expectedSlotNum = 13;
+    if (strcmp(fileList[i] + strlen(fileList[i]) - 5, "+.txt") == 0)
+      expectedSlotNum = 10;
+    if (PathFileExistsA(trackPath)) //如果文件存在
+    {
+      isWaterUsed = false;
+      isPuddingUsed = false;
+      isPuddingInSlot12 = false;
+      OpenTrackWithChoice(trackPath, ID_1P);//打开轨道并检查每一波
+      bool isThisTrackWaterUsed = isWaterUsed;//本轨道是否使用了开水
+      bool isPuddingDeleteRequired = isPuddingInSlot12 && !isPuddingUsed;//是否需要删除布丁
+
+      //if (SlotNum[0] == expectedSlotNum - 1) //卡槽数12：增加一张咖啡粉
+      //  AddToSlot_File(0, 23); //增加一张咖啡粉
+      //else if (SlotNum[0] < expectedSlotNum - 1) //卡槽数不足12：记录并跳过
+      //{
+      //  strcpy_s(fewTrack[fewTrackNum++], trackPath);
+      //  continue;
+      //}
+      //ExchangeSlot_File(0, expectedSlotNum, expectedSlotNum - 4);
+      //for (int i = expectedSlotNum - 4; i >= 2; i--)
+      //  ExchangeSlot_File(0, i, i - 1);
+      //
+      ////开水无用删开水
+      //if (isThisTrackWaterUsed)
+      //  strcpy_s(waterTrack[waterTrackNum++], trackPath);
+      //else
+      //  DeleteFromSlot_File(0, expectedSlotNum);
+
+      if (isPuddingDeleteRequired && SlotNum[0] == 12)
+        DeleteFromSlot_File(0, 12);
+      else
+        strcpy_s(waterTrack[waterTrackNum++], trackPath);
+
+      SaveTrack();
+    }
+  }
+}
+const int maxTypeNum = 128;
+char typeList[maxTypeNum][maxPath];
+void RearrangeDeck()
+{
+  char folder[] = "预制轨道\\通用轨道";
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*", folder);
+  int typesNum = GetFileList(searchPath, typeList, maxTypeNum);//查找所有文件夹
+  char typePath[maxPath] = {};
+  for (int i = 0; i < typesNum; i++)
+  {
+    sprintf_s(typePath, "%s\\%s", folder, typeList[i]);
+    RearrangeDeck(typePath);
+  }
+  RearrangeDeck("预制轨道\\公会任务");
+
+  FILE *f;
+  fopen_s(&f, "预制轨道\\少卡槽轨道.txt", "w");
+  for (int i = 0; i < fewTrackNum; i++)
+    fprintf(f, "%s\n", fewTrack[i]);
+  fclose(f);
+
+  fopen_s(&f, "预制轨道\\用开水轨道.txt", "w");
+  for (int i = 0; i < waterTrackNum; i++)
+    fprintf(f, "%s\n", waterTrack[i]);
+  fclose(f);
+}
+*/
 int main(int argc, char *argv[])
 {
   DPI = SetDPIAware();//设置DPI感知并获取DPI
@@ -7872,17 +8201,17 @@ int main(int argc, char *argv[])
 
   /*检查依赖文件完整性：防御卡背包和生产信息*/
   if (argc == 1) //直接启动编辑器，Track.txt必须存在，没有则创建初始轨道
-    if (_access("Track.txt", 0))
+    if (!FileExist("Track.txt"))
       OutputRes("初始轨道", "TEXT", "Track.txt");
-  if (_access("附加程序", 0))
+  if (!FileExist("附加程序"))
     CreatePath("附加程序");
-  if (_access("用户参数", 0))
+  if (!FileExist("用户参数"))
     CreatePath("用户参数");
-  if (_access("防御卡背包.txt", 0))
+  if (!FileExist("防御卡背包.txt"))
     OutputRes("防御卡背包", "TEXT", "防御卡背包.txt");
-  if (_access("生产信息.txt", 0))
+  if (!FileExist("生产信息.txt"))
     OutputRes("生产信息", "TEXT", "生产信息.txt");
-  if (_access("附加程序\\依赖文件.txt", 0))
+  if (!FileExist("附加程序\\依赖文件.txt"))
     OutputRes("依赖文件", "TEXT", "附加程序\\依赖文件.txt");
   CheckAppendix();//检查依赖文件
 
@@ -7958,6 +8287,9 @@ int main(int argc, char *argv[])
   SaveCommonCard();
   SaveProduction();
 
+  //ExchangeGeneralDeck();
+  //return 114;
+
   char info[1000];
   //检验每一波轨道并填写WaveExist（若检验成功，内存中是最后一波轨道，但curWave依然为0）
   int TestResult = LoadTrackFrom(curAccount, fullTrackPath[curAccount], info, true);
@@ -7966,9 +8298,9 @@ int main(int argc, char *argv[])
     MessageBox(NULL, info, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     return 0;
   }
-  IsMapImageCatched = LoadMapImage(&MapImage);//载入地图图像并记录
+  isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
 
-  if (_access("用户参数\\按波变阵已使用.txt", 0) == 0) //存在文件，说明按波变阵已使用
+  if (FileExist("用户参数\\按波变阵已使用.txt")) //存在文件，说明按波变阵已使用
     isWaveUsed = 1;
 
   OpenGraph_Fit();

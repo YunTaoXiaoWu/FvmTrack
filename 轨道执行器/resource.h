@@ -1,14 +1,18 @@
 //{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ 生成的包含文件。
-// 供 轨道执行器2.5.rc 使用
+// 供 轨道执行器.rc 使用
 //
-#define IDOK                            1
+
 #define IDI_ICON1                       101
+#define IDOK                            1
+
 #define IDD_DIALOG1                     105
-#define IDR_TEXT2                       105
-#define IDR_TEXT1                       109
 #define IDC_EDIT1                       1001
 #define IDC_TEXT                        1002
+
+#define IDD_SERVER                      106
+#define idServer                        1100
+#define idPassword                      1201
 
 // Next default values for new objects
 // 

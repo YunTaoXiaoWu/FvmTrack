@@ -3,10 +3,13 @@
 #include "..\\track.h"
 
 const char versionString[] = "轨道执行器%s by -云涛晓雾- 所属文件夹：%s";
-
+HANDLE hMutexLoot; //读写战利品时的互斥锁
+HANDLE hMutexProp; //读写道具时的互斥锁
 //1. 软件位置坐标
-const int wndWidth = 1368, wndHeight = 740;//窗口宽度和高度
+const int wndWidth = 1368, wndHeight = 745;//窗口宽度和高度
+const int tipHeight = 27;
 const int dialogWidth = 488, dialogHeight = 161;//输入框尺寸
+const int playerX = 610, playerY = 5, playerDistance = 275;//1P/2P的服务器和二级密码
 const int titleX = 28, titleY = 30, titleWidth = 90, titleHeight = 40;//左侧选项位置
 const int parameterX = titleX + titleWidth, parameterY = 30, parameterWidth = 222, parameterHeight = 40;//参数表信息显示
 const int advanceX = parameterX + parameterWidth + 2, advanceY = 30;
@@ -19,12 +22,13 @@ const int modeX = wndWidth - 123, modeY = 30, modeWidth = 95, modeHeight = 40;//
 const int zoomX = modeX, zoomY = 0, zoomWidth = modeWidth, zoomHeight = modeY;//缩放按钮
 const int settingsX = modeX, settingsY = 30 + 6 * modeHeight, settingsWidth = 95, settingsHeight = 40;//右侧按钮
 const int upperSettingsY = settingsY - 7 * settingsHeight / 2;//右侧按钮上区纵坐标
-const int lockX = parameterX + 5 * parameterWidth - 68, lockY = 5, lockWidth = 20, lockHeight = 20;//任务列表锁定
+const int lockX = parameterX + 5 * parameterWidth - 65, lockY = 5, lockWidth = 20, lockHeight = 20;//任务列表锁定
 //任务列表选项标识符
 const int ID = 0, TYPE = 1, LEVEL = 2, GAMES = 3, KEY = 4, HOST = 5,
 TRACK_0 = 6, DECK_0 = 7, TRACK_1 = 8, DECK_1 = 9, CHECK = 10;
 
 //2. 游戏内位置坐标
+const int vipX = 27, vipY = 94, vipWidth = 38, vipHeight = 38, vipDistance = 178;//vip框
 const int frontX = 860, frontY = 46, frontWidth = 1, frontHeight = 64;//前线（用于检测出怪）
 const int lightNameX = 280, lightNameY = 188, lightNameWidth = 83, lightNameHeight = 12;//好友列表细角色名
 const int heavyNameX = 108, heavyNameY = 38, heavyNameWidth = 90, heavyNameHeight = 12;//左上角粗角色名
@@ -37,7 +41,7 @@ const int startX = 875, startY = 453;//“开始”按钮
 const int slotX1 = 228, slotY1 = 11, slotWidth = 53, slotHeight = 68;//卡槽1位置，卡槽宽度、高度
 const int gridX = 302, gridY = 105;//地图1行1列
 const int innateGridX = 299, innateGridY = 110; //初始地图格子判别位置
-const int jewelX = 22, jewelY = 208, jewelHeight = 44; //宝石
+const int skillX = 22, skillY = 208, skillHeight = 44; //技能宝石
 const int proceedX = 430, proceedY = 349;//继续作战
 const int claimX = 529, claimY = 349;//领取奖励
 const POINT flip[5] = { { 577, 267 }, { 724, 267 }, { 871, 267 }, { 577, 467 }, { 724, 467 } };//5张牌的翻牌位置
@@ -50,40 +54,50 @@ const int deckX = 424, deckY = 121, deckWidth = 83;//卡组1，卡组宽度
 const POINT expNoMoreTip = { 430, 332 };//经验满不再提示
 const int bagConfirmX = 430, bagConfirmY = 358;//背包满、经验满确认
 const int bagCancelX = 528, bagCancelY = 358;//背包满取消
-const int retreatX = 915, retreatY = 560;//后退（退出房间）
-const int worldMapX = 862, worldMapY = 41;//世界地图按钮
-const int blueBoxX = 358, blueBoxY = 316;//“正在登陆服务器”蓝框消失判定位置
-const int scrollX = 930, scrollY = 196, scrollWidth = 1, scrollHeight = 196;//房间内背包滚动条
+const POINT retreat = { 915, 560 };//后退（退出房间）
+const POINT worldMap = { 862, 41 };//世界地图按钮
+const POINT blueBox = { 358, 316 };//“正在登陆服务器”蓝框消失判定位置
+
+//矩形区域类型(x,y,width,height)
+struct RectType
+{
+  int x, y, width, height;
+};
+const int customScrollX = 930, customScrollY = 196, customScrollHeight = 196;
+const int lootScrollX = 708, lootScrollY = 472, lootScrollHeight = 64;
+//战利品格子
+const int lootGridX = 209, lootWidth = 49, lootHeight = 49;
+//战利品识别区
+const int lootCoreX = 5, lootCoreY = 5, lootCoreWidth = 36, lootCoreHeight = 28;
+const COLORREF scrollBlankColor = 0x054971;//滚动条空白处颜色
 
 //3. 高级任务常数
 const int basicTypeNum = 6; //基础类型数量（悬赏/勇士/魔塔/跨服/假期/公会）
 const int islandTypeNum = 11; //岛屿类型数量（美味/火山/遗迹/浮空/海底/星际+营地/沙漠/雪山/雷城/奇境）
 const int specialTypeNum = 1;//特殊类型数量
-const int advanceTypeNum = basicTypeNum + islandTypeNum + specialTypeNum;//高级任务类型数量
+const int typeNum = basicTypeNum + islandTypeNum + specialTypeNum;//高级任务类型数量
 const int maxAdvancePage = 10;//任务列表最大页数
 const int advanceNumPerPage = 16;//任务列表每页任务数
 const int maxAdvanceNum = advanceNumPerPage * maxAdvancePage;//任务列表容量
-int advanceNum;//当前任务数量 
-int missionAdvanceNum;//当前公会任务数量
-int advancePage = 1;//高级任务列表当前页数
-int advanceSelected;//选中的高级任务
-int isAdvanceSelectionRetained;//是否需要保留任务选中状态
-int isAdvanceWindowBound;//高级任务所需窗口是否已绑定
-const char bounty[3][7] = { "美味", "火山", "浮空" };//悬赏关卡名
+const char bounty[4][7] = { "美味", "火山", "浮空", "星际" };//悬赏关卡名
 const int challengeNum = 23;//勇士关卡数
 const char challenge[challengeNum][13] = { //勇士关卡名
   "洞君", "阿诺", "冰渣", "轰隆隆", "法老", "保罗", "玛丽", "皮特", "使者", "男爵", "朱莉", "中尉",
   "杰克", "金刚", "小明", "Baby", "美队", "钢铁侠", "绿巨人", "蜘蛛侠", "列车", "水母", "鲨鱼" };
 const char crossServer[6][7] = { "古堡", "天空", "炼狱", "水火", "巫毒", "冰封" };//跨服关卡名
 const char guild[4][7] = { "任务", "月光", "堕落", "死亡" };//公会关卡名
-const char special[3][7] = { "签到", "施肥", "定时" };//特殊任务名称
-char advanceName[advanceTypeNum][7] = { "悬赏", "勇士", "魔塔", "跨服", "假期", "公会",
-"", "", "", "", "", "", "", "", "", "", "", "特殊" };//任务类型名称
-int levelNum[advanceTypeNum] = { //每种类型的关卡数量
-  3, challengeNum, 166, 48, 1, 4,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2 };
-int defaultLevel[advanceTypeNum] = { //每种类型的默认关卡
-  2, 17, 151, 35, 0, 0,
+const char special[3][7] = { "签到", "施肥", "清包" };//特殊任务名称
+const char serverName[7][20] = { //服务器名称
+  "最近登录", "3366_1服", "3366_2服", "3366_3服",
+  "3366_4服", "3366_5服", "3366_6服" };
+//任务类型名称
+char typeName[typeNum][7] = { "悬赏", "勇士", "魔塔", "跨服", "假期", "公会",
+"", "", "", "", "", "", "", "", "", "", "", "特殊" };
+int levelNum[typeNum] = { //每种类型的关卡数量
+  4, challengeNum, 3005, 48, 1, 4,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3 };
+int defaultLevel[typeNum] = { //每种类型的默认关卡
+  0, 17, 1151, 35, 0, 0,
   7, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0 };
 const int maxIslandLevelNum = 17;//岛屿类型最大关卡数量
 char islandLevel[islandTypeNum][maxIslandLevelNum][13];//各岛屿各关卡名称
@@ -94,55 +108,87 @@ POINT islandLevelButton[islandTypeNum][maxIslandLevelNum];//各岛屿各关卡�
 //高级任务类型
 struct AdvanceType
 {
+  //任务参数
   int selected;//是否勾选
   int type;//任务类型：0悬赏 1勇士 2魔塔 3跨服 4假期 5公会 6-n地图
   int level;//关卡
   int maxGames;//执行局数
   int isProceed;//是否继续作战
-  int hostAccount;//房主账号
+  int host;//房主账号（0=1P 1=2P 2=同步任务）
   char track[2][maxPath];//每个轨道的路径
   int deck[2];//每个轨道的使用卡组
   int isMission;//是否公会任务
+  //完成情况
+  int result;//任务完成结果：0正常完成 1未领奖 2未完成
+  int gamesFinished;//完成局数
+};
+
+const int maxLogLength = 100000;//高级任务日志最大长度
+//任务列表类型
+struct PlotType
+{
+  //列表信息
+  char title[100];//任务标题
+  AdvanceType advance[maxAdvanceNum];//当前高级任务列表
+  AdvanceType missionAdvance[maxAdvanceNum];//公会任务预制列表
+  int advanceNum;//当前任务数量 
+  int missionAdvanceNum;//当前公会任务数量
+  int advancePage;//高级任务列表当前页数
+  int advanceSelected;//选中的高级任务
+  int isAdvanceSelectionRetained;//是否需要保留任务选中状态
+  bool isAdvanceLocked;//任务列表是否锁定
+  bool isMissionAdvanceLocked;//公会任务列表是否锁定
+  char advancePath[maxPath];//列表路径
+  char password[2][15];//二级密码，最长14位
+  int server[2];//1P和2P的3366服务器选项
+
+  //执行信息
+  int playingOrder;//正在执行的任务编号
+  AdvanceType *playingAdvance;//正在执行的任务指针
+  int isAdvanceWindowBound;//高级任务所需窗口是否已绑定
+  int isAdvanceStarted;//高级任务是否正在运行
+  int isAdvanceStarted_Confirm;//高级任务是否正在运行（确认退出任务线程后才会设为0）
+  int advanceInvolved[2];//1P和2P是否参与高级任务（以Param抓取为准，不受房主交换影响）
+  int timesRefreshed[maxAdvanceNum];//每个任务的已刷新次数
+  int isRefreshRequired;//开始本轮任务前是否需要刷新
+  int playedAdvanceNum;//已执行的高级任务数量
+  //int refreshLevel;//刷新等级：0刷新重试 1刷新跳过 2终止（BindWindow之后出错才能刷新解决）
+  bool isMissionClaimFailed;//公会任务领奖是否失败
+  bool isLevelInsufficient;//是否等级不足
+  int randomZone[7];//0-6的随机排列，用于决定执行高级任务时换到哪个区
+
+  //日志信息
+  char refreshLog[maxPath]; //刷新记录
+  HANDLE hMutexRefreshLog;//刷新记录互斥锁
+  char logFinished[maxLogLength];//已完成任务的日志
+  char output[maxLogLength / 100][100];//高级任务输出信息
+  int outputNum;
+  int outputPage;//当前页数
+  char advanceFolderPath[maxPath];//高级任务日志文件夹
+
+  //备份信息
+  int currentBackup;//当前备份数
+  int backupNum;//总备份数
+  char backupFolder[maxPath];//备份文件夹名称
 };
 
 //4. 高级任务参数
-AdvanceType advance[maxAdvanceNum];//高级任务
-AdvanceType missionAdvance[maxAdvanceNum];//公会任务预制列表
-char advancePath[maxPath];//列表文件
-char tempListForSave[maxPath];//保存任务列表用的临时文件
-int advanceInvolved[2];//1P和2P是否参与高级任务（以Project抓取为准，不受房主交换影响）
-int timesRefreshed[maxAdvanceNum];//每个任务的已刷新次数
-const int maxLogLength = 200000;
-char logFinished[maxLogLength];//记录日志的文件
-char output[maxLogLength / 100][100];//高级任务输出信息
-int outputNum;
-int outputPage = 1;//当前页数
-char advanceFolderPath[maxPath];//高级任务日志文件夹
-int isRefreshRequired;//开始本轮任务前是否需要刷新
-int isRefreshAvailable;//刷新是否可以解决问题（BindWindow之后出错才能刷新解决）
-bool isAdvanceFailed[maxAdvanceNum];//是否有任务未完成
-bool isMissionClaimFailed;//公会任务领奖是否失败
-bool isLevelInsufficient;//是否等级不足
-int isAdvanceStarted;//高级任务是否正在运行
-int isAdvanceStarted_Confirm;//高级任务是否正在运行（确认退出任务线程后才会设为0）
-int playingOrder;//正在执行的高级任务序号，用于传参到任务线程
-AdvanceType *playingAdvance;//正在执行的高级任务指针
-int playedAdvanceNum;//已执行的高级任务数量
-int randomZone[7];//0-6的随机排列，用于决定执行高级任务时换到哪个区
-bool isAdvanceLocked;//高级任务是否锁定
-bool isMissionAdvanceLocked;//公会任务列表是否锁定
+const int taskNum = 5;//普通任务数量
+const int listNum = 5;//高级任务数量
+const int maxTaskNum = taskNum + listNum * 2;//总任务数量
+//int curTask;//当前显示的任务编号
+int curList;//当前显示的高级任务
+PlotType plot[listNum];//任务列表
 
 //5. 普通任务常数
-const int taskNum = 5;//普通任务数量
-const int maxTaskNum = taskNum + 1;//总任务数量
-const char taskName[maxTaskNum][50] = { "任务0", "任务1", "任务2", "任务3", "任务4", "高级任务" };//任务名称
 const int maxSlotNum = 21;//最大卡槽数
 const int sorbetLoc[3] = { 71, 79, 19 };//冰沙位置：左下、右下、右上依次尝试
 const int maltoseRequiredSimilarity = 20;//棉麦识别要求的相似度
 
 //任务参数类型
-struct ProjectType
+struct ParamType
 {
+  char title[100];//任务标题
   int type;//类型
   int level;//关卡（合称：关卡选择）
   char track[2][maxPath];//轨道
@@ -151,7 +197,7 @@ struct ProjectType
   int isCollect[2];//自动收集
   int maxGames;//局数
   int gameTime;//每局用时
-  int hostAccount;//房主（0=1P，1=2P）
+  int host;//房主（0=1P，1=2P）
   POINT tag[2];//小号1,2标签坐标，初始值-1,-1
   HWND hWnd[2];//如果直接抓的是游戏区域，则记录，否则为零
   bool isWindow[2];//两个游戏窗口是否有效
@@ -164,6 +210,7 @@ struct StateType
   int currentTime;
   DWORD averageTime;
   int totalTime;
+  int refreshLevel;//刷新等级（0正常 1重试 2跳过 3终止）
   char tip[100];//任务状态提示语
   char errorString[100];//错误信息
 };
@@ -199,6 +246,7 @@ struct SlotType
   int search;//是否索敌
   int independent;//是否独立计时
   int limit;//是否极限成阵
+  int retain;//是否继承
   int maxMoment;//第i张卡的最大种植时刻
   int level;//卡片层级
   //识图信息
@@ -219,6 +267,7 @@ struct SlotType
   DWORD oldPlantTick;//原本放置时间（独立计时卡初次延时后记录）
   DWORD lastTick;//上次放置时间（只有极限卡用得到）
   DWORD startTick;//计时起点
+  DWORD avaliableTick;//卡槽亮起时刻（读冷却时检查）
   int plantDuring;//放卡累计占用时间(ms)
   //放卡条件
   int delay;//达成条件后延迟放卡的时间
@@ -246,6 +295,7 @@ struct TargetType
 };
 const int maxGamesAllowed = 9999;
 const int maxTargetNum = 10;//每个账号允许的最大目标数量
+
 //自定卡片类型
 struct CardType
 {
@@ -254,10 +304,55 @@ struct CardType
   int requiredSimilarity;//要求的相似度（0%）
   int offsetX, offsetY, width, height;//识别范围的偏移和宽高
 };
-const int maxCardNum = 128;
-char cardList[maxCardNum][maxPath];
-CardType card[maxCardNum];
-int cardNum;
+const int maxCardNum = 200;//自定卡片上限
+char cardList[maxCardNum][maxPath];//自定卡片目录
+CardType card[maxCardNum];//自定卡片
+int cardNum;//自定卡片数量
+
+const int customX = 10, customY = 20, customWidth = 25, customHeight = 15;//识别范围
+const int bagX = 382, bagWidth = 49, bagHeight = 57;//背包卡位置
+const int bagY1 = 179, bagY2 = 407;//确定bagY的范围
+//自定卡类型
+struct CustomType
+{
+  COLORREF image[customHeight][customWidth];//卡槽图像
+  char name[100];//卡槽名称
+  int priority;//优先级
+};
+const int maxCustomNum = 500;//自定卡槽上限
+char customList[maxCustomNum][maxPath];//自定卡槽文件名列表
+COLORREF bag[bagHeight][bagWidth];//背包卡
+
+//战利品类型（保存完整截图用于显示，但只有中间区域用于比较）
+struct LootType
+{
+  bool isReplacedRequired;//是否需要用不绑图像替换
+  char name[50];//物品名称
+  COLORREF image[lootWidth][lootHeight];//物品图像
+};
+const int maxLootNum = 1000;
+char lootList[maxLootNum][maxPath];
+LootType loot[maxLootNum];
+int lootNum;
+
+const int lootDigitX = 38, lootDigitY = 34, lootDigitWidth = 6, lootDigitHeight = 8;
+COLORREF lootDigit[10][lootDigitHeight][lootDigitWidth];
+//载入物品数字
+void LoadLootDigit()
+{
+  char path[maxPath];
+  for (int num = 0; num < 10; num++)
+  {
+    sprintf_s(path, "附加程序\\数字\\物品数量\\%d.png", num);
+    BitmapToColor(path, lootDigit[num]);
+    for (int y = 0; y < lootDigitHeight; y++)//只保留白色，其他颜色涂黑
+      for (int x = 0; x < lootDigitWidth; x++)
+        if (lootDigit[num][y][x] != 0xffffff)
+          lootDigit[num][y][x] = 0;
+  }
+}
+//道具背包翻页校准区
+const int calibrationX = 49 * 3, calibrationY = 5, calibrationWidth = 49, calibrationHeight = 36;
 //任务运行参数类型
 struct WorkType
 {
@@ -274,12 +369,16 @@ struct WorkType
   //执行器参数：执行器设定的参数
   char track[2][maxPath];//轨道
   char pureTrack[2][maxPath];//去除ban卡列表的轨道路径
+  char backupTrack[2][maxPath];//备份轨道路径
   bool isBanEnabled[2];//ban卡是否启用
   bool isSlotBanned[2][maxSlotNum + 2];//卡槽是否被ban，1=是，0=否
+  int accelerationTime[2];//两个号的加速时间
+  bool isAccelerationRequired;//是否需要加速跳结算
+  bool isAccelerationOn[2];//加速是否已开启
   int trackRoleNum[2];//轨道里得到的人数
   int maxGames;//执行局数
   int gameTime;//每局用时（0=自动检测）
-  int hostAccount;//房主（0=1P，1=2P）
+  int host;//房主（0=1P，1=2P）
   int deck[2];//卡组
   int isProceed[2];//继续作战
   int isCollect[2];//自动收集
@@ -288,16 +387,17 @@ struct WorkType
   //轨道参数：从轨道文件中读取的参数
   int isInvolved[2];//两个账号是否参与
   int isPerformed[2];//两个账号是否放卡
-  int tower[2];//需要挑战的魔塔层数，非魔塔为0
+  int towerx[2];//需要挑战的魔塔层数，非魔塔为0
   int quitTime[2];//退出关卡的时间，不退出为0
-  int isQuitted[2];//关卡是否已退出
-  int isQuitUsed;//退出功能是否已使用
+  bool isQuitted[2];//关卡是否已退出
+  bool isQuitUsed;//退出功能是否已使用
   int roleLocNum[2], roleLoc[2][63];//角色数量，人物1,2的行列
   int slotNum[2];//两个号的卡槽数
   bool isSkillMode;//是否刷技能模式
   //进度参数：只在关卡外发生变化的参数
   int games;//当前局数
   //关卡参数：关卡内变化的参数
+  int roamType;//漫游关卡编号：0=非漫游或未记载
   int progress;//进度条鼠头位置
   int wave, smallWave;//当前波数和小波
   int currentTime;//当前计时（秒）
@@ -308,12 +408,20 @@ struct WorkType
   bool isCold[2][maxSlotNum + 2];//每张卡是否已冷却好，是=1，否=0
   bool isFrontCatched;//前线是否已经截取
   bool isBossExist;//boss是否已经出现
+  bool isWaveEnded[2];//是否已到达结束波次（战利品、结算、翻牌等）
+  DWORD oneAccountEndTick;//一个账号结束的时间
   bool isRatAppeared;//是否已经出怪
   int ratRow[7];//出怪表，用于寻敌模式，依次记录出怪的行
   int ratRowNum;//已出怪的行数
   int lackey[2][maxSlotNum + 2];
   int lackeyNum[2];
   COLORREF innateFront[frontHeight * 8];//初始前线颜色，前线颜色(4K)
+  bool isLootSaved[2];//战利品是否已经截取
+  //同步参数
+  bool dualError;//同步任务2P是否报错
+  char dualErrorTip[100];//同步任务2P报错提示
+  char dualErrorString[100];//同步任务2P报错内容
+  int dualErrorLevel;//同步任务2P报错等级
   //记录信息
   int isDpiAwareRequired[2];//在游戏窗口内点击时是否需要DPI换算
   time_t taskStartTime, taskEndTime;//任务启动、结束时间（秒）
@@ -322,7 +430,9 @@ struct WorkType
   DWORD averageTime;//用于计算平均时间
   HWND hWnd[2];//小号1窗口，小号2窗口，识图窗口
   char startTimeString[100], endTimeString[100];//启动、结束时间字符串
-  char folderPath[maxPath], logPath[maxPath];//日志文件夹路径
+  char logDirectory[maxPath];//日志文件夹
+  char lootDirectory[maxPath];//战利品文件夹（启动任务时创建并填写）
+  char logPath[maxPath];//日志文件
   DWORD totalWaveTick[maxTotalWave];//各个波次的进入时刻，其中WaveTick[0]是进入关卡时刻
   int totalWaveExist[2][maxTotalWave];//两个账号各波次轨道是否存在
   int noImageTick;//出现无图像的时刻，用于超时后中断或提示
@@ -330,11 +440,29 @@ struct WorkType
   DWORD lastSimilarityTick;//上次获取相似度的时刻
   int isPromptOn;//是否正在提示
   char embarkString[2000];//启动流程
+  //刷新相关
+  HWND hWndServer;//选服窗口
+  RECT hallRect, serverRect;//大厅窗口区域和选服窗口区域（用于坐标换算）
+  COLORREF *hallShot;//大厅截图，用于刷新时识别服务器位置
+  COLORREF *pHallShot[4320];//大厅截图二级指针，高度不超过8K分辨率4320
+  //战利品测试临时参数
+  int blankSimilarity[2][5][10];//战利品row行column列与空格的像素重复度
+
   //颜色参数
   COLORREF heavyName[heavyNameHeight][heavyNameWidth];//粗角色名
   bool lightName[lightNameHeight][lightNameWidth];//细角色名（双色）
   COLORREF towerPage[2][10][14];
-  COLORREF scroll[196][1];//滚动条原图
+  COLORREF customScroll[customScrollHeight][1];//背包滚动条
+  COLORREF lootScroll[lootScrollHeight][1];//战利品滚动条
+  COLORREF loot[lootHeight * 5][lootWidth * 10];//5x10战利品截图
+  COLORREF totalLoot[lootHeight * 10][lootWidth * 10];//累计战利品截图
+
+  // 自动截图道具用的颜色信息
+  COLORREF initialProp[lootHeight][lootWidth];//移动前的道具背包格子截图
+  COLORREF movedProp[lootHeight][lootWidth];//移动后的道具背包格子截图
+  COLORREF calibration[calibrationHeight][calibrationWidth];//校准区
+  int propOffsetY;//道具背包翻页量（正数）
+
   CardType card[2][maxSlotNum + 1];
   COLORREF wideTemplate[wideTemplateHeight][wideTemplateWidth];
   COLORREF background[2][wideTemplateHeight][wideTemplateWidth];
@@ -353,9 +481,7 @@ struct WorkType
   int magic[2], magicCore[2];//两个账号的幻鸡和幻鸡目标卡（没有目标设为0）
   int isMagicPlantedRecently[2];//幻幻鸡是否已种植
 
-  WorkType() :map(*MallocMap(hMemDC))
-  {
-  }
+  WorkType() :map(*MallocMap(&hMemDC)) {}
 };
 //角色名图像类型
 struct RoleNameType
@@ -363,27 +489,32 @@ struct RoleNameType
   COLORREF heavy[heavyNameHeight][heavyNameWidth];//粗角色名
   bool light[lightNameHeight][lightNameWidth];//细角色名（双色）
 };
-const int maxRoleNameNum = 100;
-int roleNameNum;
+const int maxRoleNameNum = 100;//角色名上限
+int roleNameNum;//角色名数量
 RoleNameType roleName[maxRoleNameNum];//已保存的粗细角色名
-char roleNameList[maxRoleNameNum][maxPath];
+char roleNameList[maxRoleNameNum][maxPath];//角色名目录
 //载入角色名
 void LoadRoleName()
 {
-  if (_access("用户参数\\角色名", 0))
+  const char folder[] = "用户参数\\角色名";
+  if (!FileExist(folder))
     return;
-  char heavyNamePath[maxPath], lightNamePath[maxPath];
-  int filesNum = GetFileList("用户参数\\角色名\\*.bmp", roleNameList, maxRoleNameNum);//查找所有bmp文件
-  roleNameNum = 0;
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, roleNameList, maxRoleNameNum);//查找所有png文件
+
   FILE *f;
+  char heavyNamePath[maxPath], lightNamePath[maxPath];
+  roleNameNum = 0;
   for (int i = 0; i < filesNum && roleNameNum < maxRoleNameNum; i++)
   {
-    sprintf_s(heavyNamePath, "用户参数\\角色名\\%s", roleNameList[i]);//填写粗角色名路径
-    if (_access(heavyNamePath, 0) == 0) //如果可以打开
+    sprintf_s(heavyNamePath, "%s\\%s", folder, roleNameList[i]);//填写粗角色名路径
+    if (FileExist(heavyNamePath)) //如果可以打开
     {
       BitmapToColor(heavyNamePath, roleName[roleNameNum].heavy);//载入粗角色名图像
-      roleNameList[i][strlen(roleNameList[i]) - 4] = 0;//删去".bmp"4个字符
-      sprintf_s(lightNamePath, "用户参数\\角色名\\%s.txt", roleNameList[i]);//填写细角色名路径
+      roleNameList[i][strlen(roleNameList[i]) - 4] = 0;//删去".png"4个字符
+      sprintf_s(lightNamePath, "%s\\%s.txt", folder, roleNameList[i]);//填写细角色名路径
       if (fopen_s(&f, lightNamePath, "r") == 0) //如果可以打开，载入细角色名双色图
       {
         for (int y = 0; y < lightNameHeight; y++)
@@ -400,16 +531,26 @@ struct ReserveType
 {
   COLORREF innateGrid[7][9][gridHeight][gridWidth];//地图7行9列的初始颜色
   byte maltoseTimes[7][9];//7行9列放棉麦的次数
-  bool isMaltoseClearRequired;//是否需要在7分钟时清除棉麦次数（仅限音乐节）
+  bool isMaltoseClearRequired;//是否需要在3分钟时清除棉麦次数（仅限音乐节）
+  CustomType custom[maxCustomNum];//自定卡槽（点击启动按钮时更新）
+  int customNum;//自定卡槽数量
+  int bagY;//背包卡Y位置
+  int gamesFinished;//已完成的局数（普通任务为0）
+  int lootNum[2][maxLootNum];//每种战利品的获得数量
+  //同步信息
+  bool arriveRefresh;//是否已到达StartTask的刷新判定处
+  bool arriveFinish;//是否已到达FinishTask
+  //记录信息
+  int updateNum, successfulUpdateNum, iconicNum;//截图、截图成功、最小化帧数
 };
 
 //6. 普通任务参数
 int getColdNum;//读取冷却次数
-WindowInfo monitor[maxTaskNum];//6个任务的监视窗口信息
-ProjectType project[maxTaskNum];//6个任务的计划参数
-StateType state[maxTaskNum];//6个任务的状态
-WorkType work[maxTaskNum];//6个任务的执行参数、轨道参数和运行参数
-ReserveType reserve[maxTaskNum];//6个任务开始时不重置的信息
+MonitorType monitor[maxTaskNum];//任务的监视窗口信息
+ParamType param[maxTaskNum];//任务的计划参数
+StateType state[maxTaskNum];//任务的状态
+WorkType work[maxTaskNum];//任务的执行参数、轨道参数和运行参数
+ReserveType reserve[maxTaskNum];//任务开始时不重置的信息，只在需要时填写
 int isTaskStarted[maxTaskNum];//任务是否正在运行
 int isTaskStarted_Confirm[maxTaskNum];//任务是否正在运行（确认退出任务线程后才会设为0）
 int isTaskHided[maxTaskNum][2];//窗口隐藏状态，1=隐藏，0=显示
@@ -421,33 +562,29 @@ const int unlimitedRefreshTimes = 50;//无限制选服次数
 const int noImageTimeout = 120;//无图像处理所需时间
 int mode = 1;//1=普通任务，2=高级任务
 int zoom;//执行器缩放比例
-int plantDelay;//独立计时模式下放卡延迟
-int repairLevel;//补阵强度，数值1-10对应10%-100%
+int plantDelay;//放卡延迟
+int noImageOperation;//无图像时操作（0=不处理，1=提示，2=停止）
+int customOption;//带卡选择（0=最高星，1=最靠前）
+int flipNum;//翻牌数量（最多5，因为第6张牌与“开始”按钮重合）
 int bagFullOperation;//背包满时操作（0=停止，1=继续）
-int noImageOperation = 1;//无图像时操作（0=不处理，1=提示，2=停止）
 int expFullOperation;//经验满时操作（0=停止，1=继续）
-int flipNum = 2;//翻牌数（最多5，因为第6张牌与“开始”按钮重合）
+int repairLevel;//补阵强度，数值1-10对应10%-100%
 int timer;//定时器
 int timerMode;//定时模式：0=关，1=倒计时，2=启动时刻
 int operationSpeed;//操作速度，0=慢速，1=中速，2=快速
 int maxRefreshTimes;//最大刷新次数
+int globalAccelarationTime;//全局加速时间
 int contestOption;//大赛模式
-int server3366[2];//1P和2P的3366服务器选项
 
 //8. 执行器参数
-const int defaultTextSize = 20;//默认字体大小
 IMAGE imageBackup;//执行器图像备份
 int isRepaintRequired;//是否需要重新绘制
-char runTimeString[30];//本次启动的时间
-int currentBackup, backupNum;//当前备份数，总备份数
-char refreshRecordPath[maxPath]; //刷新记录路径
-HWND hWndServer;//选服窗口
-RECT hallRect, serverRect;//大厅矩形和选服窗口矩形（用于坐标换算）
 HWND hWndActuator;//执行器窗口句柄
-char tracePrint[1000];//任务输出内容
+char tracePrint[1000];//DEBUG专属：执行器下方输出内容
 char programDirect[maxPath];//轨道执行器.exe所在目录，不带斜杠
 char workDirect[maxPath];//程序工作目录
 int lastClickMessage;//上次鼠标点击信息：单击1xxxxyyyy，右击2xxxxyyyy，无消息0
+char lastTip[200];//上一次显示的提示（用于判断要不要更新提示）
 float ratio;//窗口缩放比例。ratio=1.25意味着分辨率太高，点击位置判定偏大，需要除以该比例。
 float originRatio;//100%缩放比例
 POINT originalWndPos;//记录窗口原位
@@ -460,9 +597,7 @@ int sleepTime;//等待时间
 const COLORREF defaultFillColor = RGB(30, 30, 30);//默认填充色
 const COLORREF taskColor[6] = { RGB(255, 96, 128), RGB(224, 224, 0), RGB(96, 232, 96), RGB(0, 200, 240), RGB(255, 64, 255), RGB(255, 128, 0) };
 const COLORREF stateColor[6] = { RGB(192, 60, 80), RGB(160, 160, 0), RGB(32, 184, 32), RGB(0, 128, 192), RGB(192, 0, 192), RGB(192, 96, 0) };
-COLORREF grayWhite = RGB(224, 224, 224);//默认文字的灰白色
-COLORREF *hallShot;//保存大厅截图，用于刷新时识别服务器位置
-COLORREF *pHallShot[4320] = {};//高度不超过8K分辨率4320
+const COLORREF grayWhite = RGB(224, 224, 224);//默认文字的灰白色
 COLORREF cardTemplate[4][templateHeight][templateWidth];//海星和0-2转煮蛋的标准模板
 const COLORREF firstPageColor = 0x3a6a93;//第1层左边的颜色。用于判断魔塔第一页
 int pageValue[12] = { 0, 2, 5, 7, 3, 4, 12, 1, 15, 13, 9, 8 };//魔塔翻页颜色信息
@@ -477,6 +612,7 @@ const int waveGrade = 101;//结算
 const int waveFlip = 102;//翻牌
 const int waveNoImage = 103;//无图像
 const int waveTower = 104;//魔塔
+const int waveLoot = 105;//战利品界面
 const int ratColorWidth = 26;
 COLORREF ratColor[ratColorWidth];
 const int progressRatWidth = 31, progressHeadWidth = 11;//老鼠头宽度；进度条右侧固定颜色宽度
@@ -492,11 +628,6 @@ struct ButtonGroupType
   int firstButton;//第一个按钮编号
   int row, column;//按钮的行数和列数
 };
-//按钮类型
-struct ButtonType
-{
-  int x, y, width, height;
-};
 
 //10. 按钮信息
 const int MaxButtonGroupNum = 100;
@@ -504,7 +635,7 @@ int buttonGroupNum;//按钮的类数
 ButtonGroupType buttonGroup[MaxButtonGroupNum];
 const int maxButtonNum = 1000;
 int buttonNum;//按钮的个数
-ButtonType Button[maxButtonNum];
+RectType buttons[maxButtonNum];
 int ButtonArea[2][wndWidth][wndHeight];//每个坐标的区域值，初始为0，开局时注册按钮
 int buttonParameter[2];//两个模式的参数区
 int buttonState[2];//两个模式的状态区
@@ -516,13 +647,44 @@ int buttonUpperSettings[2];//上方设置
 int buttonLowerSettings[2];//下方设置
 int buttonLock;//锁定
 
+//获取任务task对应的列表编号
+int GetList(int task)
+{
+  return (task - taskNum) / 2;
+}
+//获取列表list对应的主任务编号
+int GetTask(int list)
+{
+  return taskNum + list * 2;
+}
+//任务task是否属于普通任务
+bool IsNormal(int task)
+{
+  return task >= 0 && task < taskNum;
+}
+//任务task是否属于高级任务
+bool IsAdvance(int task)
+{
+  return task >= taskNum;
+}
+//任务task是否属于同步任务的1P
+bool IsDual1P(int task)
+{
+  return task >= taskNum && task % 2 == 1;
+}
+//任务task是否属于同步任务的2P
+bool IsDual2P(int task)
+{
+  return task >= taskNum && task % 2 == 0;
+}
+
 //注册按钮内部小按钮的区域值
 void RegisterCenterButton(int mode, int ButtonCode, int x1, int y1, int width1, int height1, int Area)
 {
-  int x = Button[ButtonCode].x;
-  int y = Button[ButtonCode].y;
-  int width = Button[ButtonCode].width;
-  int height = Button[ButtonCode].height;
+  int x = buttons[ButtonCode].x;
+  int y = buttons[ButtonCode].y;
+  int width = buttons[ButtonCode].width;
+  int height = buttons[ButtonCode].height;
   if (ButtonArea[mode - 1][x + x1][y + y1] == Area)
     return;
   for (int i = x + x1; i < x + x1 + width1; i++)
@@ -532,10 +694,10 @@ void RegisterCenterButton(int mode, int ButtonCode, int x1, int y1, int width1, 
 //注册左侧点击按钮的区域值
 void RegisterLeftButton(int mode, int ButtonCode, int EffectiveWidth, int Area)
 {
-  int x = Button[ButtonCode].x;
-  int y = Button[ButtonCode].y;
-  int width = Button[ButtonCode].width;
-  int height = Button[ButtonCode].height;
+  int x = buttons[ButtonCode].x;
+  int y = buttons[ButtonCode].y;
+  int width = buttons[ButtonCode].width;
+  int height = buttons[ButtonCode].height;
   if (ButtonArea[mode - 1][x][y] == Area)
     return;
   for (int i = x; i < x + EffectiveWidth; i++)
@@ -545,10 +707,10 @@ void RegisterLeftButton(int mode, int ButtonCode, int EffectiveWidth, int Area)
 //注册右侧点击按钮的区域值
 void RegisterRightButton(int mode, int ButtonCode, int EffectiveWidth, int Area)
 {
-  int x = Button[ButtonCode].x;
-  int y = Button[ButtonCode].y;
-  int width = Button[ButtonCode].width;
-  int height = Button[ButtonCode].height;
+  int x = buttons[ButtonCode].x;
+  int y = buttons[ButtonCode].y;
+  int width = buttons[ButtonCode].width;
+  int height = buttons[ButtonCode].height;
   if (ButtonArea[mode - 1][x + width - 18][y] == Area)
     return;
   for (int i = x + width - EffectiveWidth; i < x + width; i++)
@@ -558,10 +720,10 @@ void RegisterRightButton(int mode, int ButtonCode, int EffectiveWidth, int Area)
 //注册水平调节按钮的区域值
 void RegisterHorizontalAdjust(int mode, int ButtonCode, int LeftArea, int RightArea)
 {
-  int x = Button[ButtonCode].x;
-  int y = Button[ButtonCode].y;
-  int width = Button[ButtonCode].width;
-  int height = Button[ButtonCode].height;
+  int x = buttons[ButtonCode].x;
+  int y = buttons[ButtonCode].y;
+  int width = buttons[ButtonCode].width;
+  int height = buttons[ButtonCode].height;
   if (ButtonArea[mode - 1][x][y] == LeftArea)
     return;
   for (int j = y; j < y + height; j++)
@@ -575,10 +737,10 @@ void RegisterHorizontalAdjust(int mode, int ButtonCode, int LeftArea, int RightA
 //注册右侧调节按钮的区域值
 void RegisterRightAdjust(int mode, int ButtonCode, int UpArea, int DownArea)
 {
-  int x = Button[ButtonCode].x;
-  int y = Button[ButtonCode].y;
-  int width = Button[ButtonCode].width;
-  int height = Button[ButtonCode].height;
+  int x = buttons[ButtonCode].x;
+  int y = buttons[ButtonCode].y;
+  int width = buttons[ButtonCode].width;
+  int height = buttons[ButtonCode].height;
   if (ButtonArea[mode - 1][x + width - 18][y] == UpArea)
     return;
   for (int i = x + width - 18; i < x + width; i++)
@@ -592,10 +754,10 @@ void RegisterRightAdjust(int mode, int ButtonCode, int UpArea, int DownArea)
 //注册左侧调节按钮的区域值
 void RegisterLeftAdjust(int mode, int ButtonCode, int UpArea, int DownArea)
 {
-  int x = Button[ButtonCode].x;
-  int y = Button[ButtonCode].y;
-  int width = Button[ButtonCode].width;
-  int height = Button[ButtonCode].height;
+  int x = buttons[ButtonCode].x;
+  int y = buttons[ButtonCode].y;
+  int width = buttons[ButtonCode].width;
+  int height = buttons[ButtonCode].height;
   if (ButtonArea[mode - 1][x][y] == UpArea)
     return;
   for (int i = x; i < x + 18; i++)
@@ -609,10 +771,10 @@ void RegisterLeftAdjust(int mode, int ButtonCode, int UpArea, int DownArea)
 //注册单个按钮的区域值
 int RegisterButtonArea(int mode, int x, int y, int width, int height, int area)
 {
-  Button[buttonNum].x = x;
-  Button[buttonNum].y = y;
-  Button[buttonNum].width = width;
-  Button[buttonNum].height = height;
+  buttons[buttonNum].x = x;
+  buttons[buttonNum].y = y;
+  buttons[buttonNum].width = width;
+  buttons[buttonNum].height = height;
   buttonNum++;
   for (int i = x; i < x + width; i++)
     for (int j = y; j < y + height; j++)
@@ -690,13 +852,19 @@ int RegisterColumnsArea(int mode, int column, int x, int y, int *width, int heig
 {
   return RegisterButtonsArea(mode, 1, column, x, y, width, &height, title, 0, ColumnWeight);
 }
-void GetButtonCenter(int ButtonClassCode, int row, int column, int *cx, int *cy)
+//绘制按钮buttonCode的水平调节按钮
+void PaintHorizontalAdjust(int buttonCode)
 {
-  if (ButtonClassCode < zero)//按钮类编号无效则退出
+  PaintHorizontalAdjust(buttons[buttonCode].x, buttons[buttonCode].y,
+    buttons[buttonCode].width, buttons[buttonCode].height);
+}
+void GetButtonCenter(int buttonClassCode, int row, int column, int *cx, int *cy)
+{
+  if (buttonClassCode < zero)//按钮类编号无效则退出
     return;
-  int ButtonCode = buttonGroup[ButtonClassCode].firstButton + row * buttonGroup[ButtonClassCode].column + column;
-  *cx = Button[ButtonCode].x + Button[ButtonCode].width / 2;
-  *cy = Button[ButtonCode].y + Button[ButtonCode].height / 2;
+  int buttonCode = buttonGroup[buttonClassCode].firstButton + row * buttonGroup[buttonClassCode].column + column;
+  *cx = buttons[buttonCode].x + buttons[buttonCode].width / 2;
+  *cy = buttons[buttonCode].y + buttons[buttonCode].height / 2;
 }
 //在编号为ButtonClassCode的按钮组的第row行第column列显示内容Content
 void PrintButton(int ButtonClassCode, int row, int column, const char *Content)
@@ -704,27 +872,29 @@ void PrintButton(int ButtonClassCode, int row, int column, const char *Content)
   if (ButtonClassCode < zero)//按钮类编号无效则退出
     return;
   int ButtonCode = buttonGroup[ButtonClassCode].firstButton + row * buttonGroup[ButtonClassCode].column + column;
-  CenterView(Content, Button[ButtonCode].x + Button[ButtonCode].width / 2, Button[ButtonCode].y + Button[ButtonCode].height / 2);
+  CenterView(Content, buttons[ButtonCode].x + buttons[ButtonCode].width / 2, buttons[ButtonCode].y + buttons[ButtonCode].height / 2);
 }
 //在编号为ButtonClassCode的按钮组的第row行第column列显示内容Content，偏移dx和dy，isGray决定是否临时使用灰色
-void PrintButton(int ButtonClassCode, int row, int column, const char *Content, int dx, int dy, bool isGray = 0)
+void PrintButton(int buttonClassCode, int row, int column, const char *content,
+  int dx, int dy, bool isGray = 0)
 {
-  if (ButtonClassCode < zero)//按钮类编号无效则退出
+  if (buttonClassCode < zero)//按钮类编号无效则退出
     return;
-  int ButtonCode = buttonGroup[ButtonClassCode].firstButton + row * buttonGroup[ButtonClassCode].column + column;
+  int ButtonCode = buttonGroup[buttonClassCode].firstButton + row * buttonGroup[buttonClassCode].column + column;
   COLORREF textcolor = gettextcolor();
   if (isGray)
     settextcolor(RGB(128, 128, 128));
-  CenterView(Content, Button[ButtonCode].x + Button[ButtonCode].width / 2 + dx, Button[ButtonCode].y + Button[ButtonCode].height / 2 + dy);
+  CenterView(content, buttons[ButtonCode].x + buttons[ButtonCode].width / 2 + dx,
+    buttons[ButtonCode].y + buttons[ButtonCode].height / 2 + dy);
   settextcolor(textcolor);
 }
 //画出按钮ButttonCode的网格
 void PaintButtonGrid(int ButtonCode)
 {
-  int Left = Button[ButtonCode].x;
-  int Right = Left + Button[ButtonCode].width;
-  int Top = Button[ButtonCode].y;
-  int Bottom = Top + Button[ButtonCode].height;
+  int Left = buttons[ButtonCode].x;
+  int Right = Left + buttons[ButtonCode].width;
+  int Top = buttons[ButtonCode].y;
+  int Bottom = Top + buttons[ButtonCode].height;
   line(Left, Top, Left, Bottom);
   line(Right, Top, Right, Bottom);
   line(Left, Top, Right, Top);
@@ -740,21 +910,21 @@ void PaintButtonGroupGrid(int ButtonClassCode, int row1, int row2, int dy)
 
   int FirstButton = buttonGroup[ButtonClassCode].firstButton + (row1 - 1) * buttonGroup[ButtonClassCode].column;
   int LastButton = FirstButton + (MaxRow - row1 + 1) * buttonGroup[ButtonClassCode].column - 1;
-  int Left = Button[FirstButton].x;
-  int Top = Button[FirstButton].y + dy;
-  int Right = Button[LastButton].x + Button[LastButton].width;
-  int Bottom = Button[LastButton].y + Button[LastButton].height + dy;
+  int Left = buttons[FirstButton].x;
+  int Top = buttons[FirstButton].y + dy;
+  int Right = buttons[LastButton].x + buttons[LastButton].width;
+  int Bottom = buttons[LastButton].y + buttons[LastButton].height + dy;
 
   for (int i = 0; i <= MaxRow - row1; i++)//画横线
   {
     int ButtonCode = FirstButton + i * buttonGroup[ButtonClassCode].column;
-    line(Left, Button[ButtonCode].y + dy, Right, Button[ButtonCode].y + dy);
+    line(Left, buttons[ButtonCode].y + dy, Right, buttons[ButtonCode].y + dy);
   }
   line(Left, Bottom, Right, Bottom);
   for (int j = 0; j < buttonGroup[ButtonClassCode].column; j++)//画竖线
   {
     int ButtonCode = FirstButton + j;
-    line(Button[ButtonCode].x, Top, Button[ButtonCode].x, Bottom);
+    line(buttons[ButtonCode].x, Top, buttons[ButtonCode].x, Bottom);
   }
   line(Right, Top, Right, Bottom);
 }
@@ -788,11 +958,134 @@ DWORD __stdcall AutoTransform(void *Title)//自动转化（无参数）
   }
   return 0;
 }
-/*对话框函数*/
-struct INPUTBOXPARAMS
+//对话框函数
+
+//初始化服务器组合框，
+void InitServerCombo(HWND hDlg, int idItem, int serverSelected)
 {
-  char *Dest, *Prompt, *Title, *Default;//输入对象，提示语，标题，初始文本
-  int MaxLength;//最大长度
+  char boxString[10] = {};
+  HWND hCombo = GetDlgItem(hDlg, idItem);//组合框句柄
+  for (int server = 0; server <= 6; server++) //添加组合框选项
+    ComboBox_AddString(hCombo, serverName[server]);
+  ComboBox_SetCurSel(hCombo, serverSelected);//设置默认选中
+}
+//设置对话框控件文本（如果是nullptr则空置）及最大输入长度length
+void SetItemText(HWND hDlg, int idItem, const char *text, int length)
+{
+  if (text == nullptr)
+    SetDlgItemText(hDlg, idItem, "");
+  else
+    SetDlgItemText(hDlg, idItem, text);
+  SendMessage(GetDlgItem(hDlg, idItem), EM_LIMITTEXT, length, 0);//设置长度限制
+}
+//二级密码是否合格
+bool IsPasswordLegal(const char *password)
+{
+  int length = strlen(password);
+  if (length > 14)
+    return false;
+  for (int i = 0; i < length; i++)
+    if (password[i] < 32 || password[i] > 126)
+      return false;
+  return true;
+}
+//服务器和二级密码输入框过程函数
+INT_PTR CALLBACK ServerDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+  switch (uMsg)
+  {
+  case WM_INITDIALOG:
+  {
+    //获取传入的参数：账号
+    int account = (int)lParam;
+
+    //对话框位置居中
+    RECT desktop, dialog;
+    GetWindowRect(GetDesktopWindow(), &desktop);
+    GetWindowRect(hDlg, &dialog);
+    int xPos = (desktop.left + desktop.right - (dialog.right - dialog.left)) / 2;
+    int yPos = (desktop.top + desktop.bottom - (dialog.bottom - dialog.top)) / 2;
+    SetWindowPos(hDlg, HWND_TOP, xPos, yPos, 0, 0, SWP_NOSIZE);
+
+    //设置对话框标题
+    char title[100];
+    sprintf_s(title, "%dP服务器和二级密码", account + 1);
+    SetWindowText(hDlg, title);
+
+    //初始化服务器组合框
+    InitServerCombo(hDlg, idServer, plot[curList].server[account]);
+
+    //设置密码输入框
+    SetItemText(hDlg, idPassword, plot[curList].password[account], 14);
+
+    SetWindowLongA(hDlg, DWLP_USER, account);//设置用户数据，以便在后面的消息中使用
+    SetTimer(hDlg, 1, 1, NULL);//设置0ms定时器，将选中文本操作延后
+  }
+  return TRUE;
+  case WM_TIMER:
+    if (wParam == 1)
+    {
+      KillTimer(hDlg, 1);// 第一次处理就销毁定时器
+      HWND hEditPassword = GetDlgItem(hDlg, idPassword);
+      if (hEditPassword)
+      {
+        SetFocus(hEditPassword);// 设置焦点到密码输入框
+        SendMessageA(hEditPassword, EM_SETSEL, 0, -1);// 选中密码输入框中的所有文本
+      }
+    }
+    break;
+  case WM_COMMAND:
+    if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
+    {
+      //获取传入的参数：账号
+      int account = GetWindowLongA(hDlg, DWLP_USER);
+
+      //获取选择的服务器
+      char serverString[100];
+      int serverInput = 0;
+      GetDlgItemTextA(hDlg, idServer, serverString, sizeof(serverString));
+      for (int server = 0; server <= 6; server++)
+        if (strcmp(serverString, serverName[server]) == 0)
+          serverInput = server;
+
+      //获取输入的密码
+      char passwordInput[100];
+      GetDlgItemTextA(hDlg, idPassword, passwordInput, sizeof(passwordInput));
+
+      //密码输入不合格则报错重输
+      if (!IsPasswordLegal(passwordInput))
+      {
+        MessageBoxA(hDlg, "二级密码不能含有中文。", "提示",
+          MB_ICONINFORMATION | MB_SYSTEMMODAL);
+        break;
+      }
+
+      //输入合格则保存输入
+      plot[curList].server[account] = serverInput;
+      strcpy_s(plot[curList].password[account], passwordInput);
+      EndDialog(hDlg, IDOK);// 结束对话框
+      return TRUE;
+    }
+    else if (LOWORD(wParam) == IDCANCEL) // 点击了“取消”按钮
+    {
+      EndDialog(hDlg, IDCANCEL);
+      return TRUE;
+    }
+    break;
+  }
+  return FALSE;
+}
+//输入服务器和二级密码
+int EditServerAndPassword(int account)
+{
+  return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_SERVER),
+    hWndActuator, ServerDialogProc, account);
+}
+struct InputBoxParam
+{
+  char *dest;//输入对象
+  const char *prompt, *title, *defaultStr;//提示语，标题，初始文本
+  int maxLength;//最大长度
 };
 //对话框过程函数
 INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -801,7 +1094,7 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
   {
   case WM_INITDIALOG:
   {
-    INPUTBOXPARAMS *params = (INPUTBOXPARAMS *)lParam;// 获取传入的参数
+    InputBoxParam *params = (InputBoxParam *)lParam;// 获取传入的参数
     //设置输入框位置
     RECT Desktop, Dialog;
     GetWindowRect(GetDesktopWindow(), &Desktop);
@@ -809,13 +1102,13 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     int xPos = (Desktop.left + Desktop.right - (Dialog.right - Dialog.left)) / 2;
     int yPos = (Desktop.top + Desktop.bottom - (Dialog.bottom - Dialog.top)) / 2;
     SetWindowPos(hDlg, HWND_TOP, xPos, yPos, 0, 0, SWP_NOSIZE);
-    SetWindowText(hDlg, params->Title);//设置输入框标题
-    if (params->Default != NULL) //设置输入框的初始文本
-      SetDlgItemText(hDlg, IDC_EDIT1, params->Default);
-    if (params->Prompt != NULL) //设置输入框提示语
-      SetDlgItemText(hDlg, IDC_TEXT, params->Prompt);
+    SetWindowText(hDlg, params->title);//设置输入框标题
+    if (params->defaultStr != NULL) //设置输入框的初始文本
+      SetDlgItemText(hDlg, IDC_EDIT1, params->defaultStr);
+    if (params->prompt != NULL) //设置输入框提示语
+      SetDlgItemText(hDlg, IDC_TEXT, params->prompt);
     HWND hWndEdit = GetDlgItem(hDlg, IDC_EDIT1);
-    SendMessage(hWndEdit, EM_LIMITTEXT, (WPARAM)(params->MaxLength - 1), 0);//设置长度限制
+    SendMessage(hWndEdit, EM_LIMITTEXT, (WPARAM)(params->maxLength - 1), 0);//设置长度限制
     SetWindowLongPtr(hDlg, DWLP_USER, (LONG_PTR)params);//设置用户数据，以便在后面的消息中使用
     SetTimer(hDlg, 1, 1, NULL);//设置0ms定时器，将选中文本操作延后
   }
@@ -825,11 +1118,11 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
       KillTimer(hDlg, 1);// 第一次处理就销毁定时器
       // 获取文本编辑框的句柄
-      HWND hwndEdit = GetDlgItem(hDlg, IDC_EDIT1);
-      if (hwndEdit != NULL)
+      HWND hEdit = GetDlgItem(hDlg, IDC_EDIT1);
+      if (hEdit != NULL)
       {
-        SetFocus(hwndEdit);// 设置焦点到文本编辑框
-        SendMessage(hwndEdit, EM_SETSEL, 0, -1);// 选中文本编辑框中的所有文本
+        SetFocus(hEdit);// 设置焦点到文本编辑框
+        SendMessage(hEdit, EM_SETSEL, 0, -1);// 选中文本编辑框中的所有文本
       }
     }
     break;
@@ -837,8 +1130,8 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
     {
       // 获取编辑框中的内容
-      INPUTBOXPARAMS *params = (INPUTBOXPARAMS *)GetWindowLongPtr(hDlg, DWLP_USER);
-      GetDlgItemText(hDlg, IDC_EDIT1, params->Dest, params->MaxLength);
+      InputBoxParam *params = (InputBoxParam *)GetWindowLongPtr(hDlg, DWLP_USER);
+      GetDlgItemText(hDlg, IDC_EDIT1, params->dest, params->maxLength);
       EndDialog(hDlg, IDOK);// 结束对话框
       return TRUE;
     }
@@ -852,43 +1145,52 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
   return FALSE;
 }
 // 自定义的InputBox函数
-int NewInputBox(char *Dest, int MaxLength = maxPath, char *Prompt = "", char *Title = "输入", char *Default = "")
+int NewInputBox(char *dest, int maxLength = maxPath, const char *prompt = "",
+  const char *title = "输入", const char *defaultStr = "")
 {
-  INPUTBOXPARAMS params = {}; //显示对话框并传递参数
-  params.Dest = Dest;
-  params.Prompt = Prompt;
-  params.Title = Title;
-  params.Default = Default;
-  params.MaxLength = MaxLength;
+  InputBoxParam params = {}; //显示对话框并传递参数
+  params.dest = dest;
+  params.prompt = prompt;
+  params.title = title;
+  params.defaultStr = defaultStr;
+  params.maxLength = maxLength;
   return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_DIALOG1), hWndActuator, DialogProc, (LPARAM)&params);
+}
+//带ban卡的轨道路径是否合法
+bool IsBannedTrackLegal(const char *bannedPath)
+{
+  if (strchr(bannedPath, '*') || strchr(bannedPath, '?') || strchr(bannedPath, '\"') || strchr(bannedPath, '\t'))
+    return false;
+  if (bannedPath[0] == '<')//如果开头是'<'，按去卡符号处理
+  {
+    if (strchr(bannedPath + 1, '<')) //如果还有'<'，视为错误
+      return false;
+    const char *right = strchr(bannedPath + 1, '>');//查找'>'
+    if (!right || strchr(right + 1, '>'))//如果没有'>'，或者有多于一个'>'，视为错误
+      return false;
+  }
+  else if (strchr(bannedPath, '<') || strchr(bannedPath, '>')) //开头不是'<'，则不能有'<','>'
+    return false;
+  return true;
 }
 //轨道路径输入是否合法
 bool IsTrackLegal(const char *extendedPath)
 {
-  if (strchr(extendedPath, '*') || strchr(extendedPath, '?') || strchr(extendedPath, '\"') || strchr(extendedPath, '\t'))
-    return false;
   const char *bar = strchr(extendedPath, '|');//查找竖线
   const char *bannedPath = extendedPath;//仅含ban卡指令的轨道
-  if (bar) //如果有竖线
+  if (bar) //如果有竖线，说明有加速指令
   {
-    char accelerationString[maxPath] = {};//扩展路径的加速部分
+    bannedPath = bar + 1;
+    //提取加速部分
+    char accelerationString[maxPath] = {};
     strcpy_s(accelerationString, extendedPath);
     accelerationString[bar - extendedPath] = 0;
-    if (IsNature(accelerationString))
-    {
-    }
-  }
-  if (extendedPath[0] == '<')//如果开头是<，按去卡符号处理
-  {
-    if (strchr(extendedPath + 1, '<')) //如果还有<，视为错误
-      return false;
-    const char *right = strchr(extendedPath + 1, '>');//查找>
-    if (!right || strchr(right + 1, '>'))//如果没有>，或者有多于一个>，视为错误
+    int accelerationTime = StrToNat(accelerationString);
+    //加速时间必须是100-900 ms
+    if (accelerationTime < 0 || accelerationTime > 1000)
       return false;
   }
-  else if (strchr(extendedPath, '<') || strchr(extendedPath, '>')) //开头不是<，则不能有<,>
-    return false;
-  return true;
+  return IsBannedTrackLegal(bannedPath);
 }
 //输入轨道文件，直至符合格式要求为止。输入成功则返回1，否则返回0
 template<size_t size> int InputTrack(char(&Track)[size])
@@ -926,10 +1228,33 @@ int getTimer(char *timerString, int *timerMode)
     *timerMode = 1;
   return HmsToSecond(timerString);
 }
+//输入二级密码，直到符合格式要求为止。输入成功则返回1，否则返回0
+int InputPassword(char(&password)[15])
+{
+  char prompt[300] = "输入二级密码以使用清理背包等功能。";//输入提示
+  char errorPrompt[300] = "您的输入不规范，请重新输入。\n";//输入错误时的提示
+  strcat_s(errorPrompt, prompt);
+
+  char passwordInput[15];//输入的二级密码
+  strcpy_s(passwordInput, password);//先拷贝原密码
+
+  int button = NewInputBox(passwordInput, 15, prompt, "二级密码", passwordInput);
+  //如果点击了确定按钮，且输入不合格，则重新输入
+  while (button == IDOK && !IsPasswordLegal(passwordInput))
+    button = NewInputBox(passwordInput, 15, errorPrompt, "二级密码", passwordInput);
+  if (button == IDOK) //退出循环时，如果点了确定，视为有效输入
+  {
+    strcpy_s(password, passwordInput);
+    return 1;
+  }
+  return 0;
+}
 //输入倒计时，直至符合格式要求为止。输入成功则返回1，否则返回0
 int InputTimer(int *pTimer, int *pTimerMode)
 {
-  char prompt[300] = "输入倒计时hh:mm:ss（如01:20:00表示1小时20分钟后启动）\n或启动时间~hh:mm:ss（如~16:30:00表示16点30分启动）。\n可以只输hh:mm；右键删除定时；点【启动】才会开始计时。";
+  char prompt[300] = "输入倒计时hh:mm:ss（如01:20:00表示1小时20分钟后启动）\n"
+    "或启动时间~hh:mm:ss（如~16:30:00表示16点30分启动）。\n"
+    "可以只输hh:mm；右键删除定时；点【启动】才会开始计时。";
   char errorPrompt[300] = "您的输入不规范，请重新输入。\n";
   strcat_s(errorPrompt, prompt);
   int timerMode = 0;
@@ -944,27 +1269,143 @@ int InputTimer(int *pTimer, int *pTimerMode)
   }
   return 0;
 }
-//输入自然数到Num，直到满足范围Min~Max为止。输入成功则返回1，否则返回0
-int InputNum(int *Num, int Min, int Max, char *Prompt = "", char *Title = "输入")
+//输入含中文的字符串（需要自动转化）
+bool InputChineseString(char *dest, int size, bool isLegal(const char *str),
+  const char *prompt = "", const char *title = "输入")
 {
-  char MaxString[11];
-  sprintf_s(MaxString, "%d", Max);
-  int MaxLength = strlen(MaxString) + 1;//获得最大输入长度
-  char Dest[11];
-  char Default[11];
-  sprintf_s(Default, "%d", *Num);//初始文本：自然数的原值
-  int InputButton = NewInputBox(Dest, MaxLength, Prompt, Title, Default);//输入自然数到Dest
-  int CurrentNum = StrToNat(Dest);//Dest转化为自然数
-  char NewPrompt[1000];
-  sprintf_s(NewPrompt, "您的输入不规范，请重新输入。\n%s", Prompt);
-  while ((CurrentNum < Min || CurrentNum > Max) && InputButton == IDOK)//若范围不正确，且点击了确定
+  CreateThread(NULL, 0, AutoTransform, (void *)title, 0, NULL);//运行自动转化
+
+  char illegalPrompt[500];//输入不规范的提示
+  sprintf_s(illegalPrompt, "您的输入不规范，请重新输入。\n%s", prompt);
+
+  char destCopy[100] = {};
+  strcpy_s(destCopy, dest);//初始文本：自然数的原值
+
+  //弹出输入框，输入文本到destCopy
+  int inputButton = NewInputBox(destCopy, size, prompt, title, destCopy);
+  while (inputButton == IDOK) //如果点击了确定，则检查输入
   {
-    InputButton = NewInputBox(Dest, MaxLength, NewPrompt, Title, Dest);//重新输入
-    CurrentNum = StrToNat(Dest);//记录到CurrentNum并重新检查
+    if (isLegal(destCopy))//输入在要求范围内，则保存输入
+    {
+      strcpy_s(dest, size, destCopy);
+      TransformStopSignal = 1;
+      return true;
+    }
+    inputButton = NewInputBox(destCopy, size, illegalPrompt, title, destCopy);//否则继续输入
+  }
+  TransformStopSignal = 1;
+  return false;//取消输入
+}
+//任务标题是否合格
+bool isTaskTitleLegal(const char *title)
+{
+  int length = strlen(title);
+  return length > 0 && length <= 14;
+}
+//输入普通任务标题
+bool InputTaskTitle(int task)
+{
+  return InputChineseString(param[task].title, 15, isTaskTitleLegal,
+    "给任务取一个名字（不超过7个字）。", "任务标题");
+}
+//输入高级任务标题
+bool InputAdvanceTitle(int list)
+{
+  int task = GetTask(list);
+  if (InputTaskTitle(task))
+  {
+    strcpy_s(param[task + 1].title, param[task].title);
+    return true;
+  }
+  return false;
+}
+//输入字符串到dest，直到isLegal(输入)为真。输入成功则返回1，否则返回0
+template <size_t size>
+bool InputString(char(&dest)[size], bool isLegal(const char *str),
+  const char *prompt = "", const char *title = "输入")
+{
+  char illegalPrompt[500];//输入不规范的提示
+  sprintf_s(illegalPrompt, "您的输入不规范，请重新输入。\n%s", prompt);
+
+  char destCopy[100] = {};
+  strcpy_s(destCopy, dest);//初始文本：自然数的原值
+
+  //弹出输入框，输入文本到destCopy
+  int inputButton = NewInputBox(destCopy, size, prompt, title, destCopy);
+  while (inputButton == IDOK) //如果点击了确定，则检查输入
+  {
+    if (isLegal(destCopy))//输入在要求范围内，则保存输入
+    {
+      strcpy_s(dest, destCopy);
+      return true;
+    }
+    inputButton = NewInputBox(destCopy, size, illegalPrompt, title, destCopy);//否则继续输入
+  }
+  return false;//取消输入
+}
+//判断魔塔输入是否合法
+bool isTowerLegal(const char *tower)
+{
+  if (strlen(tower) < 2) //长度至少为2
+    return false;
+  if (!IsNature(tower + 1)) //第一个字母后面必须是自然数
+    return false;
+  int level = atoi(tower + 1);//获得这个自然数
+  if (tower[0] == 'a' || tower[0] == 'A') //单人 A1-A165
+    if (level >= 0 && level <= 165)
+      return true;
+  if (tower[0] == 'b' || tower[0] == 'B') //双人 B1-B100
+    if (level >= 0 && level <= 100)
+      return true;
+  if (tower[0] == 'c' || tower[0] == 'C') //密室 C1-C4
+    if (level >= 1 && level <= 4)
+      return true;
+  return false;
+}
+//输入魔塔关卡（单人1001-1165；双人2001-2100；密室3001-3004）
+bool InputTower(int *pLevel)
+{
+  char tower[5];//魔塔关卡名
+  //根据关卡编号pLevel生成关卡名（如A165)
+  sprintf_s(tower, "%c%d", *pLevel / 1000 - 1 + 'A', *pLevel % 1000);
+  const char *propmt =
+    "单塔A1~A165，A0=自动爬最高层；\n"
+    "双塔B1~B100，B0=自动爬最高层；\n"
+    "C1=炼金室，C2=藏经阁，C3=水晶宫，C4=威望屋。";
+  if (InputString(tower, isTowerLegal, propmt, "选择关卡"))
+  {
+    if (tower[0] == 'a' || tower[0] == 'A') //单人 A1-A165
+      *pLevel = 1000;
+    if (tower[0] == 'b' || tower[0] == 'B') //双人 B1-B100
+      *pLevel = 2000;
+    if (tower[0] == 'c' || tower[0] == 'C') //密室 C1-C4
+      *pLevel = 3000;
+    *pLevel += atoi(tower + 1);
+    return true;
+  }
+  return false;
+}
+//输入自然数到Num，直到满足范围Min~Max为止。输入成功则返回1，否则返回0
+int InputNum(int *pNum, int minimum, int maximum, char *propmt = "", char *title = "输入")
+{
+  char maxString[11];
+  sprintf_s(maxString, "%d", maximum);
+  int maxLength = strlen(maxString) + 1;//获得最大输入长度
+  char dest[11];
+  char original[11];
+  sprintf_s(original, "%d", *pNum);//初始文本：自然数的原值
+  int InputButton = NewInputBox(dest, maxLength, propmt, title, original);//输入自然数到Dest
+  int CurrentNum = StrToNat(dest);//Dest转化为自然数
+  char newPrompt[1000];
+  sprintf_s(newPrompt, "您的输入不规范，请重新输入。\n%s", propmt);
+  while ((CurrentNum < minimum || CurrentNum > maximum) && InputButton == IDOK)//若范围不正确，且点击了确定
+  {
+    InputButton = NewInputBox(dest, maxLength, newPrompt, title, dest);//重新输入
+    CurrentNum = StrToNat(dest);//记录到CurrentNum并重新检查
   }
   if (InputButton == IDOK)//退出循环时，如果点了确定，视为有效输入
   {
-    *Num = CurrentNum;
+    *pNum = CurrentNum;
     return 1;
   }
   return 0;//否则视为无效输入
@@ -982,7 +1423,7 @@ int GetTagNum(HWND hWndHall)
   //判断为游戏大厅窗口
   HWND hWndChild = NULL;
   int tagNum = 0;
-  while (1)
+  while (true)
   {
     hWndChild = FindWindowEx(hWndHall, hWndChild, "TabContentWnd", NULL); //查找一个小号窗口
     if (hWndChild == NULL)
@@ -990,15 +1431,15 @@ int GetTagNum(HWND hWndHall)
     tagNum++;
   }
 }
-//弹出带选项的消息框
-int PopMessageWithOptions(int task, const char *Message)
+//弹出带OK/Cancel选项的消息框
+int PopMessageOK(int task, const char *message)
 {
-  return MessageBox(hWndActuator, Message, taskName[task], MB_OKCANCEL | MB_ICONINFORMATION | MB_SYSTEMMODAL);
+  return MessageBox(hWndActuator, message, param[task].title, MB_OKCANCEL | MB_ICONINFORMATION | MB_SYSTEMMODAL);
 }
 //弹出消息框
 void PopMessage(int task, const char *message)
 {
-  MessageBox(hWndActuator, message, taskName[task], MB_ICONINFORMATION | MB_SYSTEMMODAL);
+  MessageBox(hWndActuator, message, param[task].title, MB_ICONINFORMATION | MB_SYSTEMMODAL);
 }
 DWORD __stdcall PromptNoImage(void *pTask)//提示无图像
 {
@@ -1035,51 +1476,65 @@ void ReturnState(int task, const char *tip)
     isRepaintRequired = 1;//发送重绘指令
   }
 }
+//点击大厅加速按钮
+void Accelerate(int task, int account)
+{
+  HWND hWndHall = GetHallWindow(work[task].hWnd[account]);//寻找大厅窗口
+  if (!hWndHall) //无法找到大厅窗口，放弃加速
+    return;
+  RECT clientRect;
+  GetClientRect(hWndHall, &clientRect);
+  //经过DPI换算的加速按钮位置
+  int accelerateX = clientRect.right - 340 * DPI / 96, accelerateY = 44 * DPI / 96;
+  LeftClick(hWndHall, accelerateX, accelerateY);
+  work[task].isAccelerationOn[account] = !work[task].isAccelerationOn[account];//记录加速开启/关闭
+}
 //退出任务
 void ExitTask(int task)
 {
   if (monitor[task].isExist) //停止任务时清空窗口
     monitor[task].ClearWindow();
-  for (int account = 0; account <= 1; account++)
-    work[task].isQuitted[account] = 0;//重置关卡退出状态
+
+  for (int account = 0; account < 2; account++)
+  {
+    work[task].isQuitted[account] = false;//重置关卡退出状态
+    if (work[task].isAccelerationOn[account]) //关闭加速
+      Accelerate(task, account);
+  }
+
   isTaskStarted[task] = 0;
   isTaskStarted_Confirm[task] = 0;
   isRepaintRequired = 1;//发送重绘指令
-  if (hallShot) //如果内存还没释放，释放内存
+  if (work[task].hallShot) //如果内存还没释放，释放内存
   {
-    free(hallShot);
-    hallShot = nullptr;
+    free(work[task].hallShot);
+    work[task].hallShot = nullptr;
   }
   ExitThread(0);
 }
-//任务是否被手动刹停
+//任务task是否被手动刹停
 bool isTaskStopped(int task)
 {
-  return isTaskStarted[task] == 0 || (task == taskNum && isAdvanceStarted == 0);
-}
-//等待time毫秒，然后检查任务是否被停止。每2000ms检查一次。
-void CheckSleep(int task, int time)
-{
-  while (time >= 0)
-  {
-    Sleep(time >= 1000 ? 1000 : time);
-    if (isTaskStopped(task))
-    {
-      strcpy_s(state[task].tip, "已停止");//修改状态为“已停止”
-      ExitTask(task);
-    }
-    time -= 1000;
-  }
+  return isTaskStarted[task] == 0 ||
+    (IsAdvance(task) && plot[GetList(task)].isAdvanceStarted == 0);
 }
 //填写高级任务关卡名
-template<size_t size> void GetLevelName(char(&levelName)[size], int type, int level)
+void GetLevelName(char(&levelName)[100], int type, int level)
 {
+  const char secretName[5][10] = { "", "炼金室", "藏经阁", "水晶宫", "威望屋" };
   if (type == zero)//悬赏
     strcpy_s(levelName, bounty[level]);
   else if (type == 1)//勇士
     strcpy_s(levelName, challenge[level]);
   else if (type == 2)//魔塔
-    sprintf_s(levelName, "%d", level);
+  {
+    if (level / 1000 == 3)
+      strcpy_s(levelName, secretName[level % 1000]);
+    else if (level / 1000 == 2)
+      sprintf_s(levelName, "双%d", level % 1000);
+    else
+      sprintf_s(levelName, "单%d", level % 1000);
+  }
   else if (type == 3)//跨服
     sprintf_s(levelName, "%s%d", crossServer[level / 8], level % 8 + 8);
   else if (type == 4)//假期
@@ -1091,36 +1546,43 @@ template<size_t size> void GetLevelName(char(&levelName)[size], int type, int le
   else
     strcpy_s(levelName, islandLevel[type - basicTypeNum][level]);
 }
-//填写高级任务字符串
-template <size_t size> void GetAdvanceString(int order, char(&str)[size])
+//填写高级任务字符串（如"[2] 美味(神殿)"）
+void GetAdvanceString(int list, int order, char(&str)[100])
 {
-  char LevelString[13];
-  GetLevelName(LevelString, advance[order].type, advance[order].level);
-  sprintf_s(str, "[%d] %s(%s)", order + 1, advanceName[advance[order].type], LevelString);
+  char levelString[100];
+  GetLevelName(levelString, plot[list].advance[order].type, plot[list].advance[order].level);
+  sprintf_s(str, "[%d] %s(%s)", order + 1, typeName[plot[list].advance[order].type], levelString);
 }
 //结束高级任务并提示Message
-void StopAdvance(const char *message = nullptr)
+void StopAdvance(int list, const char *message = nullptr)
 {
-  isAdvanceStarted = 0;//高级任务停止
-  isAdvanceStarted_Confirm = 0;//确认高级任务停止
-  isTaskStarted[taskNum] = 0;
-  isTaskStarted_Confirm[taskNum] = 0;
+  int task = GetTask(list);
+  plot[list].isAdvanceStarted = 0;//高级任务停止
+  plot[list].isAdvanceStarted_Confirm = 0;//确认高级任务停止
+  //将高级任务对应的两个普通任务都刹停
+  for (int task0 = task; task0 <= task + 1; task0++)
+  {
+    isTaskStarted[task0] = 0;
+    isTaskStarted_Confirm[task0] = 0;
+  }
   isRepaintRequired = 1;//发送重绘指令
   if (message)
-    PopMessage(taskNum, message);//弹窗提示
+    PopMessage(task, message);//弹窗提示
   ExitThread(0);//高级任务结束
 }
 //创建日志文件
 void CreateLogFile(int task, FILE **pFile, const char *code);
 //写入日志文件头（启动时间，高级任务还包括已完成任务日志）
-void newWriteLogHead(int task, FILE *f)
+void WriteLogHead(int task, FILE *f)
 {
-  if (task == taskNum) //高级任务：写入过去的日志
+  if (IsAdvance(task)) //高级任务：写入过去的日志
   {
-    char AdvanceString[50];
-    GetAdvanceString(playingOrder, AdvanceString);
-    fprintf(f, "%s", logFinished);//填写已执行完毕的任务日志
-    fprintf(f, "***** %s %d局\n", AdvanceString, advance[playingOrder].maxGames);//填写当前高级任务信息
+    int list = GetList(task);
+    char advanceString[100];
+    GetAdvanceString(list, plot[list].playingOrder, advanceString);
+    fprintf(f, "%s", plot[list].logFinished);//填写已执行完毕的任务日志
+    //填写当前高级任务信息：类型、关卡、局数
+    fprintf(f, "***** %s %d局\n", advanceString, plot[list].playingAdvance->maxGames);
   }
   fprintf(f, "启动时间：%s\n", work[task].startTimeString); //写入启动时间
 }
@@ -1128,7 +1590,8 @@ void newWriteLogHead(int task, FILE *f)
 void WriteLevelTime(int task, FILE *f)
 {
   char timeString[30];//时间字符串
-  if (work[task].games > 1)//第二局开始后，每局开始时记录局时
+  //第二局开始后，每局开始时记录局时
+  if (work[task].games > reserve[task].gamesFinished + 1)
   {
     GetTimeStringMSChinese(timeString, work[task].averageTime / 1000);
     fprintf(f, "平均用时：%s\n", timeString);//第2行写入平均用时
@@ -1136,69 +1599,100 @@ void WriteLevelTime(int task, FILE *f)
     if (work[task].isSkillMode)
     {
       DWORD totalTime = 0;
-      for (int i = 1; i <= work[task].games - 1; i++)//第3-n行写入各局用时
+      for (int games = reserve[task].gamesFinished + 1; games <= work[task].games - 1; games++)//第3-n行写入各局用时
       {
-        totalTime += work[task].levelTime[i];
+        totalTime += work[task].levelTime[games];
         //到了整10场，或最后一场，则进行记录
-        if (i % 10 == 0 || i == work[task].games - 1)
+        if (games % 10 == 0 || games == work[task].games - 1)
         {
           GetTimeStringMSChinese(timeString, totalTime / 1000);
-          int startGame = i - (i - 1) % 10;//本段起始局数
-          if (startGame == i)
-            fprintf(f, "第%d局：%s\n", i, timeString);
+          int firstGame = games - (games - 1) % 10;//本段起始局数
+          if (firstGame == games)
+            fprintf(f, "第%d局：%s\n", games, timeString);
           else
-            fprintf(f, "第%d-%d局：%s\n", startGame, i, timeString);
+            fprintf(f, "第%d-%d局：%s\n", firstGame, games, timeString);
           totalTime = 0;
         }
       }
     }
     else //普通模式：每局记录1次
     {
-      for (int i = 1; i <= work[task].games - 1; i++)//第3-n行写入各局用时
+      for (int games = reserve[task].gamesFinished + 1; games <= work[task].games - 1; games++)//第3-n行写入各局用时
       {
-        GetTimeStringMSChinese(timeString, work[task].levelTime[i] / 1000);
-        fprintf(f, "第%d局：%s\n", i, timeString);
+        GetTimeStringMSChinese(timeString, work[task].levelTime[games] / 1000);
+        fprintf(f, "第%d局：%s\n", games, timeString);
       }
     }
   }
 }
+//高级任务advance是不是公会任务
+bool IsMission(AdvanceType &advance)
+{
+  return advance.type == 5 && advance.level == 0;
+}
+//是否签到施肥
+bool IsSpecial(AdvanceType &advance)
+{
+  return advance.type == 17;
+}
+//是否无轨任务（公会任务或签到施肥）
+bool IsNoTrack(AdvanceType &advance)
+{
+  return IsMission(advance) || IsSpecial(advance);
+}
+//等待time毫秒，然后检查任务是否被停止。每1000ms检查一次。
+void CheckSleep(int task, int time);
 //任务启动时建立日志文件夹，记录启动时间
 void RecordStartTime(int task)
 {
   time(&work[task].taskStartTime);//获取任务开始时间
-  if (task == taskNum) //高级任务启动时就填写了日志路径advanceFolderPath，复制过来即可
-    strcpy_s(work[task].folderPath, advanceFolderPath);//填写日志文件夹路径
+  if (IsAdvance(task)) //高级任务启动时就填写了日志路径advanceFolderPath，复制过来即可
+  {
+    int list = GetList(task);
+    strcpy_s(work[task].logDirectory, plot[list].advanceFolderPath);//填写日志文件夹路径
+    //填写战利品文件夹路径
+    sprintf_s(work[task].lootDirectory, "%s\\ID%d_战利品", work[task].logDirectory, plot[list].playingOrder + 1);
+    if (!(IsAdvance(task) && IsNoTrack(*plot[list].playingAdvance)))
+      CreatePath(work[task].lootDirectory);//创建战利品文件夹（高级任务无轨关卡除外）
+  }
   else //普通任务：以任务启动时间为名称创建文件夹
   {
     char startTime[100];//任务启动时间字符串
     GetTimeStringForFolder(startTime, work[task].taskStartTime);
-    sprintf_s(work[task].folderPath, "执行记录\\%s_任务%d", startTime, task);//填写日志文件夹路径
-    CreatePath(work[task].folderPath);//创建日志文件夹
+    sprintf_s(work[task].logDirectory, "执行记录\\%s_普通任务%d", startTime, task);//填写日志文件夹路径
+    sprintf_s(work[task].lootDirectory, "%s\\战利品", work[task].logDirectory);//填写战利品文件夹路径
+    CreatePath(work[task].lootDirectory);//创建日志文件夹和战利品文件夹
   }
-  sprintf_s(work[task].logPath, "%s\\任务日志.txt", work[task].folderPath);//填写日志文件路径
+  sprintf_s(work[task].logPath, "%s\\任务日志.txt", work[task].logDirectory);//填写日志文件路径
   GetTimeString(work[task].startTimeString, work[task].taskStartTime);//开始时间转化为字符串
+
+  if (IsDual2P(task))
+    return;
 
   FILE *f;
   CreateLogFile(task, &f, "记录开始时间"); ///创建日志文件
-  newWriteLogHead(task, f); //写入启动时间
+  WriteLogHead(task, f); //写入启动时间
   fclose(f);
   CheckSleep(task, 100); //防止文件关闭失败
   strcat_s(work[task].embarkString, "任务开始\n");//启动信息增加一条：开始循环刷图
 }
-//记录每局时间
+//记录每局时间（任务完成时也调用本函数）
 void RecordLevelTime(int task, bool isTaskFinished)
 {
+  if (IsDual2P(task))
+    return;
   FILE *f;
   CreateLogFile(task, &f, "记录每局时间"); ///创建日志文件
-  newWriteLogHead(task, f); //写入启动时间
+  WriteLogHead(task, f); //写入启动时间
   work[task].thisGameTick = GetTickCount();//获取当前系统时间
-  if (work[task].games > 1)//第二局开始后计算平均用时
+  //第2局开始后计算平均用时
+  if (work[task].games > reserve[task].gamesFinished + 1)
   {
     work[task].levelTime[work[task].games - 1] = work[task].thisGameTick - work[task].lastGameTick;//本局秒数
     work[task].averageTime = 0;
-    for (int i = 1; i <= work[task].games - 1; i++)
-      work[task].averageTime += work[task].levelTime[i];//计算第1~games-1局的总时间
-    work[task].averageTime /= (work[task].games - 1);//计算每局平均用时，向下取整
+    for (int games = reserve[task].gamesFinished + 1; games <= work[task].games - 1; games++)
+      work[task].averageTime += work[task].levelTime[games];//计算第1~games-1局的总时间
+    work[task].averageTime /= (work[task].games - (reserve[task].gamesFinished + 1));//计算每局平均用时，向下取整
   }
   WriteLevelTime(task, f);//写入平均用时和每局用时
   if (isTaskFinished)//刷图任务结束时写入终止时间
@@ -1213,32 +1707,79 @@ void RecordLevelTime(int task, bool isTaskFinished)
 //记录中断截图
 void RecordShot(int task)
 {
+  //bool isDualTask = IsAdvance(task) && plot[GetList(task)].playingAdvance->host == 2;
   for (int account = 0; account < 2; account++) //中断截图
     if (work[task].isInvolved[account] == 1)
     {
       char shotPath[maxPath];//截图路径
-      if (task == taskNum)
-        sprintf_s(shotPath, "%s\\ID%d_第%d次中断_%dP.png", work[task].folderPath, playingOrder + 1,
-          timesRefreshed[playingOrder] + 1, account + 1);
+      if (IsAdvance(task))
+      {
+        int list = GetList(task);
+        sprintf_s(shotPath, "%s\\ID%d_第%d次中断_%dP.png", work[task].logDirectory, plot[list].playingOrder + 1,
+          plot[list].timesRefreshed[plot[list].playingOrder] + 1, account + 1);
+      }
       else
-        sprintf_s(shotPath, "%s\\中断截图_%dP.png", work[task].folderPath, account + 1);
+        sprintf_s(shotPath, "%s\\中断截图_%dP.png", work[task].logDirectory, account + 1);
       if (!WindowToBitmap(work[task].hWnd[account], shotPath))//截图记录中断原因，游戏窗口截不到就截大厅
         WindowToBitmap(work[task].hWndHall[account], shotPath);
     }
 }
+void WriteParameterToLog(int task, FILE *f)
+//普通任务中断：记录启动流程和退出时参数
+{
+  fprintf(f, "退出时参数：\n");
+  for (int account = 0; account < 2; account++)
+  {
+    fprintf(f, "%dP轨道：%s", account + 1, work[task].track[account]);
+    if (strlen(work[task].track[account]) > 0)
+    {
+      if (work[task].trackRoleNum[account] == 1)
+        fprintf(f, "（单人）");
+      else
+        fprintf(f, "（双人）");
+    }
+    fprintf(f, "\n");
+  }
+  if (work[task].gameTime == zero)
+    fprintf(f, "每局用时：自动检测\n");
+  else
+    fprintf(f, "每局用时：%d\n", work[task].gameTime);
+  for (int account = 0; account <= 1; account++)
+  {
+    fprintf(f, "[%dP]卡组%d, 标签(%d,%d), 游戏%d, 大厅%d\n", account + 1, work[task].deck[account],
+      work[task].tag[account].x, work[task].tag[account].y, (int)work[task].hWnd[account],
+      (int)work[task].hWndHall[account]);
+  }
+  fprintf(f, "初始大厅句柄：%d\n", (int)work[task].hMainHall);
+  if (work[task].noImageTick > zero)
+    fprintf(f, "（无图像）\n");
+  else
+    fprintf(f, "（有图像）\n");
+}
+const int RETRY_TASK = 1, SKIP_TASK = 2, END_TASK = 3;//报错等级
 // 遇错中断时，返回状态并记录错误信息，弹窗提示并结束任务。
-// forcedStop：是否强制中断，不允许刷新。log：是否记录日志
-void RecordError0(int task, const char *tip, const char *errorString, bool forcedStop = false, bool log = true)
+// stopLevel：0刷新重试 1刷新跳过 2强制中断。log：是否记录日志
+void RecordError0(int task, const char *tip, const char *errorString,
+  int stopLevel = RETRY_TASK, bool log = true)
 {
   RecordShot(task);//中断截图
   ReturnState(task, tip);//返回状态信息
-  sprintf_s(state[task].errorString, "%s", errorString);//记录出错原因
+  strcpy_s(state[task].errorString, errorString);//记录出错原因
+
+  if (IsDual2P(task)) //同步任务2P的报错转交给1P
+  {
+    strcpy_s(work[task - 1].dualErrorTip, tip);
+    strcpy_s(work[task - 1].dualErrorString, errorString);
+    work[task - 1].dualErrorLevel = stopLevel;
+    work[task - 1].dualError = true;
+    return;
+  }
 
   if (log)
   {
     FILE *f;
     CreateLogFile(task, &f, "记录错误信息"); ///创建日志文件
-    newWriteLogHead(task, f); //写入启动时间
+    WriteLogHead(task, f); //写入启动时间（高级任务还包括已完成日志）
     WriteLevelTime(task, f);//写入平均用时和每局用时
 
     fprintf(f, "第%d局：%s\n", work[task].games, errorString);//写入错误原因和终止时间
@@ -1246,71 +1787,46 @@ void RecordError0(int task, const char *tip, const char *errorString, bool force
     GetTimeString(work[task].endTimeString, work[task].taskEndTime);
     fprintf(f, "终止时间：%s\n", work[task].endTimeString);
 
-    if (task < taskNum) //普通任务中断：记录启动流程和退出时参数
-    {
-      fprintf(f, "\n启动流程：\n");
-      fprintf(f, "%s\n", work[task].embarkString);
-
-      fprintf(f, "退出时参数：\n");
-      for (int account = 0; account <= 1; account++)
-      {
-        fprintf(f, "%dP轨道：%s", account + 1, work[task].track[account]);
-        if (strlen(work[task].track[account]) > 0)
-        {
-          if (work[task].trackRoleNum[account] == 1)
-            fprintf(f, "（单人）");
-          else
-            fprintf(f, "（双人）");
-        }
-        fprintf(f, "\n");
-      }
-
-      fprintf(f, "执行局数：%d\n", work[task].maxGames);
-
-      if (work[task].gameTime == zero)
-        fprintf(f, "每局用时：自动检测\n");
-      else
-        fprintf(f, "每局用时：%d\n", work[task].gameTime);
-
-      for (int account = 0; account <= 1; account++)
-      {
-        if (work[task].isProceed[account] == 1)
-          fprintf(f, "%dP继续作战：是\n", account + 1);
-        else
-          fprintf(f, "%dP继续作战：否\n", account + 1);
-
-        if (work[task].isCollect[account] == 1)
-          fprintf(f, "%dP自动收集：物品\n", account + 1);
-        else if (work[task].isCollect[account] == 2)
-          fprintf(f, "%dP自动收集：物品火苗\n", account + 1);
-        else
-          fprintf(f, "%dP自动收集：关\n", account + 1);
-
-        if (work[task].deck[account] == zero)
-          fprintf(f, "%dP使用卡组：当前\n", account + 1);
-        else
-          fprintf(f, "%dP使用卡组：卡组%d\n", account + 1, work[task].deck[account]);
-      }
-      fprintf(f, "房主标签：%d,%d  房主句柄：%d\n", work[task].tag[0].x, work[task].tag[0].y, (int)work[task].hWnd[0]);
-      fprintf(f, "队友标签：%d,%d  队友句柄：%d\n", work[task].tag[1].x, work[task].tag[1].y, (int)work[task].hWnd[1]);
-      fprintf(f, "房主大厅句柄：%d\n", (int)work[task].hWndHall[0]);
-      fprintf(f, "队友大厅句柄：%d\n", (int)work[task].hWndHall[1]);
-      fprintf(f, "初始大厅句柄：%d\n", (int)work[task].hMainHall);
-      if (work[task].noImageTick > zero)
-        fprintf(f, "（无图像）\n");
-      else
-        fprintf(f, "（有图像）\n");
-    }
+    if (IsNormal(task)) //普通任务中断时记录任务参数
+      WriteParameterToLog(task, f);
     fclose(f);
   }
 
   for (int account = 0; account <= 1; account++)//重置退出状态
-    work[task].isQuitted[account] = 0;
+    work[task].isQuitted[account] = false;
 
-  if (task == taskNum) //高级任务遇到强制中断、禁用刷新或大赛模式刷新次数已满：不刷新直接报错
-    if (forcedStop || maxRefreshTimes == 0 || (contestOption == 1 && timesRefreshed[playingOrder] >= maxRefreshTimes))
-      isRefreshAvailable = 0;
-  if (task < taskNum || isRefreshAvailable == 0) //普通任务中断，或高级任务遇到不可刷新的情形，则弹窗报错
+  if (IsAdvance(task)) //高级任务根据报错等级决定刷新等级
+  {
+    int list = GetList(task);
+    if (maxRefreshTimes == 0) //自动刷新关闭：任何stopLevel都是强制终止
+      state[task].refreshLevel = END_TASK;
+    else //自动刷新开启：分类讨论
+    {
+      //大赛模式
+      if (contestOption)
+      {
+        //刷新重试（1）且次数未满则继续
+        if (stopLevel == RETRY_TASK && plot[list].timesRefreshed[plot[list].playingOrder] < maxRefreshTimes)
+          state[task].refreshLevel = RETRY_TASK;
+        else //刷新跳过（2）、终止（3）或刷新次数已满，则终止
+          state[task].refreshLevel = END_TASK;
+      }
+      else //非大赛模式
+      {
+        if (stopLevel == RETRY_TASK) //刷新重试（1）：次数未满则重试，次数已满则跳过
+        {
+          if (plot[list].timesRefreshed[plot[list].playingOrder] < maxRefreshTimes)
+            state[task].refreshLevel = RETRY_TASK;
+          else
+            state[task].refreshLevel = SKIP_TASK;
+        }
+        else //跳过模式直接跳过，终止模式直接终止
+          state[task].refreshLevel = stopLevel;
+      }
+    }
+  }
+  //普通任务中断，或高级任务遇到需要终止的情形，则弹窗报错
+  if (IsNormal(task) || state[task].refreshLevel == END_TASK)
   {
     isTaskStarted[task] = 0;//让按钮显示“启动”
     isRepaintRequired = 1;//发送重绘指令
@@ -1318,11 +1834,31 @@ void RecordError0(int task, const char *tip, const char *errorString, bool force
   }
   ExitTask(task);
 }
-void RecordError(int task, int account, const char *Tip, const char *ErrorString, bool forcedStop = false)
+void RecordError(int task, int account, const char *tip, const char *errorString,
+  int stopLevel = RETRY_TASK)
 {
-  char extendedErrorString[1000];
-  sprintf_s(extendedErrorString, "[%dP]%s", account + 1, ErrorString);
-  RecordError0(task, Tip, extendedErrorString, forcedStop);
+  char errorStringWithPlayer[1000];//带[nP]前缀的报错原因
+  sprintf_s(errorStringWithPlayer, "[%dP]%s", account + 1, errorString);
+  RecordError0(task, tip, errorStringWithPlayer, stopLevel);
+}
+//等待time毫秒，然后检查任务是否被停止。每1000ms检查一次。
+void CheckSleep(int task, int time)
+{
+  while (time >= 0)
+  {
+    Sleep(time >= 1000 ? 1000 : time);
+    if (isTaskStopped(task))
+    {
+      strcpy_s(state[task].tip, "已停止");//修改状态为“已停止”
+      ExitTask(task);
+    }
+    if (work[task].dualError) //检查同步任务报错
+    {
+      work[task].dualError = false;
+      RecordError0(task, work[task].dualErrorTip, work[task].dualErrorString, work[task].dualErrorLevel);
+    }
+    time -= 1000;
+  }
 }
 //创建日志文件
 void CreateLogFile(int task, FILE **pFile, const char *code)
@@ -1332,15 +1868,16 @@ void CreateLogFile(int task, FILE **pFile, const char *code)
     char message[500];
     ReportLastError();
     sprintf_s(message, "打开日志失败。路径：\n%s\n代码位置：%s", work[task].logPath, code);
-    RecordError0(task, "打开日志失败", message, true, false);
+    RecordError0(task, "打开日志失败", message, END_TASK, false);
   }
 }
 //记录已完成的任务日志
-void GetLogFinished()
+void GetLogFinished(int list)
 {
-  logFinished[0] = 0;
+  int task = GetTask(list);
+  plot[list].logFinished[0] = 0;
   FILE *f;
-  if (fopen_s(&f, work[taskNum].logPath, "r"))//打开高级任务日志
+  if (fopen_s(&f, work[task].logPath, "r"))//打开高级任务日志
     return;
   char s[1000];
   while (!feof(f))
@@ -1348,25 +1885,25 @@ void GetLogFinished()
     fgets(f, s);//读取一行
     if (strlen(s) == 0)
       break;
-    strcat_s(logFinished, s);
-    strcat_s(logFinished, "\n");//将本行内容及换行符写入LogFinished
+    strcat_s(plot[list].logFinished, s);
+    strcat_s(plot[list].logFinished, "\n");//将本行内容及换行符写入LogFinished
   }
   fclose(f);
-  if (strlen(logFinished) > maxLogLength - 20000)
-    RecordError0(taskNum, "日志爆满", "日志爆满", true);
+  if (strlen(plot[list].logFinished) > maxLogLength - 25000)
+    RecordError0(task, "日志爆满", "日志爆满", END_TASK);
 }
 //新增一条输出信息
-void OutputMessage(char *Message)
+void AddOutput(int list, char *message)
 {
-  strcpy_s(output[outputNum], Message);//填写输出信息
-  outputNum++;//输出信息条数+1
-  outputPage = (outputNum - 1) / 6 + 1;//自动翻到最新一页
+  strcpy_s(plot[list].output[plot[list].outputNum], message);//填写输出信息
+  plot[list].outputNum++;//输出信息条数+1
+  plot[list].outputPage = (plot[list].outputNum - 1) / 6 + 1;//自动翻到最新一页
   isRepaintRequired = 1;//发送重绘指令
 }
 //删除最后一条输出信息
-void DeleteOutputMessage()
+void DeleteOutput(int list)
 {
-  outputNum--;//输出信息条数-1
+  plot[list].outputNum--;//输出信息条数-1
 }
 //自定图像类型
 struct ItemType
@@ -1376,24 +1913,27 @@ struct ItemType
   int requiredSimilarity;//要求的相似度
   int offsetX, offsetY, width, height;//识别范围的偏移和宽高
 };
-const int maxItemNum = 128;
-char itemList[maxItemNum][maxPath];
-ItemType item[maxItemNum];
-int itemNum;
+const int maxItemNum = 200;//自定图像上限
+char itemList[maxItemNum][maxPath];//自定图像目录
+ItemType item[maxItemNum];//自定图像
+int itemNum;//自定图像数量
 //载入自定图像
 void LoadItem()
 {
-  if (_access("用户参数\\自定图像", 0))
+  const char folder[] = "用户参数\\自定图像";
+  if (!FileExist(folder))
     return;
 
-  char path[maxPath] = {};
-  int filesNum = GetFileList("用户参数\\自定图像\\*.bmp", itemList, maxItemNum);//查找所有bmp文件
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, itemList, maxItemNum);//查找所有png文件
 
+  char path[maxPath] = {};
   itemNum = 0;
   for (int i = 0; i < filesNum && itemNum < maxItemNum; i++)
   {
-    sprintf_s(path, "用户参数\\自定图像\\%s", itemList[i]);
-    if (_access(path, 0) == 0) //如果可以打开
+    sprintf_s(path, "%s\\%s", folder, itemList[i]);
+    if (FileExist(path)) //如果可以打开
     {
       //如果图片名称合格，则进行记录
       if (IsItemPathLegal(itemList[i], item[itemNum].name, &item[itemNum].requiredSimilarity,
@@ -1405,20 +1945,147 @@ void LoadItem()
     }
   }
 }
+//载入战利品
+void LoadLoot()
+{
+  const char folder[] = "附加程序\\图片\\物品";
+  if (!FileExist(folder))
+    return;
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, lootList, maxLootNum);//查找所有png文件
+
+  char path[maxPath] = {};
+  lootNum = 0;
+  for (int i = 0; i < filesNum && lootNum < maxLootNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, lootList[i]);
+    if (FileExist(path)) //如果可以打开
+    {
+      BitmapToColor(path, loot[lootNum].image);//读取卡片图像到image
+      lootList[i][strlen(lootList[i]) - 4] = 0;//删除".png"
+      strcpy_s(loot[lootNum].name, lootList[i]);//记录名称
+      loot[lootNum].isReplacedRequired = true;
+      lootNum++;
+    }
+  }
+}
+const int trashWidth = lootWidth, trashHeight = lootHeight;
+//可删物品类型（保存完整截图用于显示，但只有中间区域用于比较）
+struct TrashType
+{
+  char name[50];//可删物品名称
+  COLORREF image[trashWidth][trashHeight];//可删物品图像
+};
+const int maxTrashNum = 200;//可删物品上限
+char trashList[maxTrashNum][maxPath];//可删物品目录
+TrashType trash[maxTrashNum];//可删物品
+int trashNum;//可删物品数量
+//载入可删物品
+void LoadTrash()
+{
+  const char folder[] = "用户参数\\可删物品";
+  if (!FileExist(folder))
+    return;
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, trashList, maxTrashNum);//查找所有png文件
+
+  char path[maxPath] = {};
+  trashNum = 0;
+  for (int i = 0; i < filesNum && trashNum < maxTrashNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, trashList[i]);
+    if (FileExist(path)) //如果可以打开
+    {
+      BitmapToColor(path, trash[trashNum].image);//读取卡片图像到image
+      trashList[i][strlen(trashList[i]) - 4] = 0;//删除".png"
+      strcpy_s(trash[trashNum].name, trashList[i]);//记录名称
+      trashNum++;
+    }
+  }
+}
+
+const int bannerX = 388, bannerY = 470, bannerWidth = 100, bannerHeight = 12;
+const int maxBannerNum = 30;
+int bannerNum;
+char bannerList[maxBannerNum][maxPath];
+struct BannerType
+{
+  char name[20];
+  COLORREF image[bannerHeight][bannerWidth];
+};
+BannerType banner[maxBannerNum];
+//截图关卡名
+void SaveBanner(int task)
+{
+  char path[maxPath] = {};
+  sprintf_s(path, "附加程序\\图片\\关卡名\\0.png");
+  ColorToBitmap(work[task].map, path, bannerX, bannerY, bannerWidth, bannerHeight);
+  RecordError0(task, "关卡名截图成功", "关卡名截图成功", END_TASK);
+}
+void LoadBanner()
+{
+  const char folder[] = "附加程序\\图片\\关卡名";
+  if (!FileExist(folder))
+    return;
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, bannerList, maxBannerNum);//查找所有png文件
+
+  char path[maxPath] = {};
+  bannerNum = 0;
+  for (int i = 0; i < filesNum && bannerNum < maxBannerNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, bannerList[i]);
+    if (FileExist(path)) //如果可以打开
+    {
+      BitmapToColor(path, banner[bannerNum].image);//读取卡片图像到image
+      bannerList[i][strlen(bannerList[i]) - 4] = 0;//删除".png"
+      strcpy_s(banner[bannerNum].name, bannerList[i]);//记录名称
+      bannerNum++;
+    }
+  }
+}
+//获取关卡编号
+int GetBanner(int task)
+{
+  for (int code = 0; code < bannerNum; code++)
+  {
+    if (IsBitmapEqual(work[task].map, banner[code].image, bannerWidth, bannerHeight,
+      bannerX, bannerY))
+      return code;
+  }
+  return -1;
+}
+//获取漫游类型
+int GetRoamType(int task)
+{
+  int code = GetBanner(task);
+  if (code == -1)
+    return 0;
+  return atoi(banner[code].name);
+}
 //载入自定卡片
 void LoadCard()
 {
-  if (_access("用户参数\\自定卡片", 0))
+  const char folder[] = "用户参数\\自定卡片";
+  if (!FileExist(folder))
     return;
 
-  char path[maxPath] = {};
-  int filesNum = GetFileList("用户参数\\自定卡片\\*.bmp", cardList, maxCardNum);//查找所有bmp文件
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, cardList, maxCardNum);//查找所有png文件
 
   cardNum = 0;
+  char path[maxPath] = {};
   for (int i = 0; i < filesNum && cardNum < maxCardNum; i++)
   {
-    sprintf_s(path, "用户参数\\自定卡片\\%s", cardList[i]);
-    if (_access(path, 0) == 0) //如果可以打开
+    sprintf_s(path, "%s\\%s", folder, cardList[i]);
+    if (FileExist(path)) //如果可以打开
     {
       //如果图片名称合格，则进行记录
       if (IsItemPathLegal(cardList[i], card[i].name, &card[cardNum].requiredSimilarity,
@@ -1472,22 +2139,6 @@ int AddTarget(int task, int account, int order)
   work[task].slot[account][order].itemCode = itemCode;
   return 0;
 }
-const int customX = 10, customY = 20, customWidth = 25, customHeight = 15;//识别范围
-//自定卡类型
-struct CustomType
-{
-  COLORREF image[customWidth][customHeight];//卡槽图像
-  char name[100];//卡槽名称
-  int priority;//优先级
-};
-const int maxCustomNum = 256;
-char customList[maxCustomNum][maxPath];
-CustomType custom[maxCustomNum];
-const int bagX = 382, bagWidth = 49, bagHeight = 57;
-int bagY = 0;
-const int bagY1 = 179, bagY2 = 407;//确定bagY的范围
-COLORREF bag[bagHeight][bagWidth];//背包卡
-int customNum;
 
 const int starX = 9, starY = 8, starWidth = 6, starHeight = 8;
 COLORREF starImage[17][starHeight][starWidth];//17个星级的颜色
@@ -1497,7 +2148,7 @@ void LoadStar()
   char path[maxPath];
   for (int star = 1; star <= 16; star++)
   {
-    sprintf_s(path, "附加程序\\星级\\%d.bmp", star);
+    sprintf_s(path, "附加程序\\图片\\星级\\%d.png", star);
     BitmapToColor(path, starImage[star]);
   }
 }
@@ -1513,7 +2164,7 @@ int GetStarXY(int task, int x0, int y0)
 int GetStar(int task, int row, int column)
 {
   int startX = bagX + starX + column * bagWidth;
-  int startY = bagY + starY + row * bagHeight;
+  int startY = reserve[task].bagY + starY + row * bagHeight;
   return GetStarXY(task, startX, startY);
 }
 //保存本页星级图片
@@ -1523,26 +2174,46 @@ void SaveStar(int task)
   for (int row = 0; row < 4; row++)
     for (int column = 0; column < 11; column++)
     {
-      sprintf_s(path, "星级图片\\%d,%d.bmp", row, column);
+      sprintf_s(path, "星级图片\\%d,%d.png", row, column);
       int startX = bagX + starX + column * bagWidth;
-      int startY = bagY + starY + row * bagHeight;
+      int startY = reserve[task].bagY + starY + row * bagHeight;
       ColorToBitmap(work[task].map, path, startX, startY, starWidth, starHeight);
     }
-  RecordError(task, 0, "保存星级完成", "保存星级完成", true);
+  RecordError(task, 0, "保存星级完成", "保存星级完成", END_TASK);
 }
 //载入自定卡槽
-void LoadCustom()
+void LoadCustom(int task)
 {
-  if (_access("用户参数\\自定卡槽", 0))
+  const char folder[] = "用户参数\\自定卡槽";
+  if (!FileExist(folder))
     return;
 
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, customList, maxCustomNum);//查找所有png文件
+
   char path[maxPath] = {};
-  int filesNum = GetFileList("用户参数\\自定卡槽\\*.bmp", customList, maxCustomNum);//查找所有bmp文件
-  customNum = 0;
+  int &customNum = reserve[task].customNum;
+  CustomType(&custom)[maxCustomNum] = reserve[task].custom;
+  //先读取两个内置咖啡粉（0=钢丝球，1=咖啡粉）
+  for (int code = 0; code < 2; code++)
+  {
+    sprintf_s(path, "附加程序\\图片\\内置卡槽\\咖啡粉_%d.png", code);
+    BitmapToColor(path, bag);//读取卡片图像到bag数组
+    custom[code].priority = code;
+    strcpy_s(custom[code].name, "咖啡粉");
+    for (int x = 0; x < customWidth; x++) //记录图像
+      for (int y = 0; y < customHeight; y++)
+        custom[code].image[y][x] = bag[customY + y][customX + x];
+  }
+  customNum = 2;
+
   for (int i = 0; i < filesNum && customNum < maxCustomNum; i++)
   {
     sprintf_s(path, "用户参数\\自定卡槽\\%s", customList[i]);
-    if (_access(path, 0) == 0) //如果可以打开
+    if (strstr(customList[i], "咖啡粉")) //跳过自定咖啡粉的读取
+      continue;
+    if (FileExist(path)) //如果可以打开
     {
       BitmapToColor(path, bag);//读取卡片图像到bag数组
       char *underline = strrchr(customList[i], '_');//下划线位置
@@ -1559,35 +2230,35 @@ void LoadCustom()
       strcpy_s(custom[customNum].name, customList[i]);//记录名称
       for (int x = 0; x < customWidth; x++) //记录图像
         for (int y = 0; y < customHeight; y++)
-          custom[customNum].image[x][y] = bag[customY + y][customX + x];
+          custom[customNum].image[y][x] = bag[customY + y][customX + x];
       customNum++;
     }
   }
 }
 //(x0,y0)位置的卡和自定卡code是否相等
-bool newisCustomEqualXY(int task, int code, int x0, int y0)
+bool IsCustomEqualXY(int task, int code, int x0, int y0)
 {
   //有一个像素不匹配，返回-1
   for (int x = 0; x < customWidth; x++)
     for (int y = 0; y < customHeight; y++)
-      if (custom[code].image[x][y] != work[task].map[y0 + y][x0 + x])
+      if (reserve[task].custom[code].image[y][x] != work[task].map[y0 + y][x0 + x])
         return false;
   return true;
 }
 //row行column列的卡和自定卡code是否相等，相等则返回星级，否则返回-1
 //如果指定了targetStar，则只查找指定星级；如果targetStar==-1，则无要求
-int newisCustomEqual(int task, int code, int row, int column, int targetStar)
+int IsCustomEqual(int task, int code, int row, int column, int targetStar)
 {
   //卡片不绑定，返回-1
   int lockX = bagX + 13 + column * bagWidth;
-  int lockY = bagY + 51 + row * bagHeight;
+  int lockY = reserve[task].bagY + 51 + row * bagHeight;
   if (work[task].map[lockY][lockX] != 0xff2b9c)
     return -1;
 
   //卡片不匹配，返回-1
   int startX = bagX + customX + column * bagWidth;
-  int startY = bagY + customY + row * bagHeight;
-  if (!newisCustomEqualXY(task, code, startX, startY))
+  int startY = reserve[task].bagY + customY + row * bagHeight;
+  if (!IsCustomEqualXY(task, code, startX, startY))
     return -1;
 
   int star = GetStar(task, row, column);//读取星级
@@ -1596,33 +2267,16 @@ int newisCustomEqual(int task, int code, int row, int column, int targetStar)
     return -1;
   return star;
 }
-/*
-//本页order号卡槽和自定卡code是否相等(order：在本页的位置)
-bool newisCustomEqualInSlot(int task, int code, int order, int *pStar)
-{
-  int startX = bagX + 4 + (order - 1) * (bagWidth - 1) + customX;
-  int startY = 45 + customY;
-  return newisCustomEqualXY(task, code, startX, startY, pStar);
-}
-//在本页卡槽中查找自定卡code的位置，找不到返回0
-int newFindCustomInSlot(int task, int code, int *pStar)
-{
-  for (int order = 1; order <= 11; order++)
-    if (newisCustomEqualInSlot(task, code, order, pStar))
-      return order;
-  return 0;
-}
-*/
 //在本页44张卡中查找自定卡code的位置，返回星级。找不到返回-1
-//如果指定了targetStar，则只查找指定星级；如果targetStar==-1，则查找本页最高星级
-int newFindCustom(int task, int code, int targetStar, int *pRow = nullptr, int *pColumn = nullptr)
+//targetStar：指定星级；targetStar==-1查找任意星级；targetStar==-2查找最高星级
+int FindCustom(int task, int code, int targetStar, int *pRow = nullptr, int *pColumn = nullptr)
 {
   int maxStar = -1;//本页最高星级
   for (int row = 0; row < 4; row++)
     for (int column = 0; column < 11; column++)
     {
       //查找row行column卡片是否匹配，是则记录星级
-      int star = newisCustomEqual(task, code, row, column, targetStar);
+      int star = IsCustomEqual(task, code, row, column, max(targetStar, -1));
       if (star > maxStar)//如果匹配且超过已记录的最高星级
       {
         if (pRow) //记录行列
@@ -1630,7 +2284,7 @@ int newFindCustom(int task, int code, int targetStar, int *pRow = nullptr, int *
         if (pColumn)
           *pColumn = column;
         maxStar = star;
-        if (targetStar >= 0) //如果是指定星级查找，直接返回
+        if (targetStar >= -1) //如果不要求最高星级，则任意找到一个就返回
           return star;
       }
     }
@@ -1654,8 +2308,8 @@ void LoadMission()
   char path[maxPath];
   for (missionNum = 0; missionNum < maxAdvanceNum; missionNum++)//载入公会任务
   {
-    sprintf_s(path, "附加程序\\公会任务\\%d.bmp", missionNum + 1);
-    if (_access(path, 0))
+    sprintf_s(path, "附加程序\\公会任务\\%d.png", missionNum + 1);
+    if (!FileExist(path))
       break;
     BitmapToColor(path, missionBitmap);
     for (int x = 0; x < missionWidth; x++)
@@ -1696,10 +2350,12 @@ bool isGrowthFull(char *growth)
   int maxGrowth = atoi(slash + 1);
   return currentGrowth >= maxGrowth;
 }
-//房间号识别相关函数
 int ListX = 138, ListY = 126, ListWidth = 23, ListHeight = 229;//房间列表
+//6类数字名称
+const int LIST = 0, INDOOR = 1, CROSS_LIST = 2, CROSS_INDOOR = 3, FIRE = 4, TREE = 5;
 //数字颜色：0=列表；1=房间内；2=跨服列表；3=跨服房间内
 const COLORREF digitColor[6] = { 0xf8ffc6, 0xffffff, 0xffffff, 0xdceeff, 0x000000, 0x1ae641 };
+
 //数字类型：保存房间号和火苗0-9数字图像，用于读数
 template <size_t width, size_t height>
 class DigitType
@@ -1747,33 +2403,33 @@ public:
     memset(lengthDX, 0, sizeof(lengthDX));
     switch (method)
     {
-    case 0:
+    case LIST:
       name = "列表房间号";
       digitX = 150, digitY = 0, digitDX = 6;
       for (int i = 1; i <= 4; i++)
         lengthDX[i] = i * 3;
       break;
-    case 1:
+    case INDOOR:
       name = "房间内房间号";
       digitX = 164, digitY = 28, digitDX = 7;
       for (int i = 1; i <= 4; i++)
         lengthDX[i] = i * 3;
       break;
-    case 2:
+    case CROSS_LIST:
       name = "列表房间号";//跨服
       digitX = 409, digitY = 116, digitDX = 6;
       roomDX = 263, roomDY = 123;
       break;
-    case 3:
+    case CROSS_INDOOR:
       name = "跨服房间内房间号";
       digitX = 64, digitY = 26, digitDX = 8;
       break;
-    case 4:
+    case FIRE:
       name = "火苗";
       digitX = 172, digitY = 75, digitDX = 7;
       lengthDX[2] = 4, lengthDX[3] = 7, lengthDX[4] = 11, lengthDX[5] = 14;
       break;
-    case 5:
+    case TREE:
       name = "列表房间号";//公会树成长值
       digitNum = 11;//除了0-9还要识别斜杠
       digitX = 192, digitY = 103, digitDX = 6;
@@ -1787,7 +2443,7 @@ public:
     char path[maxPath];
     for (int n = 0; n < digitNum; n++)
     {
-      sprintf_s(path, "附加程序\\%s\\%d.txt", name, n);
+      sprintf_s(path, "附加程序\\数字\\%s\\%d.txt", name, n);
       fopen_s(&f, path, "rb");
       for (int x = 0; x < width; x++)
         for (int y = 0; y < height; y++)
@@ -1966,14 +2622,14 @@ struct BitmapType
   int width, height;//宽度和高度
   int x, y;//起始位置，只适用于定点识别。模糊找图设为-1
 };
-const int maxBitmapNum = 256;
+const int maxBitmapNum = 500;
 char bitmapList[maxBitmapNum][maxPath];
 int bitmapNum;//用于识图的10x10位图张数
 BitmapType bitmap[maxBitmapNum];
 //根据图片文件生成图片目录
 void MakeBitmapList()
 {
-  int fileNum = GetFileList("附加程序\\图片\\*", bitmapList, maxBitmapNum);
+  int fileNum = GetFileList("附加程序\\图片\\界面\\*", bitmapList, maxBitmapNum);
   FILE *f;
   fopen_s(&f, "附加程序\\图片目录.txt", "w");
   for (int i = 0; i < fileNum; i++)
@@ -1997,10 +2653,10 @@ int LoadBitmapList(char *dir, char(*bitmapList)[maxPath])
   fclose(f);
   return num;
 }
-//载入单个位图。位图名称："(100,200)位图.bmp"或"位图.bmp"
+//载入单个位图。位图名称："(100,200)位图.png"或"位图.png"
 void LoadSingleBitmap(char *fileName)
 {
-  char path[100] = "附加程序\\图片\\";
+  char path[maxPath] = {};
   char name[100];
 
   if (fileName[0] == '(')//括号开头，获取位图名称name和起始坐标
@@ -2011,14 +2667,14 @@ void LoadSingleBitmap(char *fileName)
     bitmap[bitmapNum].x = -1;
     bitmap[bitmapNum].y = -1;
   }
-  name[strlen(name) - 4] = 0;//名称删去最后4个字符".bmp"
+  name[strlen(name) - 4] = 0;//名称删去最后4个字符".png"
   strcpy_s(bitmap[bitmapNum].name, name);//记录位图名称
-  sprintf_s(path, "附加程序\\图片\\%s", fileName);//填写位图完整路径
-  if (_access(path, 0))
+  sprintf_s(path, "附加程序\\图片\\界面\\%s", fileName);//填写位图完整路径
+  if (!FileExist(path))
   {
-    char Message[100];
-    sprintf_s(Message, "缺少依赖文件：\n%s\n请检查是否更新完整。", path);
-    MessageBox(NULL, Message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+    char message[100];
+    sprintf_s(message, "缺少依赖文件：\n%s\n请检查是否更新完整。", path);
+    MessageBox(NULL, message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     exit(0);
   }
   //保存图片的颜色信息和尺寸
@@ -2028,7 +2684,7 @@ void LoadSingleBitmap(char *fileName)
 //载入所有图片
 void LoadPicture()
 {
-  int num = LoadBitmapList("附加程序\\图片", bitmapList);//读取所有位图的名称，返回数量
+  int num = LoadBitmapList("附加程序\\图片\\界面", bitmapList);//读取所有位图的名称，返回数量
   bitmapNum = 0;
   for (int order = 0; order < num; order++)
     LoadSingleBitmap(bitmapList[order]);
@@ -2039,43 +2695,65 @@ void LoadCardTemplate()
   char path[maxPath] = {};
   for (int i = 0; i < 4; i++)
   {
-    sprintf_s(path, "附加程序\\卡片模板\\%d.bmp", i);
+    sprintf_s(path, "附加程序\\图片\\卡片模板\\%d.png", i);
     BitmapToColor(path, cardTemplate[i]);
   }
 }
-//从Map截图中查找图片，找到返回1
-int FindPictureInMap(int task, int account, int picture, int *px = NULL, int *py = NULL,
-  int dx = 0, int dy = 0, COLORREF specificColor = 0)
+//找图类型：1. 在固定位置查找图片：需要给定固定坐标。由于图片已有坐标，只需给偏移值
+//2. 在一定范围内查找图片：需要给定矩形范围x1,y1,x2,y2
+void SetRect(RECT &rect, int left, int top, int right, int bottom)
 {
-  if (bitmap[picture].x >= 0) //在原图中的(dx,dy)位置定点识图
+  rect.left = left;
+  rect.top = top;
+  rect.right = right;
+  rect.bottom = bottom;
+}
+//【基本函数】从map截图中查找图片，找到返回1
+//图片名无前缀默认全屏找图，有前缀默认定点找图
+//填写(x0,y0)则定点找图，填写(x1,y1)则范围找图
+int FindPictureInMap(int task, int bitmapCode, int *px = NULL, int *py = NULL,
+  int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0, COLORREF specificColor = 0)
+{
+  bool areaSearch = true;//是否区域找图
+  RECT area;//找图区域
+  //先判断找图模式
+  if (bitmap[bitmapCode].x == -1 && bitmap[bitmapCode].y == -1)//默认全屏找图
   {
-    if (IsBitmapEqual(work[task].map, bitmap[picture].color, bitmap[picture].width, bitmap[picture].height,
-      bitmap[picture].x + dx, bitmap[picture].y + dy, 0, 0, specificColor))
+    if (x1 > 0 || y1 > 0)//区域找图
     {
-      if (px)
-        *px = bitmap[picture].x + dx;
-      if (py)
-        *py = bitmap[picture].y + dy;
-      return 1;
+      areaSearch = true;
+      SetRect(area, x0, y0, x1, y1);
+    }
+    else if (x0 > 0 || y0 > 0)//定点找图
+    {
+      areaSearch = false;
+      SetRect(area, x0, y0, 0, 0);
+    }
+    else //全屏找图
+    {
+      areaSearch = true;
+      SetRect(area, 0, 0, gameWidth, gameHeight);
     }
   }
-  else if (dx > 0 || dy > 0) //全屏找图转定点找图
+  else //默认定点找图
   {
-    if (IsBitmapEqual(work[task].map, bitmap[picture].color, bitmap[picture].width, bitmap[picture].height,
-      dx, dy, 0, 0, specificColor))
+    if (x1 > 0 || y1 > 0)//区域找图
     {
-      if (px)
-        *px = bitmap[picture].x + dx;
-      if (py)
-        *py = bitmap[picture].y + dy;
-      return 1;
+      areaSearch = true;
+      SetRect(area, x0, y0, x1, y1);
+    }
+    else //定点找图
+    {
+      areaSearch = false;
+      SetRect(area, bitmap[bitmapCode].x + x0, bitmap[bitmapCode].y + y0, 0, 0);
     }
   }
-  else //全屏找图（无dx,dy参数）
+
+  if (areaSearch)//区域找图
   {
-    for (int y = 0; y <= gameHeight - bitmap[picture].height; y++)//屏幕找图
-      for (int x = 0; x <= gameWidth - bitmap[picture].width; x++)
-        if (IsBitmapEqual(work[task].map, bitmap[picture].color, bitmap[picture].width, bitmap[picture].height,
+    for (int y = area.top; y <= area.bottom - bitmap[bitmapCode].height; y++)
+      for (int x = area.left; x <= area.right - bitmap[bitmapCode].width; x++)
+        if (IsBitmapEqual(work[task].map, bitmap[bitmapCode].color, bitmap[bitmapCode].width, bitmap[bitmapCode].height,
           x, y, 0, 0, specificColor))
         {
           if (px)
@@ -2084,6 +2762,18 @@ int FindPictureInMap(int task, int account, int picture, int *px = NULL, int *py
             *py = y;
           return 1;
         }
+  }
+  else //定点找图
+  {
+    if (IsBitmapEqual(work[task].map, bitmap[bitmapCode].color, bitmap[bitmapCode].width,
+      bitmap[bitmapCode].height, area.left, area.top, 0, 0, specificColor))
+    {
+      if (px)
+        *px = area.left;
+      if (py)
+        *py = area.top;
+      return 1;
+    }
   }
   return 0;
 }
@@ -2095,31 +2785,23 @@ int GetPictureCode(const char *pictureName)
       return code;
   return -1;
 }
-//从Map截图中找图
-int FindPictureInMap(int task, int account, const char *pictureName, int *px = NULL, int *py = NULL,
-  int dx = 0, int dy = 0, COLORREF specificColor = 0)
+//从map截图中查找图片
+int FindPictureInMap(int task, const char *pictureName, int *px = NULL, int *py = NULL,
+  int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0, COLORREF specificColor = 0)
 {
   int picture = GetPictureCode(pictureName);
   if (picture == -1)
   {
     char errorString[100] = {};
     sprintf_s(errorString, "缺少图片文件[%s]", pictureName);
-    RecordError(task, account, "缺少图片", errorString, true);
+    RecordError0(task, "缺少图片", errorString, END_TASK);
   }
-  return FindPictureInMap(task, account, picture, px, py, dx, dy, specificColor);
+  return FindPictureInMap(task, picture, px, py, x0, y0, x1, y1, specificColor);
 }
-//从Map截图中查找多张图片，找到一张返回1
+//从游戏窗口查找多张图片（最多10张）
 template <size_t pictureNum>
-int FindPicturesInMap(int task, int account, int(&picture)[pictureNum], int *px = NULL, int *py = NULL, int dx = 0, int dy = 0)
-{
-  for (int i = 0; i < pictureNum; i++)
-    if (FindPictureInMap(task, account, picture[i], px, py, dx, dy))
-      return 1;
-  return 0;
-}
-//在窗口内查找多张图片（最多10张）
-template <size_t pictureNum>
-int FindPicturesInWindow(int task, int account, HWND hWnd, const char *(&pictureName)[pictureNum], int *px = NULL, int *py = NULL, int dx = 0, int dy = 0)
+int FindPictures(int task, int account, const char *(&pictureName)[pictureNum],
+  int *px = NULL, int *py = NULL, int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0)
 {
   //获得每一张图片的编号，有一张图片不存在则报错退出
   int picture[pictureNum] = {};
@@ -2130,40 +2812,47 @@ int FindPicturesInWindow(int task, int account, HWND hWnd, const char *(&picture
     {
       char errorString[100] = {};
       sprintf_s(errorString, "缺少图片文件[%s]", pictureName[i]);
-      RecordError(task, account, "缺少图片", errorString, true);
+      RecordError0(task, "缺少图片", errorString, END_TASK);
     }
   }
+
   //截图游戏窗口
-  if (!IsWindow(hWnd))
+  if (!IsWindow(work[task].hWnd[account]))
     RecordError(task, account, "游戏窗口已关闭", "游戏窗口已关闭");
-  if (!IsGameWindowVisible(hWnd)) //窗口未显示，无法识图
+  if (!IsGameWindowVisible(work[task].hWnd[account])) //窗口未显示，无法识图
     return 0;
-  if (!UpdateMapFromWindow(task, hWnd))//截取屏幕图像，截图失败则返回0
+  if (!UpdateMap(task, account))//截取屏幕图像，截图失败则返回0
     return 0;
+
   //从截图中查找图片
-  return FindPicturesInMap(task, account, picture, px, py, dx, dy);
+  for (int i = 0; i < pictureNum; i++)
+    if (FindPictureInMap(task, picture[i], px, py, x0, y0, x1, y1))
+      return 1;
+  return 0;
 }
-//从游戏窗口中查找多张图片
-template <size_t pictureNum>
-int FindPictures(int task, int account, const char *(&pictureName)[pictureNum], int *px = NULL, int *py = NULL, int dx = 0, int dy = 0)
+//从游戏窗口中查找一张图片
+int FindPicture(int task, int account, const char *pictureName, int *px = NULL, int *py = NULL,
+  int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0)
 {
-  return FindPicturesInWindow(task, account, work[task].hWnd[account], pictureName, px, py, dx, dy);
+  const char *picturesName[1] = { pictureName };
+  return FindPictures(task, account, picturesName, px, py, x0, y0, x1, y1);
 }
-//等待多张图片出现(appear==1)或消失(appear==0)，记录图片左上角位置，最多等待timeout ms
+const int APPEAR = 1, DISAPPEAR = 0;
+//等待多张图片出现或消失，记录图片左上角位置，最多等待timeout ms
 template <size_t pictureNum>
-int WaitPictures(int task, int account, const char *(&pictureName)[pictureNum], int *px = nullptr, int *py = nullptr,
-  int dx = 0, int dy = 0, int timeout = 5000, bool report = true, int appear = 1)
+int WaitPictures(int appearMode, int task, int account, const char *(&pictureName)[pictureNum], int *px = nullptr, int *py = nullptr,
+  int x0 = 0, int y0 = 0, int timeout = 5000, bool report = true)
 {
   int counter = 0;
   char message[100] = {};
-  while (FindPictures(task, account, pictureName, px, py, dx, dy) != appear)
+  while (FindPictures(task, account, pictureName, px, py, x0, y0) != appearMode)
   {
     counter++;
     if (counter >= timeout / 100)//timeout ms还未进入预期界面
     {
       if (report == true) //如果开启了报错，则报错中断
       {
-        if (appear == 1)
+        if (appearMode == APPEAR)
         {
           sprintf_s(message, "未能进入[%s]界面", pictureName[0]);
           RecordError(task, account, "未进入指定界面", message);
@@ -2180,49 +2869,26 @@ int WaitPictures(int task, int account, const char *(&pictureName)[pictureNum], 
   }
   return 1;
 }
-//尝试等待多张图片出现
+//等待一张图片出现或消失
+int WaitPicture(int appearMode, int task, int account, const char *pictureName, int *px = nullptr, int *py = nullptr,
+  int dx = 0, int dy = 0, int timeout = 5000, bool report = true)
+{
+  const char *picturesName[1] = { pictureName };
+  return WaitPictures(appearMode, task, account, picturesName, px, py, dx, dy, timeout, report);
+}
+//尝试等待多张图片出现或消失
 template <size_t pictureNum>
-int TryWaitPictures(int task, int account, const char *(&pictureName)[pictureNum], int timeout, int appear = 1)
+int TryWaitPictures(int appearMode, int task, int account, const char *(&pictureName)[pictureNum], int timeout,
+  int *px = nullptr, int *py = nullptr)
 {
-  return WaitPictures(task, account, pictureName, nullptr, nullptr, 0, 0, timeout, false, appear);
+  return WaitPictures(appearMode, task, account, pictureName, px, py, 0, 0, timeout, false);
 }
-//指定窗口查找一张图片
-int FindPictureInWindow(int task, int account, HWND hWnd, const char *pictureName, int *px = NULL, int *py = NULL, int dx = 0, int dy = 0)
+//尝试等待一张图片出现或消失
+int TryWaitPicture(int appearMode, int task, int account, const char *pictureName, int timeout,
+  int *px = nullptr, int *py = nullptr)
 {
   const char *picturesName[1] = { pictureName };
-  return FindPicturesInWindow(task, account, hWnd, picturesName, px, py, dx, dy);
-}
-//从游戏窗口中查找一张图片
-int FindPicture(int task, int account, const char *pictureName, int *px = NULL, int *py = NULL, int dx = 0, int dy = 0)
-{
-  const char *picturesName[1] = { pictureName };
-  return FindPictures(task, account, picturesName, px, py, dx, dy);
-}
-//等待一张图片出现
-int WaitPicture(int task, int account, const char *pictureName, int *px = nullptr, int *py = nullptr,
-  int dx = 0, int dy = 0, int timeout = 5000, bool report = true)
-{
-  const char *picturesName[1] = { pictureName };
-  return WaitPictures(task, account, picturesName, px, py, dx, dy, timeout, report);
-}
-//等待一张图片消失
-int WaitPictureDisappear(int task, int account, const char *pictureName, int *px = nullptr, int *py = nullptr,
-  int dx = 0, int dy = 0, int timeout = 5000, bool report = true)
-{
-  const char *picturesName[1] = { pictureName };
-  return WaitPictures(task, account, picturesName, px, py, dx, dy, timeout, report, 0);
-}
-//尝试等待一张图片出现。timeout秒内成功等到界面返回1，未等到界面返回0
-int TryWaitPicture(int task, int account, const char *pictureName, int timeout)
-{
-  const char *picturesName[1] = { pictureName };
-  return TryWaitPictures(task, account, picturesName, timeout);
-}
-//尝试等待一张图片消失。timeout秒内成功等到界面返回1，未等到界面返回0
-int TryWaitPictureDisappear(int task, int account, const char *pictureName, int timeout)
-{
-  const char *picturesName[1] = { pictureName };
-  return TryWaitPictures(task, account, picturesName, timeout, 0);
+  return TryWaitPictures(appearMode, task, account, picturesName, timeout, px, py);
 }
 //无图像处理：10分钟无图强制终止，2分钟无图提示
 void NoImageProcess(int task)
@@ -2235,27 +2901,26 @@ void NoImageProcess(int task)
     {
       int NoImageTime = GetTickCount() - work[task].noImageTick;//检查无图像时间
       if (NoImageTime > 600000) //如果连续超时10分钟，强制中断
-        RecordError0(task, "图像获取失败", "连续10分钟未获取到图像，任务已终止", true);
+        RecordError0(task, "图像获取失败", "连续10分钟未获取到图像，任务已终止", END_TASK);
       else if (NoImageTime >= noImageTimeout * 1000)//否则检查是否超过设定时间
       {
         if (noImageOperation == 1 && work[task].isPromptOn == zero)//提示
           CreateThread(NULL, 0, PromptNoImage, (void *)task, 0, NULL);//提示无图像
         else if (noImageOperation == 2)//中断
-          RecordError0(task, "图像获取失败", "连续2分钟未获取到图像，任务已终止", true);
+          RecordError0(task, "图像获取失败", "连续2分钟未获取到图像，任务已终止", END_TASK);
       }
     }
   }
 }
-int updateNum = 0, successfulUpdateNum = 0, iconicNum = 0;
 //更新account窗口截图，成功返回1
 int UpdateMap(int task, int account)
 {
-  updateNum++;
+  reserve[task].updateNum++;
   if (!IsWindow(work[task].hWnd[account]))
     RecordError(task, account, "游戏窗口已关闭", "游戏窗口已关闭");
   if (!IsGameWindowVisible(work[task].hWnd[account]))
   {
-    iconicNum++;
+    reserve[task].iconicNum++;
     return 0;
   }
   work[task].noImageTick = 0;//运行到这里就是有图像了
@@ -2265,16 +2930,16 @@ int UpdateMap(int task, int account)
     for (int x = 0; x < gameWidth; x++)
       work[task].map[y][x] &= 0x00ffffff;
   if (result == 1)
-    successfulUpdateNum++;
+    reserve[task].successfulUpdateNum++;
   return result;
 }
 //用指定窗口图像更新Work[task].map
 int UpdateMapFromWindow(int task, HWND hWnd)
 {
-  updateNum++;
+  reserve[task].updateNum++;
   if (!IsGameWindowVisible(hWnd))
   {
-    iconicNum++;
+    reserve[task].iconicNum++;
     return 0;
   }
   work[task].noImageTick = 0;//运行到这里就是有图像了
@@ -2284,7 +2949,7 @@ int UpdateMapFromWindow(int task, HWND hWnd)
     for (int x = 0; x < gameWidth; x++)
       work[task].map[y][x] &= 0x00ffffff;
   if (result == 1)
-    successfulUpdateNum++;
+    reserve[task].successfulUpdateNum++;
   return result;
 }
 //从账号account的游戏窗口中查找num个点的颜色。识图成功返回1，否则返回0
@@ -2351,9 +3016,18 @@ const COLORREF crossColor = 0x1d6fb1;//跨服颜色
 const COLORREF challengeColor = 0x013759;//勇士颜色
 const COLORREF buttonColor = 0x05294b;//下方功能按钮颜色
 const COLORREF boxColor = 0x7ec8f5;//蓝色提示框颜色
-//根据波次位置的颜色waveColor和房主头像位置的颜色hostColor判断波次
-int GetMainWave(COLORREF waveColor, COLORREF hostColor)
+//获得任务task的第一个放卡账号
+int GetFirstPerformedAccount(int task)
 {
+  return work[task].isPerformed[0] ? 0 : 1;
+}
+//从当前截图中读取主波次
+int GetMainWave(int task)
+{
+  if (FindPictureInMap(task, "战利品"))
+    return waveLoot;
+  COLORREF waveColor = work[task].map[552][670];
+  COLORREF hostColor = work[task].map[46][100];
   for (int i = 0; i <= 18; i++)
     if (waveColor == wavesColor[i])
     {
@@ -2364,7 +3038,7 @@ int GetMainWave(COLORREF waveColor, COLORREF hostColor)
     }
   if (hostColor == crossColor || hostColor == challengeColor || waveColor == buttonColor)
     return waveOutOfLevel;//回到跨服界面、勇士界面视为退出关卡，波次为waveOutOfLevel
-  return -1;//无法辨识：可能是非关卡内，或被继续作战遮挡。
+  return -1;//无法辨识：可能是非关卡内，或被继续作战遮挡
 }
 //识别关卡进入状态、波数和中央弹窗。识别成功返回1。
 int GetGameState(int task, int account, int *pEntry, int *pWave, int *pBox)
@@ -2407,7 +3081,7 @@ int GetGameState(int task, int account, int *pEntry, int *pWave, int *pBox)
   else
     entry = 0;
 
-  wave = GetMainWave(color[3], color[1]);
+  wave = GetMainWave(task);
 
   if (color[5] == boxColor) //经验满
     box = 3;
@@ -2432,7 +3106,7 @@ int GetGameStateFromAnyAccount(int task, int *Entry, int *Wave, int *Box)
 {
   bool isImagePicked = false;//是否识图成功
   for (int account = 0; account < 2; account++)
-    if (work[task].isInvolved[account] == 1 && work[task].isQuitted[account] == 0)
+    if (work[task].isInvolved[account] && !work[task].isQuitted[account])
     {
       if (isImagePicked == false)
         if (GetGameState(task, account, Entry, Wave, Box) == 1)
@@ -2495,7 +3169,7 @@ void Drag(int task, int account, int x1, int y1, int x2, int y2)
 BOOL Click(int task, int account, int x, int y)
 {
   //如果账号不参与或已退出关卡，则不执行点击
-  if (work[task].isInvolved[account] == 0 || work[task].isQuitted[account] == 1)
+  if (!work[task].isInvolved[account] || work[task].isQuitted[account])
     return 0;
   if (!IsWindow(work[task].hWnd[account]))//如果窗口不见了
     RecordError(task, account, "游戏窗口已关闭", "游戏窗口已关闭");
@@ -2530,15 +3204,15 @@ void Touch(int task, int account, int row, int column)
     gridY + (row - 1) * gridHeight + gridHeight / 2);
 }
 //使用n号宝石
-void UseJewel(int task, int account, int n)
+void UseSkill(int task, int account, int n)
 {
-  Click(task, account, jewelX, jewelY + (n - 1) * jewelHeight);
+  Click(task, account, skillX, skillY + (n - 1) * skillHeight);
 }
 //使用所有宝石
-void UseAllJewel(int task, int account)
+void UseAllSkill(int task, int account)
 {
   for (int n = 1; n <= 3; n++)
-    UseJewel(task, account, n);
+    UseSkill(task, account, n);
 }
 //翻到第page页
 void TurnToPage(int task, int account, int page)
@@ -2547,7 +3221,7 @@ void TurnToPage(int task, int account, int page)
   while (GetColor(task, account, 106, 540) != firstPageColor)
   {
     counter++;
-    if (counter > 5)
+    if (counter > 10)
       RecordError(task, account, "魔塔翻页失败", "魔塔无法翻到第一页");
     Click(task, account, firstPageX, firstPageY);
     CheckSleep(task, 200);
@@ -2569,7 +3243,7 @@ void TurnToPage(int task, int account, int page)
   }
 }
 //强制获取图像，10次截图失败则报错
-void forcedShot(int task, int account)
+void ForcedUpdateMap(int task, int account)
 {
   int counter = 0;
   while (!UpdateMap(task, account))
@@ -2581,65 +3255,834 @@ void forcedShot(int task, int account)
   }
 }
 //点击滚动条，直到滚动生效，但最多等1000ms
-void Scroll(int task, int account, POINT location)
+template <size_t height>
+bool Scroll(int task, int account, POINT location, int scrollX, int scrollY, COLORREF(&scroll)[height][1])
 {
   //记录原Map的滚动条
-  for (int y = 0; y < scrollHeight; y++)
-    work[task].scroll[y][0] = work[task].map[scrollY + y][scrollX];
+  for (int y = 0; y < height; y++)
+    scroll[y][0] = work[task].map[scrollY + y][scrollX];
   Click(task, account, location);//点击滚动条
   //每隔100ms截图，直到滚动条变化
   int counter = 0;
-  while (IsBitmapEqual(work[task].map, work[task].scroll, scrollWidth, scrollHeight, scrollX, scrollY))
+  do
   {
     counter++;
-    if (counter >= 10) //截图10次检测不到变化，视为滚动成功
-      return;
+    if (counter > 5) //截图5次检测不到变化，视为滚动失败，不再检测
+      return false;
     CheckSleep(task, 100);
-    forcedShot(task, account);
-  }
+    ForcedUpdateMap(task, account);
+  } while (IsBitmapEqual(work[task].map, scroll, 1, height, scrollX, scrollY));
+  return true;
 }
-struct CandidateCustomType
+//点击防御卡背包滚动条，直到滚动生效，但最多等1000ms
+void ScrollCustom(int task, int account, POINT location)
+{
+  Scroll(task, account, location, customScrollX, customScrollY, work[task].customScroll);
+}
+//点击战利品滚动条，直到滚动生效，但最多等1000ms
+void ScrollLoot(int task, int account, POINT location)
+{
+  Scroll(task, account, location, lootScrollX, lootScrollY, work[task].lootScroll);
+}
+//某个卡槽的所有候选卡类型
+struct CandidateType
 {
   int num;//候选自定卡个数
   int priority[11];//优先级（从高到低排列）
   int code[11];//自定卡编号
 };
 //获取卡槽order的所有候选自定卡的编号和优先级（优先级从大到小排列）
-void GetCustomCandidate(int task, int account, int order, CandidateCustomType(&candidate))
+void GetCustomCandidate(int task, int account, int order, CandidateType(&candidate))
 {
   candidate.num = 0;
   //按编号从大到小遍历自定卡
-  for (int code = customNum - 1; code >= 0; code--)
+  for (int code = reserve[task].customNum - 1; code >= 0; code--)
     //如果某张自定卡的名称正好是order号卡槽，则记录
-    if (strcmp(custom[code].name, work[task].originalName[account][order]) == 0)
+    if (strcmp(reserve[task].custom[code].name, work[task].originalName[account][order]) == 0)
     {
       candidate.code[candidate.num] = code;
-      candidate.priority[candidate.num] = custom[code].priority;
+      candidate.priority[candidate.num] = reserve[task].custom[code].priority;
       candidate.num++;
     }
 }
+//判断战利品个数
+int GetLootQuantity(int task, int x0, int y0)
+{
+  for (int num = 2; num <= 9; num++)
+    if (IsBitmapCovering(work[task].loot, lootDigit[num], lootDigitWidth, lootDigitHeight, x0, y0, 0, 0, 0xffffff))
+      return num;
+  return 1;
+}
+
+//读取道具数量个位数字（无数字返回-1）
+int GetPropQuantity(int task, int x0, int y0)
+{
+  for (int num = 0; num <= 9; num++)
+    if (IsBitmapCovering(work[task].map, lootDigit[num], lootDigitWidth, lootDigitHeight, x0, y0, 0, 0, 0xffffff))
+      return num;
+  return -1;
+}
+
+const int propX = 468, propY = 89, propWidth = 49, propHeight = 49;//道具背包
+const int storeX = 31, storeY = 93, storeWidth = 49, storeHeight = 49;//储藏室
+const int jewelX = 559, jewelY = 90, jewelWidth = 49, jewelHeight = 49;//宝石分解
+
+const int maxStyleNum = 12;//底色数量
+//各类型的名称
+const char *styleName[maxStyleNum] = { "B普通材料", "C稀有材料", "D普通配方1", "E普通配方2", "F稀有配方",
+"H初级技能书1", "I初级技能书2", "J高级技能书1", "K高级技能书2", "L终极技能书1", "M终极技能书2", "R透明底色" };
+//各类型的首字母
+const char styleLetter[maxStyleNum] = { 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'R' };
+COLORREF base[maxStyleNum][propHeight][propWidth];//物品底色
+
+//判断物品code与底色style的重合颜色数
+int GetLootSimilarity(int code, int style)
+{
+  int counter = 0;
+  for (int y = 0; y < propHeight; y++)
+    for (int x = 0; x < propWidth; x++)
+      if (base[style][y][x] && loot[code].image[y][x] == base[style][y][x])
+        counter++; //只统计不是黑色的点
+  return counter;
+}
+//判断物品code的分类
+int GetLootStyle(int code)
+{
+  int maxSimilarity = -1;
+  int bestStyle = -1;
+  for (int style = 0; style < maxStyleNum; style++)
+  {
+    int similarity = GetLootSimilarity(code, style);
+    if (similarity > maxSimilarity)
+    {
+      maxSimilarity = similarity;
+      bestStyle = style;
+    }
+  }
+  return bestStyle;
+}
+
+//自动截图道具模块
+
+//增加一张道具截图
+void AddProp_Original(int task, int thisPropX, int thisPropY)
+{
+  //如果和已有物品匹配，则退出函数
+  for (int code = 0; code < lootNum; code++)
+    if (IsBitmapEqual(work[task].map, loot[code].image, lootCoreWidth, lootCoreHeight,
+      thisPropX + lootCoreX, thisPropY + lootCoreY, lootCoreX, lootCoreY))
+      return;
+
+  CopyMap(loot[lootNum].image, work[task].map, thisPropX, thisPropY);//记录物品图像
+  int style = GetLootStyle(lootNum);//判断物品类别
+
+  //获取新物品文件名，保存物品名称和截图
+  char path[maxPath] = {};
+  for (int code = 0; code < 1000; code++)
+  {
+    sprintf_s(path, "资源文件\\道具\\%c%d.png", styleLetter[style], code);
+    if (!FileExist(path))
+    {
+      sprintf_s(loot[lootNum].name, "%c%d", styleLetter[style], code);//记录物品名称
+      ColorToBitmap(loot[lootNum].image, path);//保存物品截图
+      break;
+    }
+  }
+  lootNum++;
+}
+//（带互斥锁）增加一张道具截图
+void AddProp(int task, int thisPropX, int thisPropY)
+{
+  WaitForSingleObject(hMutexProp, INFINITE);
+  AddProp_Original(task, thisPropX, thisPropY);
+  ReleaseMutex(hMutexProp);
+}
+//等待物品进入仓库
+void WaitInStore(int task, int account)
+{
+  int counter = 0;
+  while (true)
+  {
+    UpdateMap(task, account);
+    //当仓库第1格物品与移动前的背包物品相同（差距不超过5像素）时，视为物品已进入仓库
+    if (IsBitmapEqual_Tolerance(work[task].map, work[task].initialProp, lootCoreWidth, lootCoreHeight,
+      storeX + lootCoreX, storeY + lootCoreY, lootCoreX, lootCoreY, 500))
+      break;
+    counter++;
+    if (counter > 30)
+    {
+      ColorToBitmap(work[task].map, "store1.png", storeX + lootCoreX, storeY + lootCoreY, lootCoreWidth, lootCoreHeight);
+      ColorToBitmap(work[task].initialProp, "prop1.png", lootCoreX, lootCoreY, lootCoreWidth, lootCoreHeight);
+      RecordError(task, account, "物品入库失败", "物品无法放入仓库");
+    }
+    CheckSleep(task, 100);
+  }
+}
+//等待拿起仓库物品
+void WaitPickStore(int task, int account, int thisPropX, int thisPropY)
+{
+  int counter = 0;
+  while (true)
+  {
+    UpdateMap(task, account);
+    //当背包格子与移动后不同时，视为仓库物品已经拿起
+    if (!IsBitmapEqual(work[task].map, work[task].movedProp, propWidth, propHeight,
+      thisPropX, thisPropY))
+      break;
+    counter++;
+    if (counter > 30)
+      RecordError(task, account, "物品拿起失败", "物品无法从仓库拿起");
+    CheckSleep(task, 100);
+  }
+}
+//等待物品回到背包（适用于数量为1的物品）
+void WaitOutStore(int task, int account, int thisPropX, int thisPropY)
+{
+  int counter = 0;
+  while (true)
+  {
+    UpdateMap(task, account);
+    //当背包中的物品与移动前相同时，视为物品已回到背包
+    if (IsBitmapEqual_Tolerance(work[task].map, work[task].initialProp, lootCoreWidth, lootCoreHeight,
+      thisPropX + lootCoreX, thisPropY + lootCoreY, lootCoreX, lootCoreY, 500))
+      break;
+    counter++;
+    if (counter > 30)
+      RecordError(task, account, "物品出库失败", "物品无法放回背包");
+    CheckSleep(task, 100);
+  }
+}
+//等待物品数字复现
+void WaitDigitRecover(int task, int account, int digitX, int digitY)
+{
+  int counter = 0;
+  while (true)
+  {
+    UpdateMap(task, account);
+    if (GetPropQuantity(task, digitX, digitY) != -1)
+      break;
+    counter++;
+    if (counter > 30)
+      RecordError(task, account, "物品出库失败", "物品无法放回背包");
+    CheckSleep(task, 100);
+  }
+}
+//把道具背包(row,column)格道具移动到储物仓并截图，然后移动回来
+void SaveProp(int task, int account, int row, int column)
+{
+  const POINT store = { 55, 117 };
+  const POINT confirm = { 412, 360 };
+  const POINT move_max = { 594, 325 };
+  const POINT move_dec = { 390, 325 };
+
+  int thisPropX = propX + column * propWidth;//道具格子左上角X
+  int thisPropY = propY + row * propHeight - work[task].propOffsetY;//道具格子左上角Y（已计算偏移）
+  int digitX = thisPropX + lootDigitX, digitY = thisPropY + lootDigitY;//道具数量个位数位置
+
+  ForcedUpdateMap(task, account);
+  CopyMap(work[task].initialProp, work[task].map, thisPropX, thisPropY);//保存移动前的道具图像，用于检验物品入库出库
+  int numInProp = GetPropQuantity(task, digitX, digitY);//获取道具数量
+
+  if (column <= 1) //如果列数为0或1，保存本行图像
+    CopyMap(work[task].calibration, work[task].map, thisPropX + calibrationX, thisPropY + calibrationY);
+
+  //1. 移动到储藏室
+  Click(task, account, thisPropX + 6, thisPropY + 5);//点击道具格子
+  if (TryWaitPicture(APPEAR, task, account, "使用物品", 500))
+    Click(task, account, thisPropX + 39, thisPropY + 48); //如果有使用菜单，点击移动按钮
+  WaitPicture(APPEAR, task, account, "储物仓左上角_空");//等待储物仓左上角亮起
+  Click(task, account, store);//点击储物仓第1格
+
+  //数量为1：可直接移动，等待储物仓亮圈消失即可
+  if (numInProp == -1)
+  {
+    WaitPicture(DISAPPEAR, task, account, "储物仓左上角_亮");
+    CheckSleep(task, 200);
+  }
+  else //数量不为1：需要设置移动数量并确认
+  {
+    WaitPicture(APPEAR, task, account, "移动数量1");//等待移动数量变为1
+    Click(task, account, move_max);//点击数量MAX
+    WaitPicture(APPEAR, task, account, "移动数量-");
+    Click(task, account, move_dec);//点击数量-1
+    WaitPicture(APPEAR, task, account, "移动数量+");
+    Click(task, account, confirm);//点击确认
+  }
+  WaitInStore(task, account);//等待物品进入储藏室
+
+  //保存移动后的道具图像（如果物品数量为1，则此图像为空）；用于检验储藏室物品拿起
+  CopyMap(work[task].movedProp, work[task].map, thisPropX, thisPropY);
+
+  //数量不为1的物品在此时保存截图
+  if (numInProp != -1)
+    AddProp(task, thisPropX, thisPropY);
+
+  //2. 放回道具背包
+  const int storeDigitX = storeX + lootDigitX, storeDigitY = storeY + lootDigitY;
+  int numInStore = GetPropQuantity(task, storeDigitX, storeDigitY);//获取储物区道具数量
+
+  Click(task, account, store);//点击储物仓第1格
+  WaitPickStore(task, account, thisPropX, thisPropY);//等待储藏室物品被拿起
+
+  if (column <= 1) //如果列数为0或1，利用保存的图像校准翻页量
+  {
+    ForcedUpdateMap(task, account);
+    for (int y = propY + 6 * propHeight; y >= propY; y--) //从底部往上寻找
+      if (IsBitmapEqual(work[task].map, work[task].calibration, calibrationWidth, calibrationHeight,
+        thisPropX + calibrationX, y))
+      {
+        work[task].propOffsetY += thisPropY + calibrationY - y;//更新翻页量
+        thisPropY = propY + row * propHeight - work[task].propOffsetY;//重新计算thisPropY
+        digitY = thisPropY + lootDigitY;//重新计算digitY
+        break;
+      }
+  }
+
+  Click(task, account, thisPropX + 6, thisPropY + 5);//点击道具格子
+
+  //数量为1的物品可直接拿回，数量不为1则需要设置移动数量并确认
+  if (numInStore != -1)
+  {
+    WaitPicture(APPEAR, task, account, "移动数量1");//等待移动数量变为1
+    Click(task, account, move_max);//点击数量MAX
+    WaitPicture(APPEAR, task, account, "移动数量-");
+    Click(task, account, confirm);//点击确认
+  }
+  CheckSleep(task, 200);
+
+  //若道具数量为1，等待道具背包出现物品后截图
+  if (numInProp == -1)
+  {
+    WaitOutStore(task, account, thisPropX, thisPropY);
+    AddProp(task, thisPropX, thisPropY);//保存道具截图
+  }
+  else //否则等待个位数字出现
+    WaitDigitRecover(task, account, digitX, digitY);
+  isRepaintRequired = 1;
+}
+//批量截图道具
+void AutoSaveProp(int task, int account)
+{
+  for (int i = 22; i < MAXINT; i++)
+  {
+    int row = i / 9;
+    int column = i % 9;
+    SaveProp(task, account, row, column);
+  }
+}
+
+/*
+//同类物品中某点出现过的所有颜色
+const int maxColorNum = 100;
+struct ColorListType
+{
+  int colorNum;//该点出现过的颜色数量
+  COLORREF color[maxColorNum];//第i种颜色
+  int picNum[maxColorNum];//第i种颜色的共色图片数
+};
+ColorListType colorList[propHeight][propWidth];//同类物品各点的颜色表
+//记录(x,y)出现了颜色color
+void RecordColorToList(COLORREF color, int x, int y)
+{
+  if (color == 0 || color == 0xffffff) //黑白两色不予记录
+    return;
+  //如果color已在颜色列表中，记录picNum++
+  for (int i = 0; i < colorList[y][x].colorNum; i++)
+    if (colorList[y][x].color[i] == color)
+    {
+      colorList[y][x].picNum[i]++;
+      return;
+    }
+  //否则新增一种颜色
+  colorList[y][x].color[colorList[y][x].colorNum] = color;
+  colorList[y][x].picNum[colorList[y][x].colorNum] = 1;
+  colorList[y][x].colorNum++;
+}
+//生成一类物品的底色（类名styleName）
+void MakeBaseImage(const char *styleName)
+{
+  COLORREF tempBase[propHeight][propWidth] = {};//同类物品底色
+
+  //0. 清空colorList
+  memset(colorList, 0, sizeof(colorList));
+
+  //1. 将A类道具的图片读入prop
+  char folder[maxPath] = {};
+  sprintf_s(folder, "资源文件\\%s", styleName);
+  if (!FileExist(folder))
+    return;
+
+  //删除原有的底色文件
+  char path[maxPath] = {};
+  sprintf_s(path, "%s\\底色.png", folder);
+  remove(path);
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, lootList, maxLootNum);//查找所有png文件
+
+  lootNum = 0;
+  for (int i = 0; i < filesNum && lootNum < maxLootNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, lootList[i]);
+    if (_access(path, 0) == 0) //如果可以打开
+    {
+      BitmapToColor(path, loot[lootNum].image);//读取卡片图像到image
+      lootList[i][strlen(lootList[i]) - 4] = 0;//删除".png"
+      strcpy_s(loot[lootNum].name, lootList[i]);//记录名称
+      lootNum++;
+    }
+  }
+
+  //2. 记录共同底色
+  for (int code = 0; code < lootNum; code++)
+    for (int y = 0; y < propHeight; y++)
+      for (int x = 0; x < propWidth; x++)
+        RecordColorToList(loot[code].image[y][x], x, y);
+
+  //3. 计算每一点的最优势颜色
+  for (int y = 0; y < propHeight; y++)
+    for (int x = 0; x < propWidth; x++)
+    {
+      int maxPicNum = 0;
+      COLORREF bestColor = 0;
+      for (int i = 0; i < colorList[y][x].colorNum; i++)
+        if (colorList[y][x].picNum[i] > maxPicNum)
+        {
+          maxPicNum = colorList[y][x].picNum[i];
+          bestColor = colorList[y][x].color[i];
+        }
+      if (maxPicNum <= 1) //出现不超过1次的点涂黑
+        tempBase[y][x] = 0;
+      else
+        tempBase[y][x] = bestColor;
+    }
+
+  //4. 保存底色图案
+  sprintf_s(path, "%s\\底色.png", folder);
+  ColorToBitmap(tempBase, path);
+}
+//生成所有类型物品的底色
+void MakeBaseImage()
+{
+  for (int i = 0; i < maxStyleNum; i++)
+    MakeBaseImage(styleName[i]);
+}
+//道具自动分类
+void AutoClassification()
+{
+  const char folder[] = "资源文件\\道具";
+  if (!FileExist(folder))
+    return;
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, lootList, maxLootNum);//查找所有png文件
+
+  lootNum = 0;
+  char path[maxPath] = {};
+  char newPath[maxPath] = {};
+  for (int i = 0; i < filesNum && lootNum < maxLootNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, lootList[i]);
+    if (FileExist(path)) //如果可以打开
+    {
+      BitmapToColor(path, loot[lootNum].image);//读取卡片图像到image
+      int style = GetLootStyle(lootNum);
+      sprintf_s(newPath, "%s\\%c%s", folder, styleLetter[style], lootList[i]);//在名称前添加分类字母
+      rename(path, newPath);
+      lootList[i][strlen(lootList[i]) - 4] = 0;//删除".png"
+      strcpy_s(loot[lootNum].name, lootList[i]);//记录名称
+      lootNum++;
+    }
+  }
+}
+*/
+//载入道具底色
+void LoadBase()
+{
+  char path[maxPath] = {};
+  for (int i = 0; i < maxStyleNum; i++)
+  {
+    sprintf_s(path, "附加程序\\图片\\物品\\底色\\%s.png", styleName[i]);
+    BitmapToColor(path, base[i]);
+  }
+}
+//计算某战利品与空格子的颜色重复数
+int GetBlankSimilarity(int task, int row, int column)
+{
+  //战利品格子左上角位置
+  int x0 = lootWidth * column;
+  int y0 = lootHeight * row;
+
+  int similarity = 0;
+  for (int y = 0; y < lootHeight; y++)
+    for (int x = 0; x < lootWidth; x++)
+      if (work[task].loot[y0 + y][x0 + x] == 0x1a4263)
+        similarity++;
+  return similarity;
+}
+//获取战利品截图第(row,column)格的物品编号（返回值）和数量（quantity）
+int GetLootCodeAndQuantity_Original(int task, int row, int column, int &quantity)
+{
+  //战利品格子左上角位置
+  int x0 = lootWidth * column;
+  int y0 = lootHeight * row;
+
+  //填写战利品数量
+  quantity = GetLootQuantity(task, x0 + lootDigitX, y0 + lootDigitY);
+
+  //如果空格数目过多，直接认为是空格子
+  if (GetBlankSimilarity(task, row, column) >= 10)
+    return 0;
+
+  //如果和已有战利品匹配，则返回战利品编号
+  for (int code = 0; code < lootNum; code++)
+    if (IsBitmapEqual(work[task].loot, loot[code].image, lootCoreWidth, lootCoreHeight,
+      x0 + lootCoreX, y0 + lootCoreY, lootCoreX, lootCoreY))
+    {
+      if (loot[code].isReplacedRequired)
+      {
+        CopyMap(loot[code].image, work[task].loot, x0, y0);//用实战不绑截图替换loot
+        loot[code].isReplacedRequired = false;
+      }
+      return code;
+    }
+
+  //如果不匹配，且战利品种数没超过上限，则新增战利品截图
+  if (lootNum < maxLootNum)
+  {
+    CopyMap(loot[lootNum].image, work[task].loot, x0, y0);//记录新战利品截图
+    int style = GetLootStyle(lootNum);//自动判断战利品分类（仅限BCDEF HIJKLM R类）
+    sprintf_s(loot[lootNum].name, "%c001", styleLetter[style]);//直接命名为X001，反正数字不参与判定
+    lootNum++;
+    return lootNum - 1;
+  }
+  return -1;//新增不了就返回-1
+}
+//（带互斥锁）获取战利品截图第(row,column)格的物品编号（返回值）和数量（quantity）
+int GetLootCodeAndQuantity(int task, int row, int column, int &quantity)
+{
+  WaitForSingleObject(hMutexLoot, INFINITE);
+  int code = GetLootCodeAndQuantity_Original(task, row, column, quantity);
+  ReleaseMutex(hMutexLoot);
+  return code;
+}
+//将整数num分解得到各位数字
+int GetDigits(int num, int(&digits)[9])
+{
+  memset(digits, 0, sizeof(digits));
+  if (num == 0) //0视为一位数
+    return 1;
+  int digitsNum = 0;
+  while (num > 0)
+  {
+    digits[digitsNum++] = num % 10;
+    num = num / 10;
+  }
+  return digitsNum;
+}
+//记录战利品总收益
+void SaveTotalLoot(int task, int account)
+{
+  char bitmapPath[maxPath] = {};
+  sprintf_s(bitmapPath, "%s\\%dP_总收益.png", work[task].lootDirectory, account + 1);
+
+  int lootTypeNum = 0;
+  int digits[9] = {};
+  memset(work[task].totalLoot, 0, sizeof(work[task].totalLoot));//先把图像清空
+  for (char style = 'Z'; style >= 'B'; style--) //按从Z到B的顺序保存（不保存A类：空格）
+    for (int code = lootNum - 1; code >= 0; code--)
+      if (loot[code].name[0] == style)
+        if (reserve[task].lootNum[account][code] > 0)
+        {
+          //要记录的战利品在总战利品中的行列
+          int row = lootTypeNum / 10;
+          int column = lootTypeNum % 10;
+          //总战利品格子左上角位置
+          int totalLootX = lootWidth * column;
+          int totalLootY = lootHeight * row;
+          //把战利品图片保存到总战利品截图中
+          CopyMap(work[task].totalLoot, totalLootX, totalLootY, lootWidth, lootHeight,
+            loot[code].image, 0, 0);
+          //把战利品数量保存到总战利品截图中
+          int digitsNum = GetDigits(reserve[task].lootNum[account][code], digits);
+          int quantityWidth = digitsNum * (lootDigitWidth + 1) + 1;
+          const int quantityHeight = lootDigitHeight + 2;
+          int quantityTop = totalLootY + lootDigitY - 1;//数量上方Y
+          int quantityRight = totalLootX + lootDigitX + lootDigitWidth;//数量右侧X
+          //把数量区涂黑
+          for (int y = quantityTop; y < quantityTop + quantityHeight; y++)
+            for (int x = quantityRight - quantityWidth + 1; x <= quantityRight; x++)
+              work[task].totalLoot[y][x] = 0;
+          //填写各位数字
+          for (int i = 0; i < digitsNum; i++)
+          {
+            int digitX = quantityRight - (i + 1) * (lootDigitWidth + 1) + 1;
+            int digitY = quantityTop + 1;
+            CopyMap(work[task].totalLoot, digitX, digitY,
+              lootDigitWidth, lootDigitHeight, lootDigit[digits[i]], 0, 0);
+          }
+          lootTypeNum++;//战利品种数+1
+        }
+  //战利品种数>0时，保存总战利品截图
+  if (lootTypeNum > 0)
+  {
+    int row = (lootTypeNum - 1) / 10 + 1;
+    ColorToBitmap(work[task].totalLoot, bitmapPath, 0, 0, 10 * lootWidth, row * lootHeight);
+  }
+}
+//战利品各页标准进度条，用于判断翻页是否完成。最多等0.2秒
+COLORREF standardLootScroll[4][lootScrollHeight][1];
+//载入战利品标准滚动条图像
+void LoadLootScroll()
+{
+  char path[maxPath] = {};
+  for (int page = 0; page < 4; page++)
+  {
+    sprintf_s(path, "附加程序\\图片\\战利品滚动条\\%d.png", page);
+    BitmapToColor(path, standardLootScroll[page]);
+  }
+}
+//战利品是否已翻到第page页
+bool IsLootPaged(int task, int page)
+{
+  int counter = 0;
+  for (int y = 0; y < lootScrollHeight; y++)
+  {
+    if ((work[task].map[lootScrollY + y][lootScrollX] == scrollBlankColor)
+      == (standardLootScroll[page][y][0] == scrollBlankColor))
+      counter++;
+  }
+  if (page == 0 || page == 3) //顶部和底部要求精确匹配
+    return counter == lootScrollHeight;
+  //中间2页偏差在10个像素以内（即滚动条位置差小于等于5像素）就算合格
+  return counter >= lootScrollHeight - 10;
+}
+int cycleArea[lootHeight][lootWidth];
+//战利品中的(x,y)点是否处在圆环带中
+bool IsInCycle(int x, int y, double r1, double r2)
+{
+  const double x0 = 24.5, y0 = 23;
+  double value = Sqr(x - x0) + Sqr(y - y0);
+  return value >= Sqr(r1) && value <= Sqr(r2);
+}
+//战利品中的(x,y)点处于第几圆环带
+int GetCycleArea(int x, int y)
+{
+  if (IsInCycle(x, y, 0, 5))
+    return 0;
+  if (IsInCycle(x, y, 6, 12))
+    return 1;
+  if (IsInCycle(x, y, 13, 40))
+    return 2;
+  return -1;
+}
+//填写战利品格子各点所属的圆环带
+void WriteCycleArea()
+{
+  for (int y = 0; y < lootHeight; y++)
+    for (int x = 0; x < lootWidth; x++)
+      cycleArea[y][x] = GetCycleArea(x, y);
+}
+//颜色color是否为“加载中”圆环颜色
+bool IsLoadingColor(COLORREF color)
+{
+  int r = bgrRValue(color);
+  int g = bgrGValue(color);
+  int b = bgrBValue(color);
+  int diff = b * 3 - g * 2;
+  return r > 250 && g > 150 && diff >= -5 && diff <= 5;
+}
+//(x0,y0)位置的物品是否正在加载
+template <size_t height, size_t width>
+bool IsItemLoading(COLORREF(&color)[height][width], int x0, int y0)
+{
+  int bingoNum[3] = {};//3个区域符合圆环颜色的像素数量
+  for (int y = 0; y < lootHeight; y++)
+    for (int x = 0; x < lootWidth; x++)
+    {
+      int cycle = cycleArea[y][x];
+      if (cycle == 0 || cycle == 2)
+      {
+        if (color[y0 + y][x0 + x] == 0x314759)//圆环内外的深蓝底色
+          bingoNum[cycle]++;
+      }
+      else if (cycle == 1)
+      {
+        if (IsLoadingColor(color[y0 + y][x0 + x])) //圆环颜色
+          bingoNum[cycle]++;
+      }
+    }
+  //3个圆环带颜色匹配数分别达到50,200,1200，判定为“加载中”
+  return bingoNum[0] >= 50 && bingoNum[1] >= 200 && bingoNum[2] >= 1200;
+}
+//战利品第row行column列是否正在加载
+bool IsLootLoading(int task, int row, int column)
+{
+  //战利品格子左上角位置
+  int x0 = lootWidth * column;
+  int y0 = lootHeight * row;
+  return IsItemLoading(work[task].loot, x0, y0);
+}
+//道具背包第row行column列是否正在加载
+bool isPropLoading(int task, int row, int column)
+{
+  int x0 = propX + column * propWidth;
+  int y0 = propY + row * propHeight;
+  return IsItemLoading(work[task].map, x0, y0);
+}
+//道具背包是否已加载好
+bool isPropLoaded(int task)
+{
+  for (int row = 0; row < 7; row++)
+    for (int column = 0; column < 9; column++)
+      if (isPropLoading(task, row, column))
+        return false;
+  return true;
+}
+//记录战利品出错截图
+int RecordLootError(int task, int account, int page, const char *tip)
+{
+  char lootPath[maxPath] = {};//本局战利品截图
+  sprintf_s(lootPath, "%s\\(error)%dP_第%d局_%d(%s).png", work[task].lootDirectory,
+    account + 1, work[task].games, page, tip);
+  ColorToBitmap(work[task].map, lootPath, 200, 421, 600, 140);
+  return 0;
+}
+//保存战利品截图
+int SaveLoot(int task, int account)
+{
+  const COLORREF topColor = 0x082e4c;
+  const POINT top = { lootScrollX, lootScrollY + 2 };
+  const POINT bottom = { lootScrollX, lootScrollY + lootScrollHeight - 2 };
+  const POINT pageDown = { lootScrollX, lootScrollY + lootScrollHeight + 8 };
+  char lootPath[maxPath] = {};//本局战利品截图
+
+  int lootGridY[4] = { 454, -1, -1, 503 };//格子起始高度
+  const int lootPageY[4] = { 474, 501, 517, 533 };//翻页点击位置
+  //进行4次翻页识别
+  for (int page = 0; page < 4; page++)
+  {
+    CheckSleep(task, 100);
+    UpdateMap(task, account);//点击前主动截图1次，避免隐藏状态点击失效
+    Click(task, account, lootScrollX, lootPageY[page]); //点击滚动条对应位置
+    int counter = 0;
+    while (true) //等待滚动条移动到标准位置
+    {
+      CheckSleep(task, 50);
+      if (UpdateMap(task, account)) //如果截图成功
+      {
+        //图中没有战利品3个字，则保存本页战利品截图，退出函数
+        if (!FindPictureInMap(task, "战利品"))
+          return RecordLootError(task, account, page, "无战利品字样");
+        //如果滚动条移动到了标准位置，退出循环
+        if (IsLootPaged(task, page))
+          break;
+      }
+      counter++;
+      if (counter >= 10) //500ms没有移动到标准位置，则保存本页战利品截图，退出函数
+        return RecordLootError(task, account, page, "未翻到标准位置");
+    }
+    if (page == 0) //顶部：截取前2行
+      CopyMap(work[task].loot, 0, 0, lootWidth * 10, lootHeight * 2, work[task].map, lootGridX, lootGridY[0]);
+    else if (page == 3) //底部：截取最后一行
+      CopyMap(work[task].loot, 0, lootHeight * 4, lootWidth * 10, lootHeight, work[task].map, lootGridX, lootGridY[3]);
+    else //中间两页：需要先判定格子位置
+    {
+      const COLORREF gridTopColor[2] = { 0x14263d, 0x001f41 };//格顶标准颜色
+      for (int y = 456; y < 456 + lootHeight; y++) //从上往下查找格顶颜色
+      {
+        bool isGridTop = true;
+        const int gridTopCenterX = 233;//格顶中心X
+        COLORREF gridTopCenterColor = work[task].map[y][gridTopCenterX]; //格顶中心颜色
+        //如果格顶中心颜色都不对，说明此y不是格顶
+        if (gridTopCenterColor != gridTopColor[0] && gridTopCenterColor != gridTopColor[1])
+          isGridTop = false;
+        else //如果中心颜色对，那么周围10格都要是这个颜色，才判断为格顶
+          for (int x = gridTopCenterX - 10; x < gridTopCenterX + 10; x++)
+            if (work[task].map[y][x] != gridTopCenterColor)
+              isGridTop = false;
+        if (isGridTop)
+        {
+          lootGridY[page] = y + 1; //记录格顶位置
+          break;
+        }
+      }
+      if (lootGridY[page] == -1) //如果找不到格底颜色
+        return RecordLootError(task, account, page, "找不到格顶");
+      if (page == 1)
+        CopyMap(work[task].loot, 0, lootHeight * 2, lootWidth * 10, lootHeight, work[task].map, lootGridX, lootGridY[1]);
+      else if (page == 2)
+        CopyMap(work[task].loot, 0, lootHeight * 3, lootWidth * 10, lootHeight, work[task].map, lootGridX, lootGridY[2]);
+    }
+  }
+  //如果某一格为“加载中”，结束函数
+  for (int row = 4; row >= 0; row--)
+    for (int column = 9; column >= 0; column--)
+      if (IsLootLoading(task, row, column))
+        return 0;
+
+  sprintf_s(lootPath, "%s\\%dP_第%d局.png", work[task].lootDirectory, account + 1, work[task].games);
+  ColorToBitmap(work[task].loot, lootPath);//保存5x10战利品截图
+  //对loot的50个格子进行统计
+  for (int row = 4; row >= 0; row--)
+    for (int column = 9; column >= 0; column--)
+    {
+      //work[task].blankSimilarity[account][row][column] = GetBlankSimilarity(task, row, column);
+      int quantity = 0;
+      int code = GetLootCodeAndQuantity(task, row, column, quantity);
+      if (code >= 0)
+        reserve[task].lootNum[account][code] += quantity;
+    }
+  SaveTotalLoot(task, account);
+  /*
+  FILE *f;
+  fopen_s(&f, "1P战利品空格.txt", "w");
+  for (int row = 0; row < 5; row++)
+  {
+    for (int column = 0; column < 10; column++)
+      fprintf(f, "%4d", work[task].blankSimilarity[0][row][column]);
+    fprintf(f, "\n");
+  }
+  fclose(f);
+  */
+
+  work[task].isLootSaved[account] = true;
+  return 1;
+}
 //自动带卡首轮查找（输入空卡槽信息，输出每张卡存在的最佳候选卡的编号和星级）
-void ScanCustom(int task, int account, bool(&isSlotEmpty)[maxSlotNum + 1],
+void ScanCustom(int task, int account, bool(&isSlotRequired)[maxSlotNum + 1],
   int(&bestCode)[maxSlotNum + 1], int(&bestStar)[maxSlotNum + 1])
 {
-  const COLORREF scrollBlankColor = 0x054971;//滚动条空白处颜色
   const COLORREF customColor[2] = { 0x001f41, 0x1a4263 };//防御卡识别色
 
-  const POINT top = { 930, 198 };
-  const POINT pageDown = { 930, 400 };
+  const POINT top = { customScrollX, customScrollY + 2 };
+  const POINT pageDown = { customScrollX, customScrollY + customScrollHeight + 8 };
   int row = -1, column = -1;
 
-  CandidateCustomType candidate[maxSlotNum + 1] = {};//21张卡的候选卡信息
+  CandidateType candidate[maxSlotNum + 1] = {};//21张卡的候选卡信息
   int bestPriority[maxSlotNum + 1] = {};//21张卡已找到的最高优先级
+  bool isCandidateUnique = true;//所有卡槽是否只有1个优先级的候选卡
   for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
-  {
-    if (isSlotEmpty[order])//只查找空卡槽
+    if (isSlotRequired[order])
     {
       GetCustomCandidate(task, account, order, candidate[order]);//获取该卡槽的所有候选卡编号和优先级
+      if (candidate[order].num == 0) //没有截图的卡不携带
+        isSlotRequired[order] = false;
+      if (candidate[order].num > 1)
+        isCandidateUnique = false;
       bestPriority[order] = -2;//最高优先级预设为-2（不存在）
       bestCode[order] = -1;//最高优先级编号预设为-1（不存在）
       bestStar[order] = -1;//最高星级编号预设为-1（不存在）
     }
+  //带卡模式为“最靠前”，且所有空卡槽只有1个优先级，则取消首轮查找，直接记录
+  if (customOption == 1 && isCandidateUnique)
+  {
+    for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
+      if (isSlotRequired[order])
+        bestCode[order] = candidate[order].code[0];
+    return;
   }
 
   //进行20次翻页识别
@@ -2647,17 +4090,17 @@ void ScanCustom(int task, int account, bool(&isSlotEmpty)[maxSlotNum + 1],
   {
     if (page == 0)
     {
-      forcedShot(task, account);//直接截图
-      for (int y = 0; y < scrollHeight; y++)//记录原滚动条
-        work[task].scroll[y][0] = work[task].map[scrollY + y][scrollX];
+      ForcedUpdateMap(task, account);//直接截图
+      for (int y = 0; y < customScrollHeight; y++)//记录原滚动条
+        work[task].customScroll[y][0] = work[task].map[customScrollY + y][customScrollX];
     }
     else if (page == 1) //第1次
     {
-      if (work[task].scroll[0][0] == scrollBlankColor) //如果滚动条不在顶部
-        Scroll(task, account, top);//翻到顶部并截图
+      if (work[task].customScroll[0][0] == scrollBlankColor) //如果滚动条不在顶部
+        ScrollCustom(task, account, top);//翻到顶部并截图
     }
     else//第2-21次
-      Scroll(task, account, pageDown);//向下翻页并截图
+      ScrollCustom(task, account, pageDown);//向下翻页并截图
 
     //确定防御卡起始识别高度bagY
     int x = bagX + customX;
@@ -2665,20 +4108,13 @@ void ScanCustom(int task, int account, bool(&isSlotEmpty)[maxSlotNum + 1],
       if (work[task].map[y][x] == customColor[0] && work[task].map[y + 1][x] == customColor[1]
         && work[task].map[y + 2][x] == customColor[1])
       {
-        bagY = y;
+        reserve[task].bagY = y;
         break;
       }
-    /*
-    int star = GetStar(task, 0, 0);
-    char message[100];
-    sprintf_s(message, "第一张卡的星级=%d", star);
-    RecordError(task, account, "星级识别", message, true);
-    */
-    //SaveStar(task);
 
     //在本页搜索每一个空卡槽
     for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
-      if (isSlotEmpty[order])//只查找空卡槽
+      if (isSlotRequired[order])
         //搜索这个卡槽的所有候选卡（优先级从高到低）
         for (int i = 0; i < candidate[order].num; i++)
         {
@@ -2686,7 +4122,7 @@ void ScanCustom(int task, int account, bool(&isSlotEmpty)[maxSlotNum + 1],
           if (candidate[order].priority[i] < bestPriority[order])
             break;
           //查找此候选卡在本页的最高星级
-          int star = newFindCustom(task, candidate[order].code[i], -1);
+          int star = FindCustom(task, candidate[order].code[i], -2);
           if (star >= 0) //如果查找成功
             //如果此卡优先级更高，或优先级相同但星级更高，更新这张卡已找到的最高优先级和最高星级
             if (candidate[order].priority[i] > bestPriority[order] || star > bestStar[order])
@@ -2698,8 +4134,8 @@ void ScanCustom(int task, int account, bool(&isSlotEmpty)[maxSlotNum + 1],
         }
   }
 }
-//携带自定卡片，返回是否携带成功
-bool TakeCustomCard(int task, int account, int customCode, int targetStar)
+//携带自定卡片，返回是否携带成功。若targetStar==-1，则携带任意星级，否则只携带指定星级
+bool TakeCustom(int task, int account, int customCode, int targetStar)
 {
   const COLORREF scrollBlankColor = 0x054971;//滚动条空白处颜色
   const COLORREF customColor[2] = { 0x001f41, 0x1a4263 };//防御卡识别色
@@ -2714,17 +4150,17 @@ bool TakeCustomCard(int task, int account, int customCode, int targetStar)
   {
     if (page == 0)
     {
-      forcedShot(task, account);//直接截图
-      for (int y = 0; y < scrollHeight; y++)//记录原滚动条
-        work[task].scroll[y][0] = work[task].map[scrollY + y][scrollX];
+      ForcedUpdateMap(task, account);//直接截图
+      for (int y = 0; y < customScrollHeight; y++)//记录原滚动条
+        work[task].customScroll[y][0] = work[task].map[customScrollY + y][customScrollX];
     }
     else if (page == 1) //第1次
     {
-      if (work[task].scroll[0][0] == scrollBlankColor) //如果滚动条不在顶部
-        Scroll(task, account, top);//翻到顶部并截图
+      if (work[task].customScroll[0][0] == scrollBlankColor) //如果滚动条不在顶部
+        ScrollCustom(task, account, top);//翻到顶部并截图
     }
     else//第2-21次
-      Scroll(task, account, pageDown);//向下翻页并截图
+      ScrollCustom(task, account, pageDown);//向下翻页并截图
 
     //确定防御卡起始识别高度bagY
     int x = bagX + customX;
@@ -2732,15 +4168,15 @@ bool TakeCustomCard(int task, int account, int customCode, int targetStar)
       if (work[task].map[y][x] == customColor[0] && work[task].map[y + 1][x] == customColor[1]
         && work[task].map[y + 2][x] == customColor[1])
       {
-        bagY = y;
+        reserve[task].bagY = y;
         break;
       }
 
     //在本页找卡，如果找到
-    if (newFindCustom(task, customCode, targetStar, &row, &column) == targetStar)
+    if (FindCustom(task, customCode, targetStar, &row, &column) >= 0)
     {
       //携带卡片
-      Click(task, account, bagX + column * bagWidth + customX, bagY + row * bagHeight + customY);
+      Click(task, account, bagX + column * bagWidth + customX, reserve[task].bagY + row * bagHeight + customY);
       CheckSleep(task, 100);
       return true; //携带成功
     }
@@ -2812,7 +4248,7 @@ void RecordTemplate(int task, COLORREF(&Template)[width][height], int x0 = 0)
     for (int y = 0; y < templateHeight; y++)
     {
       COLORREF color = Template[y][x0 + x];
-      if (!IsColorExist(task, color)) //对于模板中的非黑色
+      if (!IsColorExist(task, color))
       {
         work[task].recordedColor[work[task].recordedColorNum++] = color;
         RecordColor(task, color);
@@ -2972,17 +4408,17 @@ int CatchTemplate(int task, int account, int order)
     work[task].starfishOrder[account] = order;
   /*
   const char* templateName[5] = { "常规", "海星", "煮蛋", "投手", "主神" };
-  ColorToBitmap(Work[task].newWideTemplate, "宽模板.bmp");
-  ColorToBitmap(Work[task].newTemplate[account][order], "模板.bmp");
+  ColorToBitmap(Work[task].newWideTemplate, "宽模板.png");
+  ColorToBitmap(Work[task].newTemplate[account][order], "模板.png");
   char message[100] = {};
   sprintf_s(message, "这是%d类卡：%s", slotTemplateType, templateName[slotTemplateType]);
-  RecordError(task, account, "相似度测试", message, true);
+  RecordError(task, account, "相似度测试", message, END_TASK);
   */
 
 #ifdef _DEBUG
   char path[100];
-  sprintf_s(path, "识图数据\\%d.bmp", order);
-  ColorToBitmap(Work[task].card[account][order].image, path);//保存模板文件
+  sprintf_s(path, "自动备份\\识图数据\\%d.png", order);
+  ColorToBitmap(work[task].card[account][order].image, path);//保存模板文件
 #endif
   return 1;
 }
@@ -3412,10 +4848,11 @@ int GetBossNum(int task)
   return 0;
 }
 //从截图中更新波次
-void GetWaveFromMap(int task)
+void GetWave(int task)
 {
   bool isWaveChanged = false;//波次是否改变
-  int wave = GetMainWave(work[task].map[552][670], work[task].map[46][100]);
+  //识别到“战利品”，判断为waveLoot波次，否则按两点颜色判断
+  int wave = GetMainWave(task);
   //波次不为-1则更新波次
   if (wave != -1 && wave != waveNoImage)
   {
@@ -3528,6 +4965,7 @@ void GetCold(int task, int account)
 {
   getColdNum++;
   GetSlotNum(task, account); //先获取卡槽
+  DWORD getColdTick = GetTickCount();
 
   //卡片cd归零，铲子和宝石cd设为1
   memset(work[task].isCold[account], 0, sizeof(work[task].isCold[account]));
@@ -3538,13 +4976,15 @@ void GetCold(int task, int account)
   for (int order = 1; order <= work[task].realSlotNum[account]; order++)
   {
     COLORREF color = work[task].map[work[task].cdPoint[account][order].y][work[task].cdPoint[account][order].x];
-    work[task].isCold[account][order] = bgrRValue(color) >= 240 && bgrGValue(color) >= 240 && bgrBValue(color) >= 240;
+    if (bgrRValue(color) >= 240 && bgrGValue(color) >= 240 && bgrBValue(color) >= 240)
+    {
+      work[task].isCold[account][order] = true;
+      if (work[task].slot[account][order].avaliableTick == 0) //如果还没记录卡槽亮起时刻，记录之
+        work[task].slot[account][order].avaliableTick = getColdTick;
+    }
+    else //如果卡槽亮起过，即使这次检查是熄灭的，也不取消亮起时刻，因为这种熄灭不是CD没到导致的，不会引起吞承载卡
+      work[task].isCold[account][order] = false;
   }
-}
-//获得任务task的第一个放卡账号
-int GetFirstPerformedAccount(int task)
-{
-  return work[task].isPerformed[0] ? 0 : 1;
 }
 const COLORREF levelColor[7] = { RGB(255, 255, 0), RGB(255, 128, 0), RGB(0, 255, 0), RGB(255, 255, 255),
 RGB(255, 0, 255), RGB(0, 224, 255), RGB(0, 224, 255) };//人物，承载，护罩，普通，升级，冷却，特殊
@@ -3673,7 +5113,9 @@ void ReadExclusiveInfo(int task, int account)
 //从第一个放卡账号截图中获取共用信息
 void ReadCommonInfo(int task)
 {
-  GetWaveFromMap(task);//读取波次
+  GetWave(task);//读取波次
+  if (!(work[task].wave >= 0 && work[task].wave < maxWave))
+    return;
 
   //第4秒记录初始前线（宙斯变身已经结束，迷雾已驱散）
   if (!work[task].isFrontCatched && work[task].currentTime >= 4)
@@ -3691,8 +5133,8 @@ void ReadCommonInfo(int task)
   if (repairLevel == 10)
     return;
 
-  //第7分钟需要重铺棉麦
-  if (reserve[task].isMaltoseClearRequired && work[task].currentTime >= 420)
+  //第3分钟需要重铺棉麦
+  if (reserve[task].isMaltoseClearRequired && work[task].currentTime >= 180)
   {
     reserve[task].isMaltoseClearRequired = false;
     memset(reserve[task].maltoseTimes, 0, sizeof(reserve[task].maltoseTimes));
@@ -3700,7 +5142,7 @@ void ReadCommonInfo(int task)
 
   //识别卡片和图像的相似度
   for (int account = 0; account < 2; account++)
-    if (work[task].isPerformed[account] == 1 && work[task].isQuitted[account] == 0)
+    if (work[task].isPerformed[account] && !work[task].isQuitted[account])
     {
       //获取每张卡的相似度
       for (int order = 1; order <= maxSlotNum; order++)
@@ -3712,19 +5154,66 @@ void ReadCommonInfo(int task)
   for (int targetCode = 0; targetCode < work[task].targetNum; targetCode++)
     GetSimilarityTarget(task, targetCode);//识别目标targetCode在各个格子的相似度，记录globalMaxSimilarity
 }
+//wave是否为关卡结束后的波次
+bool IsEndWave(int wave)
+{
+  return wave == waveOutOfLevel || wave == waveGrade || wave == waveFlip
+    || wave == waveTower || wave == waveLoot;
+}
+//账号account关卡是否已经结束
+bool IsAccountLevelEnded(int task, int account)
+{
+  //主动退出或波次结束，视为关卡已结束
+  return work[task].isQuitted[account] || work[task].isWaveEnded[account];
+}
+//所有账号是否已经关卡结束
+bool IsLevelEnded(int task)
+{
+  for (int account = 0; account < 2; account++)
+    if (work[task].isInvolved[account] && !IsAccountLevelEnded(task, account))
+      return false;
+  return true;
+}
+//记录波次已经结束
+void SetWaveEnded(int task, int account)
+{
+  work[task].isWaveEnded[account] = true;
+  if (!work[task].oneAccountEndTick)
+    work[task].oneAccountEndTick = GetTickCount();
+}
 //读取两个账号的关卡信息
 void ReadLevelInfo(int task, bool *result = nullptr)
 {
   for (int account = 0; account < 2; account++)
-    if (work[task].isPerformed[account] == 1 && work[task].isQuitted[account] == 0)
+    if (work[task].isInvolved[account] && !work[task].isQuitted[account])
     {
-      if (!UpdateMap(task, account)) //截图账号account
+      //如果是仅参与账号且不显示
+      if (!work[task].isPerformed[account] && !IsGameWindowVisible(work[task].hWnd[account]))
+      {
+        //如果另一个账号已结束，则本账号视为结束
+        if (work[task].isWaveEnded[1 - account])
+          SetWaveEnded(task, account);
+        continue;//无需进行截图
+      }
+      if (!UpdateMap(task, account)) //截图账号account，截图失败需记录，不再继续
         continue;
-      if (result) //记录截图成功
-        result[account] = true;
-      if (account == GetFirstPerformedAccount(task)) //从1PP截图中读取波次、出怪、卡片、图像
-        ReadCommonInfo(task);
-      ReadExclusiveInfo(task, account);//读取本账号专属信息（火苗CD）
+      //至此已成功获取图像
+      int wave = GetMainWave(task);//读取主波次
+      if (IsEndWave(wave)) //判断波次是否已结束
+        SetWaveEnded(task, account);
+      if (wave == waveLoot) //如果某个号已经达到了战利品波次，截图战利品
+        if (!work[task].isLootSaved[account])
+          SaveLoot(task, account);
+      //放卡账号继续读取信息
+      if (work[task].isPerformed[account])
+      {
+        if (result) //记录截图成功
+          result[account] = true;
+        if (account == GetFirstPerformedAccount(task)) //从1PP截图中读取波次、出怪、卡片、图像
+          ReadCommonInfo(task);
+        if (!work[task].isWaveEnded[account])
+          ReadExclusiveInfo(task, account);//读取本账号专属信息（火苗CD）
+      }
     }
   //输出显示信息
   if (monitor[task].isExist)
@@ -3825,7 +5314,7 @@ int IsRowPlanted(int task, int account, int order, int row)
   return 0;
 }
 //种植order号卡片。(row,column)为指定行列，默认按阵型来
-void Plant(int task, int account, int order, int row = 0, int column = 0)
+bool Plant(int task, int account, int order, int row = 0, int column = 0)
 {
   SlotType &slot = work[task].slot[account][order];
   if (slot.search && slot.times < min(7, slot.maxTimes))//索敌卡
@@ -3861,19 +5350,25 @@ void Plant(int task, int account, int order, int row = 0, int column = 0)
       //如果出怪行都放过了，就不做更改
     }
   }
-  slot.times++;
+  slot.times++;//记录已放置次数+1
+
+  //没开补，次数已满，则不再放置
+  if (!slot.repair && slot.times > slot.maxTimes)
+    return false;
+
   if (order == maxSlotNum + 1)//使用宝石
-    UseAllJewel(task, account);
+    UseAllSkill(task, account);
   else //使用铲子或放置卡片
   {
     //如果卡槽数不为0，order超过卡槽数，则不放置
     if (work[task].realSlotNum[account] > 0 && order > work[task].realSlotNum[account])
-      return;
+      return false;
     if (slot.repair)//需要补阵
       SmartMovePlant(task, account, order, row, column);
     else //不需要补阵
       PlantTimes(task, account, order, slot.times, row, column);
   }
+  return true;
 }
 //关闭文档f，写入错误信息到info，返回出错的行数line
 int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *content, const char *tip)
@@ -3912,11 +5407,10 @@ int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *cont
   else
     strcpy_s(shortContent, content);
 
-  for (size_t i = 0; i < strlen(shortContent); i++) //tab改空格
-  {
+  size_t len = strlen(shortContent);
+  for (size_t i = 0; i < len; i++) //tab改空格
     if (shortContent[i] == '\t')
       shortContent[i] = ' ';
-  }
 
   if (tip == NULL)
     sprintf_s(info, "文件【%s】\n第%d行出错：%s\n请修改或删除该文件后重试。", shortPath, line, shortContent);
@@ -3926,16 +5420,32 @@ int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *cont
 }
 //从带指令的轨道路径extendedPath中提取加速和ban卡信息，返回剩下的轨道路径
 //ban卡信息写入Work[task].isSlotBanned[account]，加速信息写入Work[task].accelerationTime[account]
-const char *ExtractBan(int task, int account, const char *extendedPath)
+const char *ExtractTrack(int task, int account, const char *extendedPath)
 {
-  const char *path = extendedPath;//轨道文件路径
+  work[task].accelerationTime[account] = 0;
+  const char *bannedPath = extendedPath;//仅含ban卡的轨道文件路径
+  const char *bar = strchr(extendedPath, '|');//加速指令分隔符
+  if (bar) //如果存在加速指令分隔符，使用该轨道的加速时间
+  {
+    work[task].accelerationTime[account] = atoi(extendedPath);
+    work[task].isAccelerationRequired = true;
+    bannedPath = bar + 1;
+  }
+  else //否则使用全局加速时间
+  {
+    work[task].accelerationTime[account] = globalAccelarationTime;
+    if (globalAccelarationTime > 0)
+      work[task].isAccelerationRequired = true;
+  }
+  const char *path = bannedPath;
+
   memset(work[task].isSlotBanned[account], 0, sizeof(work[task].isSlotBanned[account]));
-  work[task].isBanEnabled[account] = extendedPath[0] == '<';
+  work[task].isBanEnabled[account] = bannedPath[0] == '<';
   if (work[task].isBanEnabled[account])//如果存在ban卡列表，记录ban卡列表和真正的轨道路径
   {
-    path = strchr(extendedPath, '>') + 1;//获取去掉ban卡列表后的轨道路径
+    path = strchr(bannedPath, '>') + 1;//获取去掉ban卡列表后的轨道路径
     char banList[maxPath];//ban卡列表，如"2,3"
-    strcpy_s(banList, extendedPath + 1);
+    strcpy_s(banList, bannedPath + 1);
     strchr(banList, '>')[0] = 0;//获取banList
     char *nextInfo = nullptr, *info = strtok_s(banList, ",", &nextInfo);
     while (info)
@@ -3952,7 +5462,7 @@ const char *ExtractBan(int task, int account, const char *extendedPath)
 //检查放卡队列
 void CheckNormalPlant(int task, int account)
 {
-  DWORD PlantBeginTick = GetTickCount();//放卡开始时刻
+  DWORD plantBeginTick = GetTickCount();//放卡开始时刻
   DWORD minTick = 4294967295;
   int orderSelected = -1;
   for (int order = 0; order <= maxSlotNum + 1; order++)
@@ -3966,7 +5476,7 @@ void CheckNormalPlant(int task, int account)
     DWORD nextTick = work[task].slot[account][order].startTick + nextMoment * 100;//下次放卡的系统时刻
     if (work[task].slot[account][order].independent == 0) //同步卡还要加上累计放卡耗时
       nextTick += work[task].slot[account][order].plantDuring;
-    if (nextTick < PlantBeginTick && nextTick < minTick) //筛选时刻值最小的
+    if (nextTick < plantBeginTick && nextTick < minTick) //筛选时刻值最小的
     {
       minTick = nextTick;
       orderSelected = order;
@@ -3986,9 +5496,9 @@ void CheckNormalPlant(int task, int account)
       {
         if (slot.oldPlantTick == 0) //如果还没被搁置过
           slot.oldPlantTick = minTick;//记录原始应放时刻
-        if (PlantBeginTick - slot.oldPlantTick < 1000) //累计等待时间还没超过1秒，则搁置本轮放卡（其他卡不受影响）
+        if (plantBeginTick - slot.oldPlantTick < 1000) //累计等待时间还没超过1秒，则搁置本轮放卡（其他卡不受影响）
         {
-          slot.moment[slot.times + 1] = (PlantBeginTick - slot.startTick) / 100;//将下次放卡时刻设为此刻
+          slot.moment[slot.times + 1] = (plantBeginTick - slot.startTick) / 100;//将下次放卡时刻设为此刻
           return;
         }
       }
@@ -3996,9 +5506,9 @@ void CheckNormalPlant(int task, int account)
   slot.oldPlantTick = 0;
 
   Plant(task, account, orderSelected);//种植卡片
-  DWORD PlantEndTick = GetTickCount();//放卡结束时刻
-  work[task].slot[account][orderSelected].lastTick = PlantEndTick;//记录最近一次放卡时刻
-  DWORD PlantDuringTime = PlantEndTick - PlantBeginTick + plantDelay;//本次放卡耗时
+  DWORD plantEndTick = GetTickCount();//放卡结束时刻
+  work[task].slot[account][orderSelected].lastTick = plantEndTick;//记录最近一次放卡时刻
+  DWORD plantDuring = plantEndTick - plantBeginTick + plantDelay;//本次放卡耗时
 
   //如果放的是张同步卡，把所有卡片的PlantDuring增加PlantDuringTime
   if (work[task].slot[account][orderSelected].independent == 0)
@@ -4009,12 +5519,12 @@ void CheckNormalPlant(int task, int account)
         {
           if (order > work[task].slotNum[account] && order <= maxSlotNum) //跳过空卡槽
             continue;
-          work[task].slot[account][order].plantDuring += PlantDuringTime;
+          work[task].slot[account][order].plantDuring += plantDuring;
         }
   }
 }
 //条件是否到达
-bool isConditionMet(int task, int account, int order)
+bool IsConditionMet(int task, int account, int order)
 {
   SlotType &slot = work[task].slot[account][order];
   //能量条件
@@ -4098,18 +5608,21 @@ void GetPlantableTick(int task, int account, int order, DWORD checkTick)
   DWORD limitStartTick = slot.startTick + slot.maxMoment * 100;//极限成阵开始时刻
   if (!slot.independent) //同步卡还要加上累计放卡耗时
     limitStartTick += slot.plantDuring;
-  if (!slot.limit || checkTick < limitStartTick)//如果还没到达开始时间
+  if (!slot.limit || checkTick < limitStartTick)//如果还没到达开始时刻
   {
     slot.plantableTick = 0;//不可放置
     return;
   }
   //终止时间条件
   if (slot.endTime > 0)
-    if (work[task].currentTime >= slot.endTime)
+  {
+    DWORD limitEndTick = slot.startTick + slot.endTime * 1000;//极限成阵终止时刻
+    if (checkTick > limitEndTick) //如果已经过了终止时刻
     {
       slot.plantableTick = 0;//不可放置
       return;
     }
+  }
   //终止数量条件
   if (slot.endNum > 0)
     if (slot.limitTimes >= slot.endNum)
@@ -4123,7 +5636,7 @@ void GetPlantableTick(int task, int account, int order, DWORD checkTick)
   {
     if (slot.plantableTick) //可放置时刻已存在，直接返回
       return;
-    if (isConditionMet(task, account, order))
+    if (IsConditionMet(task, account, order))
       slot.plantableTick = checkTick + slot.delay * 1000;//满足条件，则设置“可放置时刻”
     else
       slot.plantableTick = 0;//否则设置为“不可放置”
@@ -4139,7 +5652,7 @@ void GetPlantableTick(int task, int account, int order, DWORD checkTick)
     return;
   }
   //如果还未触发，条件满足时触发
-  if (isConditionMet(task, account, order))
+  if (IsConditionMet(task, account, order))
   {
     //满足条件，则设置“触发时刻”和“可放置时刻”
     slot.triggerTick = checkTick + slot.delay * 1000;
@@ -4148,6 +5661,7 @@ void GetPlantableTick(int task, int account, int order, DWORD checkTick)
   else
     slot.plantableTick = 0;//否则设置为“不可放置”
 }
+//加入一张跟班卡
 void PushLackey(int task, int account, int order)
 {
   for (int i = 0; i < work[task].lackeyNum[account]; i++)
@@ -4155,6 +5669,7 @@ void PushLackey(int task, int account, int order)
       return;
   work[task].lackey[account][work[task].lackeyNum[account]++] = order;
 }
+//移除一张跟班卡
 void PopLackey(int task, int account)
 {
   work[task].lackeyNum[account]--;
@@ -4169,7 +5684,11 @@ bool CheckLimitPlant(int task, int account, int order, DWORD checkTick)
     slot.plantableTick = 0;//无论能否放置都删除“可放置时刻”
     DWORD plantGap = checkTick - slot.lastTick;//距离上次种植经过的时间
     //最小放卡间隔（3秒，刚刚放了幻鸡则是5秒）
-    DWORD minPlantGap = order == work[task].magicCore[account] && work[task].isMagicPlantedRecently[account] ? 5000 : 3000;
+    DWORD minPlantGap = 3000;//最小放置间隔
+    if (order == 0 && !slot.repair)
+      minPlantGap = 0; //铲子没开补最小间隔为0（开补则依然是3000）
+    else if (order == work[task].magicCore[account] && work[task].isMagicPlantedRecently[account])
+      minPlantGap = 5000; //放完幻鸡后被复制卡的最小间隔为5000
     if (plantGap >= minPlantGap) //条件1：已经过了最小放卡间隔
     {
       //如果本卡是幻鸡目标卡，说明刚才已经等够了5000ms，以后不用等了
@@ -4178,6 +5697,14 @@ bool CheckLimitPlant(int task, int account, int order, DWORD checkTick)
       if (slot.followOrder == 0 || !work[task].isCold[account][slot.followOrder])//条件2：无跟随或被跟随卡已黑
         if (order == maxSlotNum + 1 || work[task].isCold[account][order]) //条件3：宝石或卡片冷却完毕
         {
+          //如果是承载卡，距离卡槽亮起时刻超过1秒才能放置
+          if (slot.level == 1)
+          {
+            if (slot.avaliableTick && checkTick - slot.avaliableTick >= 1000)
+              slot.avaliableTick = 0;
+            else
+              return false;
+          }
           int row = 0, column = 0;
           //如果本卡是幻鸡，查4次相似度
           if (order == work[task].magic[account])
@@ -4197,20 +5724,21 @@ bool CheckLimitPlant(int task, int account, int order, DWORD checkTick)
           slot.lastTick = GetTickCount();//记录最近一次放卡时刻
           slot.limitTimes++;//极限放卡次数+1
 
-          //所有跟班卡倒序入栈（序号小的先被处理）
+          //如果本卡不是铲子，所有跟班卡倒序入栈（序号小的先被处理）
           int lackeyNum = 0;
-          for (int lackeyOrder = maxSlotNum + 1; lackeyOrder >= 1; lackeyOrder--)
-          {
-            if (lackeyOrder > work[task].slotNum[account] && lackeyOrder <= maxSlotNum) //跳过无效卡槽
-              continue;
-            if (lackeyOrder == order)//不准跟随自己
-              continue;
-            if (work[task].slot[account][lackeyOrder].followOrder == order)
+          if (order > 0)
+            for (int lackeyOrder = maxSlotNum + 1; lackeyOrder >= 0; lackeyOrder--)//跟班卡编号
             {
-              PushLackey(task, account, lackeyOrder);
-              lackeyNum++;
+              if (lackeyOrder > work[task].slotNum[account] && lackeyOrder <= maxSlotNum) //跳过无效卡槽
+                continue;
+              if (lackeyOrder == order)//不准跟随自己
+                continue;
+              if (work[task].slot[account][lackeyOrder].followOrder == order)
+              {
+                PushLackey(task, account, lackeyOrder);
+                lackeyNum++;
+              }
             }
-          }
           if (lackeyNum > 0) //放完等100 ms，下次检查才能判断是否放置成功
             CheckSleep(task, 100);
           return true;
@@ -4219,12 +5747,13 @@ bool CheckLimitPlant(int task, int account, int order, DWORD checkTick)
   }
   return false;
 }
+//int isLimitSuccessful = false;//检查是否极限成阵
 //检查极限卡，主动放置至多1张符合要求的卡
 bool CheckLimitPlant(int task, int account)
 {
   DWORD checkTick = GetTickCount();//检查时刻
 
-  //主动判断跟随栈里的每张卡可否放置
+  //判断跟随栈里的每张卡可否放置
   for (int i = work[task].lackeyNum[account] - 1; i >= 0; i--)
   {
     PopLackey(task, account);//出栈
@@ -4232,11 +5761,13 @@ bool CheckLimitPlant(int task, int account)
       return true;
   }
 
-  //主动判断每张非跟随卡是否可放置
-  for (int order = 1; order <= maxSlotNum + 1; order++)
+  //判断每张非跟班卡是否可放置
+  for (int order = 0; order <= maxSlotNum + 1; order++)
   {
     SlotType &slot = work[task].slot[account][order];
     if (order > work[task].slotNum[account] && order <= maxSlotNum) //跳过无效卡槽
+      continue;
+    if (!slot.repair && slot.times >= slot.maxTimes) //跳过次数放满了的卡
       continue;
     if (slot.followOrder > 0 || !slot.limit) //跳过开启了跟随的卡和非极限卡
       continue;
@@ -4246,7 +5777,8 @@ bool CheckLimitPlant(int task, int account)
   return false;
 }
 //从轨道文件f读取一张卡，返回出错的行数，成功读取返回0（path为原路径）
-template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size], char(&seg)[size],
+template<size_t size>
+int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size], char(&seg)[size],
   const char *path, int &line, char(&info)[1000], int totalWave, int totalWaveTick)
 {
   strcpy_s(seg, s);//将s复制到seg，用于分割
@@ -4263,7 +5795,8 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
   name = strtok_s(NULL, "\t", &nextName);//子串2：冷却及锁定状态（7s锁补极）
   if (name == NULL || strstr(name, "|"))
     return WriteInfo(info, f, path, line, s, "第二项应为冷却时间和轨道状态");
-  if (totalWave > 0 && strstr(name, "继")) //从第1波开始，开启继承的卡片无需修改任何信息
+
+  if (totalWave > 0 && strstr(name, "继")) //从第0.1波开始，开启继承的卡片无需修改任何信息
     return 0;
 
   //若未开启继承，重置卡槽信息（保留卡片名）并读取新波次轨道，将计时器重置为本波开始时刻
@@ -4281,8 +5814,9 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
   char *condition = NewStrTok(name, ",", &nextCondition);//第一项：7[3]补极
   slot.search = strstr(condition, "索") ? 1 : 0;//索敌模式
   slot.independent = strstr(condition, "独") ? 1 : 0;//独立计时
-  slot.repair = strstr(condition, "补") ? 1 : 0;//补阵模式
+  slot.repair = strcmp(slot.name, "宝石") == 0 || strstr(condition, "补") ? 1 : 0;//补阵模式（宝石强制开）
   slot.limit = strstr(condition, "极") ? 1 : 0;//极限成阵模式
+  slot.retain = strstr(condition, "继") ? 1 : 0;//是否开启继承
   int cd;//卡牌冷却（临时变量，读取后不使用）
   slot.level = 0;//卡片层级默认为0（表示不占格子）
   sscanf_s(condition, "%d[%d]", &cd, &slot.level);//读取卡片层级
@@ -4296,20 +5830,20 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
       break;
     switch (i)
     {
-    case 0:
+    case 0://延迟
       slot.delay = atoi(condition);
       if (slot.delay < 0 || slot.delay > 960)
         return WriteInfo(info, f, path, line, s, "【延迟】范围为0~960");
       break;
-    case 1:
+    case 1://达成
       slot.triggerMode = atoi(condition) ? 1 : 0;
       break;
-    case 2:
+    case 2://火苗
       slot.energy = atoi(condition);
       if (slot.energy < 0 || slot.energy > 15000)
         return WriteInfo(info, f, path, line, s, "【火苗】范围为0~15000");
       break;
-    case 3: //波次：只能是m.n格式
+    case 3://波次：只能是m.n格式
     {
       if (!IsWaveLegal(condition)) //波次输入不合格
         return WriteInfo(info, f, path, line, s, waveErrorString);
@@ -4323,7 +5857,7 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
         sprintf_s(slot.wave, "");
     }
     break;
-    case 4:
+    case 4://卡片
       if (strcmp(condition, "NULL") == 0)
         strcpy_s(slot.card, "");
       else
@@ -4333,12 +5867,12 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
         strcpy_s(slot.card, condition);
       }
       break;
-    case 5:
+    case 5://卡片数量
       slot.cardNum = atoi(condition);
       if (slot.cardNum < 0 || slot.cardNum > 63)
         return WriteInfo(info, f, path, line, s, "【卡片数量】范围为0~63");
       break;
-    case 6:
+    case 6://图像
       if (strcmp(condition, "NULL") == 0)
         strcpy_s(slot.image, "");
       else
@@ -4348,12 +5882,12 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
         strcpy_s(slot.image, condition);
       }
       break;
-    case 7:
+    case 7://图像数量
       slot.imageNum = atoi(condition);
       if (slot.imageNum < 0 || slot.imageNum > 63)
         return WriteInfo(info, f, path, line, s, "【图像数量】范围为0~63");
       break;
-    case 8://行数:a,4,a+4,a-4
+    case 8://索敌行:a,4,a+4,a-4
       if (strcmp(condition, "NULL") == 0)
         strcpy_s(slot.hunterRow, "");
       else
@@ -4376,7 +5910,7 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
         strcpy_s(slot.hunterRow, condition);
       }
       break;
-    case 9:
+    case 9://索敌列
       if (strcmp(condition, "NULL") == 0)
         strcpy_s(slot.hunterColumn, "");
       else
@@ -4399,7 +5933,7 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
         strcpy_s(slot.hunterColumn, condition);
       }
       break;
-    case 10:
+    case 10://跟随
       if (strcmp(condition, "NULL") == 0)
         strcpy_s(slot.image, "");
       else
@@ -4409,12 +5943,12 @@ template<size_t size> int LoadSingleCard(SlotType &slot, FILE *f, char(&s)[size]
         strcpy_s(slot.follow, condition);
       }
       break;
-    case 11:
+    case 11://终止数量
       slot.endNum = atoi(condition);
       if (slot.endNum < 0 || slot.endNum > 63)
         return WriteInfo(info, f, path, line, s, "【终止数量】范围为0~63");
       break;
-    case 12:
+    case 12://终止时间
       slot.endTime = atoi(condition);
       if (slot.endTime < 0 || slot.endTime > 960)
         return WriteInfo(info, f, path, line, s, "【终止时间】范围为0~960");
@@ -4494,7 +6028,7 @@ int GetWaveExist(int task, int account, const char *path, char(&info)[1000])
     strcpy_s(info, "轨道文件应为txt格式。");
     return -1;
   }
-  if (_access(path, 0))
+  if (!FileExist(path))
   {
     strcpy_s(info, "轨道文件不存在。");
     return -1;
@@ -4534,61 +6068,104 @@ int GetWaveExist(int task, int account, const char *path, char(&info)[1000])
   fclose(f);
   return 0;
 }
-//载入自动承载。载入成功返回0，否则返回出错行数
-int LoadAutoTray(int task, int account, SlotType(&tray)[10], int &trayNum, char(&s)[maxLineSize],
-  char(&seg)[maxLineSize], char(&info)[1000])
+//是否属于三岛漫游
+bool IsRoamLevel(int type, int level)
+{
+  return (type == 6 || type == 7 || type == 9) && level == 0;
+}
+const char roamName[11][20] = {
+  "0未收录", "1施工现场", "2exciting", "3鼠以群聚", "4峡道空袭", "5神殿集会",
+  "6百鬼夜行", "7拆迁大队", "8罐头炸弹", "9平民鼠的逆袭", "10车来了" };
+//从指定文件中载入默认轨道（skippedSlotNum==1跳过宝石，skippedSlotNum==2跳过宝石和铲子）
+int LoadDefalutTrackFrom(const char *path, SlotType slot[], int &slotNum, char(&s)[maxLineSize],
+  char(&seg)[maxLineSize], char(&info)[1000], int skippedSlotNum)
 {
   char tip[100];
-  AdvanceType &currentAdvance = *playingAdvance;
-  FILE *trayFile;
-  char trayPath[maxPath];
-  int type = currentAdvance.type;
-  int level = currentAdvance.level;
-  char levelName[20];
-  GetLevelName(levelName, type, level);
-  if (type == 2) //魔塔
+  FILE *file;
+  if (fopen_s(&file, path, "r") == 0)//如果能打开承载文件，载入承载方案
   {
-    if (level % 5 != 0) //161-164转化为165
-      level = level / 5 * 5 + 5;
-    sprintf_s(trayPath, "预制轨道\\默认方案\\承载\\%s\\%d.txt", advanceName[type], level);
-  }
-  else
-    sprintf_s(trayPath, "预制轨道\\默认方案\\承载\\%s\\%d%s.txt", advanceName[type], level, levelName);
-  if (fopen_s(&trayFile, trayPath, "r") == 0)//如果能打开承载文件，载入承载方案
-  {
-    int trayLine = 0;
+    int line = 0;
     do
     {
-      fgets(trayFile, s);
-      trayLine++;
+      fgets(file, s);
+      line++;
       if (strlen(s) == 0)
-        return WriteInfo(info, trayFile, trayPath, trayLine, s, "找不到卡槽数");
+        return WriteInfo(info, file, path, line, s, "找不到卡槽数");
     } while (!strstr(s, "卡槽数"));
-    sscanf_s(s, "卡槽数=%d", &trayNum);
-    for (int i = 0; i < 2; i++) //跳过宝石和铲子
+    sscanf_s(s, "卡槽数=%d", &slotNum);
+    slotNum += 2 - skippedSlotNum;//如果不跳过宝石和铲子，要增加相应的卡槽数
+    for (int i = 0; i < skippedSlotNum; i++) //选择性跳过宝石和铲子
     {
-      fgets(trayFile, s);
-      trayLine++;
+      fgets(file, s);
+      line++;
     }
-    for (int order = 0; order < trayNum; order++)
+    for (int order = 0; order < slotNum; order++)
     {
-      fgets(trayFile, s);//读取一行卡片轨道，如小火炉 7s极补锁 002|12
-      trayLine++;
+      fgets(file, s);//读取一行卡片轨道，如小火炉 7s极补锁 002|12
+      line++;
 
       //如果卡槽还没读完，就遇到了空行或--第x波--，说明卡槽数填多了
       if (strlen(s) == 0 || IsWaveTitle(s))
       {
-        sprintf_s(tip, "卡槽数=%d，但只读取到%d个卡槽", work[task].slotNum[account], order);
-        return WriteInfo(info, trayFile, trayPath, trayLine, s, tip);
+        sprintf_s(tip, "卡槽数=%d，但只读取到%d个卡槽", slotNum, order);
+        return WriteInfo(info, file, path, line, s, tip);
       }
       //读取一张承载卡的轨道信息
-      if (LoadSingleCard(tray[order], trayFile, s, seg, trayPath, trayLine, info, 0, 0) > 0)
-        return trayLine;//读取错误则返回出错的行数（错误信息已经写入info）
-      if (tray[order].row[1] > 0 && tray[order].moment[1] == 0) //有阵型无轨道视为极限成阵
-        tray[order].limit = 1;
+      if (LoadSingleCard(slot[order], file, s, seg, path, line, info, 0, 0) > 0)
+        return line;//读取错误则返回出错的行数（错误信息已经写入info）
+      if (slot[order].row[1] > 0 && slot[order].moment[1] == 0) //有阵型无轨道
+      {
+        if (strcmp(slot[order].name, "铲子") == 0)//铲子：开补并添加第1秒轨道（开局全铲）
+        {
+          slot[order].repair = 1;
+          slot[order].moment[1] = 10;
+        }
+        else //其他卡视为极限成阵
+          slot[order].limit = 1;
+      }
     }
-    fclose(trayFile);
+    fclose(file);
   }
+  return 0;
+}
+//（仅第0波）载入默认轨道（常用卡和承载卡）。载入成功或无承载轨道返回0，否则返回出错行数
+int LoadDefaultTrack(int task, SlotType slot[], int &slotNum, char(&s)[maxLineSize],
+  char(&seg)[maxLineSize], char(&info)[1000])
+{
+  int commonSlotNum = 0;//常用卡数
+  char commonPath[maxPath] = {};//常用卡默认轨道
+  sprintf_s(commonPath, "预制轨道\\默认轨道\\常用卡片.txt");
+  int commonLine = LoadDefalutTrackFrom(commonPath, slot, commonSlotNum, s, seg, info, 2);
+  if (commonLine > 0)
+    return commonLine;
+
+  int traySlotNum = 0;//承载卡数
+  if (IsAdvance(task)) //高级任务载入承载轨道
+  {
+    int list = GetList(task);
+    AdvanceType &currentAdvance = *plot[list].playingAdvance;
+    int type = currentAdvance.type;
+    int level = currentAdvance.level;
+    char levelName[100];
+    GetLevelName(levelName, type, level);
+    char trayPath[maxPath] = {};//承载卡默认轨道
+    if (IsRoamLevel(type, level)) //漫游关卡
+      sprintf_s(trayPath, "预制轨道\\默认轨道\\承载\\漫游\\%s.txt", roamName[work[task].roamType]);
+    else if (type == 2) //魔塔
+    {
+      level %= 1000;//提取层数
+      if (level % 5 != 0) //161-164转化为165
+        level = level / 5 * 5 + 5;
+      sprintf_s(trayPath, "预制轨道\\默认轨道\\承载\\%d%s\\%d.txt", type, typeName[type], level);
+    }
+    else
+      sprintf_s(trayPath, "预制轨道\\默认轨道\\承载\\%d%s\\%d%s.txt", type, typeName[type], level, levelName);
+
+    int trayLine = LoadDefalutTrackFrom(trayPath, slot + commonSlotNum, traySlotNum, s, seg, info, 1);
+    if (trayLine > 0)
+      return trayLine;
+  }
+  slotNum = commonSlotNum + traySlotNum;
   return 0;
 }
 //获得上一张非冰幻卡编号
@@ -4600,17 +6177,24 @@ int GetLastNonColdOrder(int task, int account, int slotOrder)
       return order;
   return -1;//slotName前面没有普通卡，返回-1
 }
+//slot1和slot2是不是相同的卡（棉麦视为同一张卡）
+bool IsSameSlot(SlotType &slot1, SlotType &slot2)
+{
+  if (slot1.isMaltose && slot2.isMaltose) //都是棉麦，视为同一张卡
+    return true;
+  return strcmp(slot1.name, slot2.name) == 0; //否则名称必须严格相同
+}
 //从文件当前位置读取波次信息，读取slotnum张卡片。读取成功返回0，否则返回出错的行数
 int LoadCurrentWave(int task, int account, FILE *f, char(&s)[maxLineSize], char(&seg)[maxLineSize],
   const char *path, int &line, char(&info)[1000], int totalWave)
 {
   char tip[100];
   //读取默认承载方案（仅限高级任务第0波，已指定PlayingOrder）
-  SlotType tray[10] = {};
-  int trayNum = 0;
-  if (totalWave == 0 && task == taskNum)
+  SlotType defaultSlot[20] = {};
+  int defaultSlotNum = 0;
+  if (totalWave == 0)
   {
-    int trayLine = LoadAutoTray(task, account, tray, trayNum, s, seg, info);
+    int trayLine = LoadDefaultTrack(task, defaultSlot, defaultSlotNum, s, seg, info);
     if (trayLine > 0)
       return trayLine;
   }
@@ -4677,7 +6261,7 @@ int LoadCurrentWave(int task, int account, FILE *f, char(&s)[maxLineSize], char(
         int itemCode = FindItem(slot.image);
         if (itemCode == -1)
         {
-          sprintf_s(tip, "未找到【%s.bmp】截图", slot.image);
+          sprintf_s(tip, "未找到【%s.png】截图", slot.image);
           return WriteInfo(info, f, path, line, s, tip);
         }
         if (AddTarget(task, account, order) == -2)
@@ -4689,37 +6273,39 @@ int LoadCurrentWave(int task, int account, FILE *f, char(&s)[maxLineSize], char(
     }
 
     bool isSorbet = strcmp(slot.name, "冰沙") == 0;//该卡是否为冰沙（如果是，需要将放卡位置统一赋值为7行1列）
-    int trayOrder = -1;//该卡是承载方案中第几张承载卡
-    for (int n = 0; n < trayNum; n++)
-      if (strcmp(slot.name, tray[n].name) == 0)
+
+    int defalutOrder = -1;//该卡是默认轨道中第几张卡
+    for (int n = 0; n < defaultSlotNum; n++)
+      if (IsSameSlot(slot, defaultSlot[n]))
       {
-        trayOrder = n;
+        defalutOrder = n;
         break;
       }
 
-    if (trayOrder >= 0) //如果是承载方案中的承载卡
+    if (defalutOrder >= 0) //如果是默认轨道中的卡（只有第0波能触发）
     {
-      if (slot.row[1] == 0)//如果承载卡位置为空，套用自动承载方案
+      //如果阵型为空，拷贝默认卡阵型（包括种植范围、补阵、索敌）
+      if (slot.row[1] == 0)
       {
-        //拷贝默认承载阵型（包括是否种植范围、补阵、索敌）
-        memcpy(slot.isPlantedInMap, tray[trayOrder].isPlantedInMap, sizeof(tray[trayOrder].isPlantedInMap));
-        slot.maxTimes = tray[trayOrder].maxTimes;
-        slot.repair = tray[trayOrder].repair;
-        slot.search = tray[trayOrder].search;
+        memcpy(slot.isPlantedInMap, defaultSlot[defalutOrder].isPlantedInMap, sizeof(defaultSlot[defalutOrder].isPlantedInMap));
+        slot.maxTimes = defaultSlot[defalutOrder].maxTimes;
+        slot.repair = defaultSlot[defalutOrder].repair;
+        slot.search = defaultSlot[defalutOrder].search;
         for (int i = 1; i <= maxPlantTimes; i++)
         {
-          slot.row[i] = tray[trayOrder].row[i];
-          slot.column[i] = tray[trayOrder].column[i];
+          slot.row[i] = defaultSlot[defalutOrder].row[i];
+          slot.column[i] = defaultSlot[defalutOrder].column[i];
         }
-        if (slot.limit && slot.maxMoment == 0) //如果开启了从0开始的极限成阵
-        {
-          //拷贝默认承载轨道（包括是否独立计时、极限成阵）
-          slot.independent = tray[trayOrder].independent;
-          slot.limit = tray[trayOrder].limit;
-          slot.maxMoment = tray[trayOrder].maxMoment;
-          for (int i = 1; i <= maxPlantTimes; i++)
-            slot.moment[i] = tray[trayOrder].moment[i];
-        }
+      }
+      //如果开启默认轨道（第0波继承），拷贝默认卡轨道（包括独立计时、极限成阵、放卡条件）
+      if (slot.retain)
+      {
+        slot.independent = defaultSlot[defalutOrder].independent;
+        slot.limit = defaultSlot[defalutOrder].limit;
+        memcpy(&slot.delay, &defaultSlot[defalutOrder].delay, sizeof(ConditionType));//拷贝极限条件
+        slot.maxMoment = defaultSlot[defalutOrder].maxMoment;
+        for (int i = 1; i <= maxPlantTimes; i++)
+          slot.moment[i] = defaultSlot[defalutOrder].moment[i];
       }
     }
 
@@ -4806,7 +6392,7 @@ int LoadCurrentWave(int task, int account, FILE *f, char(&s)[maxLineSize], char(
 
   return 0;
 }
-//（ResetData或变阵时）读取轨道第totalWave波信息。读取成功返回0，否则返回出错的行数
+//（开局或变阵时）读取轨道第totalWave波信息。读取成功返回0，否则返回出错的行数
 int ReloadWave(int task, int account, const char *path, char(&info)[1000], int totalWave)
 {
   FILE *f;
@@ -4849,18 +6435,18 @@ int ReloadWave(int task, int account, const char *path, char(&info)[1000], int t
   fclose(f);
   return 0;
 }
-//（ResetData或变阵时）读取轨道第totalWave波信息。读取成功返回0，否则返回出错的行数
+//（开局或变阵时）读取轨道第totalWave波信息。读取成功返回0，否则返回出错的行数
 int ReloadWave(int task, int account, int totalWave)
 {
   char info[1000] = {};
-  return ReloadWave(task, account, work[task].pureTrack[account], info, totalWave);
+  return ReloadWave(task, account, work[task].backupTrack[account], info, totalWave);
 }
 //检查整个轨道文件。检查成功返回0，记录人数；无轨道返回-1，打不开返回-2，否则返回出错行数
-int LoadTrack(int task, int account, const char *bannedPath, char(&info)[1000],
-  int *pRoleNum, bool check)
+int LoadTrack(int task, int account, const char *extendedPath, char(&info)[1000],
+  int *pRoleNum, bool checkAllWave)
 {
   //填写ban卡数组，获得轨道路径
-  const char *path = ExtractBan(task, account, bannedPath);
+  const char *path = ExtractTrack(task, account, extendedPath);
   strcpy_s(work[task].pureTrack[account], path);
 
   //检查轨道文件能否打开，能则读取存在的波次
@@ -4888,7 +6474,7 @@ int LoadTrack(int task, int account, const char *bannedPath, char(&info)[1000],
     line++;
   }
 
-  int trackNum = (strlen(project[task].track[0]) > 0) + (strlen(project[task].track[1]) > 0);//轨道个数
+  int trackNum = (strlen(param[task].track[0]) > 0) + (strlen(param[task].track[1]) > 0);//轨道个数
   work[task].trackRoleNum[account] = 1;
 
   //读取人物1位置
@@ -4936,13 +6522,13 @@ int LoadTrack(int task, int account, const char *bannedPath, char(&info)[1000],
     line++;
   }
   //读取魔塔层数
-  if (sscanf_s(s, "魔塔层数=%d", &work[task].tower[account]) == 1)
+  if (sscanf_s(s, "魔塔层数=%d", &work[task].towerx[account]) == 1)
   {
-    if (work[task].tower[account] < zero || work[task].tower[account] > 165)
+    if (work[task].towerx[account] < zero || work[task].towerx[account] > 165)
       return WriteInfo(info, f, path, line, s, "魔塔层数范围为0~165");
 
-    if (task == taskNum)
-      work[task].tower[account] = 0;
+    if (IsAdvance(task))
+      work[task].towerx[account] = 0;
 
     fgets(f, s);
     line++;
@@ -4952,12 +6538,22 @@ int LoadTrack(int task, int account, const char *bannedPath, char(&info)[1000],
   {
     if (work[task].quitTime[account] < zero || work[task].quitTime[account] > 960)
       return WriteInfo(info, f, path, line, s, "退出时间范围为0~960");
-    //仅房主参与、有魔塔层数、退出时间为1：视为刷技能轨道
-    int hostAccount = work[task].hostAccount;
-    work[task].isSkillMode = work[task].isInvolved[hostAccount] && !work[task].isInvolved[1 - hostAccount]
-      && work[task].tower[hostAccount] > 0 && work[task].quitTime[hostAccount] == 1;
     fgets(f, s);
     line++;
+  }
+
+  //读取刷技能模式
+  if (strstr(s, "刷技能模式=") == s)
+  {
+    if (atoi(s + 11))
+      work[task].isSkillMode = true;
+    fgets(f, s);
+    line++;
+  }
+  else //如果没有“刷技能模式”一行，则按照退出时间判定
+  {
+    if (work[task].towerx[work[task].host] && work[task].quitTime[work[task].host] == 1)
+      work[task].isSkillMode = true; //单塔+退出时间为1=刷技能模式
   }
 
   //跳过宝石波次
@@ -4990,7 +6586,7 @@ int LoadTrack(int task, int account, const char *bannedPath, char(&info)[1000],
       work[task].isSlotBanned[account][originalOrder] = true;
 
   //检查每个波次
-  if (check)
+  if (checkAllWave)
   {
     for (int totalWave = 0; totalWave < maxTotalWave; totalWave++)
       if (work[task].totalWaveExist[account][totalWave])
@@ -5010,19 +6606,19 @@ int LoadTrack(int task, int account, const char *bannedPath, char(&info)[1000],
     *pRoleNum = trackNum == 2 ? 2 : GetRoleNum(task);
   return 0;
 }
-//将Project[task].track[account]读入Work数组。读取成功返回人数，失败返回0并记录错误信息
-int LoadTrack(int task, int account, char(&info)[1000], bool check)
+//将Param[task].track[account]读入Work数组。读取成功返回人数，失败返回0并记录错误信息
+int LoadTrack(int task, int account, char(&info)[1000], bool checkAllWave)
 {
   int roleNum = 0;
-  if (LoadTrack(task, account, project[task].track[account], info, &roleNum, check) != 0)
+  if (LoadTrack(task, account, param[task].track[account], info, &roleNum, checkAllWave) != 0)
     return 0;
   return roleNum;
 }
 //载入轨道信息到Work数组中。读取成功返回人数，失败返回0并记录错误信息
-void LoadTrack(int task, int account, bool check)
+void LoadTrack(int task, int account, bool checkAllWave)
 {
   char info[1000];
-  LoadTrack(task, account, info, check);
+  LoadTrack(task, account, info, checkAllWave);
 }
 //检查并放置卡片；如果波次更新则变阵
 void CheckPlant(int task)
@@ -5061,15 +6657,15 @@ void CheckPlant(int task)
       }
       //检查是否需要载入波次，需要则载入
       for (int account = 0; account <= 1; account++)
-        if (work[task].isPerformed[account] == 1 && work[task].isQuitted[account] == 0)
+        if (work[task].isPerformed[account] && !work[task].isQuitted[account])
           if (totalWaveRequired[account] >= 0)
             ReloadWave(task, account, totalWaveRequired[account]);
     }
   }
-  for (int account = 0; account <= 1; account++)//检查极限卡，放置符合要求的卡（最多1张）
+  for (int account = 0; account < 2; account++)//检查放置符合要求的卡（最多1张）
   {
     bool isPlanted = false;//是否已放卡
-    if (work[task].isPerformed[account] == 1 && work[task].isQuitted[account] == 0)
+    if (work[task].isPerformed[account] && !IsAccountLevelEnded(task, account))
     {
       if (isInfoGotten[account]) //识别cd成功才放置极限卡
         isPlanted = CheckLimitPlant(task, account);
@@ -5081,18 +6677,19 @@ void CheckPlant(int task)
 //每局开始前重置数据：种植次数和宝石使用次数归零，宝石计时器关闭
 void ResetData(int task)
 {
-  for (int account = 0; account <= 1; account++)
+  for (int account = 0; account < 2; account++)
   {
+    work[task].isWaveEnded[account] = false;
+    work[task].isLootSaved[account] = false;
     work[task].isBackgroundCatched[account] = 0;//背景未截取
     work[task].energy[account] = 0;//能量归零
     work[task].realSlotNum[account] = 0;//实际卡槽数归零
     work[task].lackeyNum[account] = 0;//跟随卡数清零
-    work[task].isQuitted[account] = 0;//退出状态清零
-    if (work[task].isPerformed[account] == 1)
-      ReloadWave(task, account, 0);//重新读取第0波轨道
+    work[task].isQuitted[account] = false;//退出状态清零
     for (int order = 0; order <= work[task].slotNum[account]; order++)
       work[task].isTemplateCatched[account][order] = 0;//卡片模板为未截取状态
   }
+  work[task].oneAccountEndTick = 0;
   work[task].lastCheckTick = 0;
   work[task].lastSimilarityTick = 0;
   work[task].isBossExist = false;
@@ -5103,41 +6700,56 @@ void ResetData(int task)
   memset(work[task].ratRow, 0, sizeof(work[task].ratRow));//出怪行清零
   memset(work[task].grid, 0, sizeof(work[task].grid));//地图占用信息清零
 }
-//从Project获取参数到Work
-void GetWorkFromProject(int task)
+//从Param获取参数到Work
+void GetWorkFromParam(int task)
 {
-  const POINT NoPoint = { -1, -1 };
-  /*拷贝Project参数到Work*/
-  strcpy_s(work[task].track[0], project[task].track[0]);
-  strcpy_s(work[task].track[1], project[task].track[1]);
-  work[task].maxGames = project[task].maxGames;
-  work[task].gameTime = project[task].gameTime;
-  work[task].isProceed[0] = project[task].isProceed[0];
-  work[task].isProceed[1] = project[task].isProceed[1];
-  work[task].deck[0] = project[task].deck[0];
-  work[task].deck[1] = project[task].deck[1];
-  work[task].hostAccount = project[task].hostAccount;
-
-  //注意：只把参与的账号位置和句柄传过去，不参与的账号句柄为NULL
+  //常规任务和同步任务2P都能从param获取房主、局数、轨道、卡组、钥匙、每局用时
+  const POINT noTag = { -1, -1 };
+  work[task].games = reserve[task].gamesFinished + 1;
+  work[task].maxGames = param[task].maxGames;
+  work[task].gameTime = param[task].gameTime;
+  work[task].host = param[task].host;
   for (int account = 0; account < 2; account++)
   {
-    work[task].isCollect[account] = project[task].isCollect[account];
-    if (work[task].isInvolved[account] == 1)
+    strcpy_s(work[task].track[account], param[task].track[account]);
+    work[task].deck[account] = param[task].deck[account];
+    work[task].isProceed[account] = param[task].isProceed[account];
+  }
+  //同步任务2P：从param[task - 1]获取收集、句柄信息
+  if (IsDual2P(task))
+  {
+    work[task].hMainHall = param[task - 1].hMainHall;//主大厅句柄
+    //沿用param[task - 1]的收集和句柄信息
+    for (int account = 0; account < 2; account++)
     {
-      work[task].tag[account] = project[task].tag[account];
-      work[task].hWnd[account] = project[task].hWnd[account];
+      work[task].hWndHall[account] = param[task - 1].hWndHall[account];//大厅句柄
+      work[task].isCollect[account] = param[task - 1].isCollect[account];//收集
     }
-    else
+    work[task].tag[0] = noTag;//1P不参与，所以没有tag和hWnd
+    work[task].hWnd[0] = NULL;
+    work[task].tag[1] = param[task - 1].tag[1];//2P的tag和hWnd使用param[task - 1]的2P
+    work[task].hWnd[1] = param[task - 1].hWnd[1];
+  }
+  else //常规任务
+  {
+    work[task].hMainHall = param[task].hMainHall;//主大厅句柄
+    for (int account = 0; account < 2; account++)
     {
-      work[task].tag[account] = NoPoint;
-      work[task].hWnd[account] = NULL;
+      work[task].hWndHall[account] = param[task].hWndHall[account];//大厅句柄
+      work[task].isCollect[account] = param[task].isCollect[account];//收集
+      //只把参与的账号位置和句柄传过去，不参与的账号句柄为NULL
+      if (work[task].isInvolved[account])
+      {
+        work[task].tag[account] = param[task].tag[account];
+        work[task].hWnd[account] = param[task].hWnd[account];
+      }
+      else
+      {
+        work[task].tag[account] = noTag;
+        work[task].hWnd[account] = NULL;
+      }
     }
   }
-
-  //传入大厅初始句柄、用于显示隐藏的大厅句柄
-  work[task].hMainHall = project[task].hMainHall;
-  work[task].hWndHall[0] = project[task].hWndHall[0];
-  work[task].hWndHall[1] = project[task].hWndHall[1];
   strcpy_s(work[task].embarkString, "已传入任务参数\n");
 }
 void RecoverWindow_Insitu(HWND hWnd)//原位恢复隐藏的窗口
@@ -5272,40 +6884,45 @@ int headDifference(COLORREF head[headHeight][headWidth], COLORREF **hall, int he
   return diff;
 }
 //向文件path中追加一行content
-void addToText(char *path, char *content, bool withTime = true)
+void addToRefreshLog(int task, char *content, bool withTime = true)
 {
+  int list = GetList(task);
+  WaitForSingleObject(plot[list].hMutexRefreshLog, INFINITE);
   FILE *f;
-  if (fopen_s(&f, path, "a"))
-    return;
-  if (withTime)
+  if (!fopen_s(&f, plot[list].refreshLog, "a"))
   {
-    char timeString[100];
-    GetTimeString(timeString, time(NULL));
-    fprintf(f, "%s %s\n", timeString, content);
+    if (withTime)
+    {
+      char timeString[100];
+      GetTimeString(timeString, time(NULL));
+      fprintf(f, "%s %s\n", timeString, content);
+    }
+    else
+      fprintf(f, "%s\n", content);
+    fclose(f);
   }
-  else
-    fprintf(f, "%s\n", content);
-  fclose(f);
+  ReleaseMutex(plot[list].hMutexRefreshLog);
 }
 //点击刷新按钮并记录
 void ClickRefresh(int task, int account)
 {
-  char Message[100];
+  char message[100];
   int RefreshX = 228 * DPI / 96, RefreshY = 44 * DPI / 96;
-  LeftClick(project[task].hWndHall[account], RefreshX, RefreshY); //重新点击刷新按钮
-  sprintf_s(Message, "%dP点击刷新按钮(%d,%d)", account + 1, RefreshX, RefreshY);
-  addToText(refreshRecordPath, Message);
+  LeftClick(param[task].hWndHall[account], RefreshX, RefreshY); //重新点击刷新按钮
+  sprintf_s(message, "%dP点击刷新按钮(%d,%d)", account + 1, RefreshX, RefreshY);
+  addToRefreshLog(task, message);
 }
 //从大厅窗口hWndHall中寻找平台platform的最近服务器，找到了则返回位置
 int FindLatestServer0(int task, int account, int platform, int *px, int *py)
 {
-  int WindowWidth = 0, WindowHeight = 0;
-  if (!HallShot(work[task].hWndHall[account], hallShot, &WindowWidth, &WindowHeight, 20))//截取大厅图像
+  int list = GetList(task);
+  int hallWidth = 0, hallHeight = 0;//大厅窗口尺寸
+  if (!HallShot(work[task].hWndHall[account], work[task].hallShot, &hallWidth, &hallHeight, 20))//截取大厅图像
     return 0;
 
   //截图成功，则构造二级指针
-  for (int i = 0; i < WindowHeight; i++)
-    pHallShot[i] = hallShot + i * WindowWidth;
+  for (int i = 0; i < hallHeight; i++)
+    work[task].pHallShot[i] = work[task].hallShot + i * hallWidth;
 
   int width = 220, height = 135;//需要识别的色块大小（4399）
   if (platform == 2)//QQ空间
@@ -5332,10 +6949,10 @@ int FindLatestServer0(int task, int account, int platform, int *px, int *py)
   int x, y;
   int step = 2;//识图步长
   int result = 0; //识图结果
-  for (x = WindowWidth - width; x >= 0; x -= step)//屏幕找图
+  for (x = hallWidth - width; x >= 0; x -= step)//屏幕找图
   {
-    for (y = 0; y <= WindowHeight - height; y += step)
-      if (IsBitmapFit(isServerColor, pHallShot, platform, width, height, x, y, step) == 1)
+    for (y = 0; y <= hallHeight - height; y += step)
+      if (IsBitmapFit(isServerColor, work[task].pHallShot, platform, width, height, x, y, step) == 1)
       {
         if (px != NULL)
           *px = x;
@@ -5344,18 +6961,21 @@ int FindLatestServer0(int task, int account, int platform, int *px, int *py)
         result = 1;
         break;
       }
-    if (y <= WindowHeight - height)
+    if (y <= hallHeight - height)
       break;
   }
   if (!(platform >= 4 && result == 1)) //如果没有识别到QQ登录界面或断网界面，直接返回结果
     return result;
   if (platform == 5) //如果识别到了断网界面，点击重试
   {
-    int retryX = (serverRect.right - serverRect.left) / 2;
+    int retryX = (work[task].serverRect.right - work[task].serverRect.left) / 2;
     int retryY = 350 * DPI / 96;
-    LeftClick(hWndServer, retryX, retryY);
+    LeftClick(work[task].hWndServer, retryX, retryY);
+    char message[200];
+    sprintf_s(message, "%dP检测到断网，已点击重试(%d,%d)", account + 1, retryX, retryY);
+    addToRefreshLog(task, message);
     CheckSleep(task, 2000);//等待2秒
-    hWndServer = GetActiveServerWindow(work[task].hWndHall[account]);
+    work[task].hWndServer = GetActiveServerWindow(work[task].hWndHall[account]);
     return 0;//返回WaitServerInWindow函数，继续判断选服界面
   }
 
@@ -5363,10 +6983,10 @@ int FindLatestServer0(int task, int account, int platform, int *px, int *py)
   int headAreaLength = 0;//头像区域累积长度（一行全白色则累积中断）
   int headX = 0, headY = 0;//头像右上角尺寸
   int isHeadFound = 0;//头像是否找到
-  for (int y = 120; y < WindowHeight && isHeadFound == 0; y++) //从高度120开始从上到下扫描
+  for (int y = 120; y < hallHeight && isHeadFound == 0; y++) //从高度120开始从上到下扫描
   {
-    for (int x = WindowWidth - 20; x >= WindowWidth / 2; x--) //从右往左扫，最多扫到半屏
-      if (pHallShot[y][x] != 0xffffff) //非白色区位头像区
+    for (int x = hallWidth - 20; x >= hallWidth / 2; x--) //从右往左扫，最多扫到半屏
+      if (work[task].pHallShot[y][x] != 0xffffff) //非白色区位头像区
       {
         if (headAreaLength == 0) //记录首次到达头像区的坐标
         {
@@ -5376,7 +6996,7 @@ int FindLatestServer0(int task, int account, int platform, int *px, int *py)
         headAreaLength++;
         break;
       }
-      else if (x == WindowWidth / 2) //整行白色：非头像区
+      else if (x == hallWidth / 2) //整行白色：非头像区
       {
         if (headAreaLength == 87)//如果到达非头像区时累积长度达到87，说明找到头像位置了
           isHeadFound = 1;//记录头像已找到，退出循环
@@ -5392,7 +7012,7 @@ int FindLatestServer0(int task, int account, int platform, int *px, int *py)
     head[i].y = headY;
   for (int x = headX; x > 20; x--) //从右往左扫描
     for (int y = headY; y < headY + 87; y++) //在头像纵坐标区域扫描
-      if (pHallShot[y][x] != 0xffffff) //非白色区域为头像区，累积长度+1
+      if (work[task].pHallShot[y][x] != 0xffffff) //非白色区域为头像区，累积长度+1
       {
         headAreaLength++;
         break;
@@ -5407,112 +7027,90 @@ int FindLatestServer0(int task, int account, int platform, int *px, int *py)
         }
         headAreaLength = 0; //头像区长度清零
       }
-  //根据文件设置固定点击头像
-  FILE *f;
-  char s[100];
-  if (fopen_s(&f, "用户参数\\空间3366登录设置.txt", "r"))
-    RecordError(task, account, "登录设置打不开", "无法打开【空间3366登录设置.txt】", true);
-  if (account == 1)
-    fgets(f, s);
-  fgets(f, s);
-  fclose(f);
 
-  char Message[1000];
+  char message[1000];
   if (headNum <= 1) //没有头像，或者只有二维码
   {
-    sprintf_s(Message, "%dP未识别到头像", account + 1);
-    addToText(refreshRecordPath, Message);
+    sprintf_s(message, "%dP未识别到头像", account + 1);
+    addToRefreshLog(task, message);
     ClickRefresh(task, account);//点击刷新按钮
     CheckSleep(task, 3000);//刷新完等待3秒，然后return -1;
     return -1;//代码-1：识别到的头像数目不足
   }
 
-  int headSelectedLeft = atoi(s + 11);//选择左数第几个头像
+  //识图选择头像：如果有1P和2P头像截图，点击相似度最高的头像
   int headSelected = -1;//选择第几个头像
-  if (headSelectedLeft == 0) //通过识图判断头像
+  COLORREF headShot[87][87];//头像截图
+  COLORREF initialHead[87][87];//初始头像截图
+  char headPath[maxPath], initialHeadPath[maxPath];
+  sprintf_s(headPath, "用户参数\\QQ头像截图\\%dP.png", account + 1);//填写头像截图路径
+  sprintf_s(initialHeadPath, "用户参数\\QQ头像截图\\默认头像.png", account + 1);//填写初始头像截图路径
+  if (!BitmapToColor(headPath, headShot)) //载入截图
+    RecordError(task, account, "缺少头像截图", "缺少QQ头像截图，无法登录", END_TASK);
+  if (!BitmapToColor(initialHeadPath, initialHead)) //载入初始截图
+    RecordError(task, account, "缺少头像截图", "缺少默认头像截图，无法登录", END_TASK);
+  int minDiff = 10000000;//最小方差，小于1000w才能匹配
+  int diff = 0;
+  for (int i = 0; i < headNum - 1; i++)
   {
-    //如果有1P和2P头像截图，比较相似度并点击相似度最高的头像
-    COLORREF headShot[87][87];//头像截图
-    COLORREF initialHead[87][87];//初始头像截图
-    char headPath[maxPath], initialHeadPath[maxPath];
-    sprintf_s(headPath, "用户参数\\QQ头像截图\\%dP.bmp", account + 1);//填写头像截图路径
-    sprintf_s(initialHeadPath, "用户参数\\QQ头像截图\\默认头像.bmp", account + 1);//填写初始头像截图路径
-    if (!BitmapToColor(headPath, headShot)) //载入截图
-      RecordError(task, account, "缺少头像截图", "缺少QQ头像截图，无法登录", true);
-    if (!BitmapToColor(initialHeadPath, initialHead)) //载入初始截图
-      RecordError(task, account, "缺少头像截图", "缺少默认头像截图，无法登录", true);
-    int minDiff = 10000000;//最小方差，小于1000w才能匹配
-    int diff = 0;
-    for (int i = 0; i < headNum - 1; i++)
+    diff = headDifference(initialHead, work[task].pHallShot, head[i].x, head[i].y);//比较与初始头像的相似度
+    if (diff < 10000000) //如果某头像与初始头像相似，需要重新刷新
     {
-      diff = headDifference(initialHead, pHallShot, head[i].x, head[i].y);//比较与初始头像的相似度
-      if (diff < 10000000) //如果某头像与初始头像相似，需要重新刷新
-      {
-        sprintf_s(Message, "%dP头像未加载", account + 1);
-        addToText(refreshRecordPath, Message);
-        ClickRefresh(task, account);//点击刷新按钮
-        CheckSleep(task, 3000);//刷新完等待3秒，然后return -2;
-        return -2;//代码-2：头像未加载
-      }
-      //如果都加载了，则比较该头像当前账号头像截图的相似度
-      diff = headDifference(headShot, pHallShot, head[i].x, head[i].y);
-      if (diff < minDiff) //选择相似度更小者
-      {
-        minDiff = diff;
-        headSelected = i;
-      }
-    }
-    if (headSelected == -1) //都加载出来了，还没有匹配的头像，刷新后重新检测
-    {
-      sprintf_s(Message, "%dP未发现与截图匹配的头像", account + 1);
-      addToText(refreshRecordPath, Message);
+      sprintf_s(message, "%dP头像未加载", account + 1);
+      addToRefreshLog(task, message);
       ClickRefresh(task, account);//点击刷新按钮
-      CheckSleep(task, 3000);//刷新完等待3秒，然后return -3;
-      return -3;//代码-3：未发现与截图匹配的头像
+      CheckSleep(task, 3000);//刷新完等待3秒，然后return -2;
+      return -2;//代码-2：头像未加载
+    }
+    //如果都加载了，则比较该头像当前账号头像截图的相似度
+    diff = headDifference(headShot, work[task].pHallShot, head[i].x, head[i].y);
+    if (diff < minDiff) //选择相似度更小者
+    {
+      minDiff = diff;
+      headSelected = i;
     }
   }
-  else //点击固定序数的头像
+  if (headSelected == -1) //都加载出来了，还没有匹配的头像，刷新后重新检测
   {
-    if (headNum - 1 < headSelectedLeft) //如果头像数目不够，刷新后重新检测，刷新3次强制中断
-    {
-      sprintf_s(Message, "%dP仅识别到%d个头像，无法点击第%d个头像", account + 1, headNum - 1, headSelectedLeft);
-      addToText(refreshRecordPath, Message);
-      ClickRefresh(task, account);//点击刷新按钮
-      CheckSleep(task, 3000);//刷新完等待3秒，然后return -1;
-      return -1;//代码-1：识别到的头像数目不足
-    }
-    headSelected = headNum - 1 - headSelectedLeft;//选择右数第几个头像
+    sprintf_s(message, "%dP未发现与截图匹配的头像", account + 1);
+    addToRefreshLog(task, message);
+    ClickRefresh(task, account);//点击刷新按钮
+    CheckSleep(task, 3000);//刷新完等待3秒，然后return -3;
+    return -3;//代码-3：未发现与截图匹配的头像
   }
 
-  int headXInServer = (head[headSelected].x + 43) * DPI / 96 + hallRect.left - serverRect.left;
-  int headYInServer = (head[headSelected].y + 43) * DPI / 96 + hallRect.top - serverRect.top;
 
-  sprintf_s(Message, "%dP识别到%d个头像，点击第%d个头像，位置(%d,%d)", account + 1, headNum - 1, headNum - 1 - headSelected, headXInServer, headYInServer);
-  addToText(refreshRecordPath, Message);
+  int headXInServer = (head[headSelected].x + 43) * DPI / 96 + work[task].hallRect.left - work[task].serverRect.left;
+  int headYInServer = (head[headSelected].y + 43) * DPI / 96 + work[task].hallRect.top - work[task].serverRect.top;
+
+  sprintf_s(message, "%dP识别到%d个头像，点击第%d个头像，位置(%d,%d)", account + 1, headNum - 1, headNum - 1 - headSelected, headXInServer, headYInServer);
+  addToRefreshLog(task, message);
   char shotPath[maxPath];//截图路径
-  sprintf_s(shotPath, "%s\\ID%d_第%d次中断_%dP登录.png", work[task].folderPath, playingOrder + 1,
-    timesRefreshed[playingOrder], account + 1);
+  sprintf_s(shotPath, "%s\\ID%d_第%d次中断_%dP登录.png", work[task].logDirectory, plot[list].playingOrder + 1,
+    plot[list].timesRefreshed[plot[list].playingOrder], account + 1);
   WindowToBitmap(work[task].hWndHall[account], shotPath);
-  LeftClick(hWndServer, headXInServer, headYInServer);
+  LeftClick(work[task].hWndServer, headXInServer, headYInServer);
   CheckSleep(task, 2000);//等待2秒
   return 0;//返回WaitServerInWindow函数，继续判断选服界面
 }
 //从大厅窗口hWndHall中寻找平台platform的最近服务器，找到了则返回位置
 int FindLatestServer(int task, int account, int platform, int *px, int *py)
 {
+  int list = GetList(task);
   int result = FindLatestServer0(task, account, platform, px, py);
-  if (hallShot)
+  if (work[task].hallShot)
   {
-    free(hallShot);
-    hallShot = nullptr;
+    free(work[task].hallShot);
+    work[task].hallShot = nullptr;
   }
   return result;
 }
 //在大厅窗口hWndHall中等待最近服务器出现，返回所属平台
 int WaitServerInWindow(int task, int account, int *px = NULL, int *py = NULL)
 {
+  int list = GetList(task);
   int times = 0;
-  while (1)
+  while (true)
   {
     times++;
     if (times >= 10)//10秒还未进入预期界面，则报错退出
@@ -5534,7 +7132,7 @@ int WaitServerInWindow(int task, int account, int *px = NULL, int *py = NULL)
           sprintf_s(Message, "%dP登录界面头像未加载", account + 1);
         else if (result == -3)
           sprintf_s(Message, "%dP登录界面没有与截图匹配的头像", account + 1);
-        RecordError(task, account, "无法选择头像", Message, true);
+        RecordError(task, account, "无法选择头像", Message, END_TASK);
       }
       result = FindLatestServer(task, account, 4, px, py);//继续识别
     }
@@ -5571,118 +7169,130 @@ void WaitColorDisappear(int task, int account, int x, int y, COLORREF targetColo
 //高级任务刷新所有游戏窗口
 void Refresh(int task)
 {
-  if (timesRefreshed[playingOrder] == 0)
-    sprintf_s(refreshRecordPath, "%s\\ID%d_开始前_刷新记录.txt", work[task].folderPath, playingOrder + 1);
+  int list = GetList(task);
+  if (plot[list].timesRefreshed[plot[list].playingOrder] == 0)
+    sprintf_s(plot[list].refreshLog, "%s\\ID%d_开始前_刷新记录.txt", work[task].logDirectory, plot[list].playingOrder + 1);
   else
-    sprintf_s(refreshRecordPath, "%s\\ID%d_第%d次中断_刷新记录.txt", work[task].folderPath, playingOrder + 1, timesRefreshed[playingOrder]);
-  FILE *f;//刷新日志文件
-  if (fopen_s(&f, refreshRecordPath, "w") == 0)
+    sprintf_s(plot[list].refreshLog, "%s\\ID%d_第%d次中断_刷新记录.txt", work[task].logDirectory, plot[list].playingOrder + 1, plot[list].timesRefreshed[plot[list].playingOrder]);
+
+  //刷新记录文件不存在则创建
+  WaitForSingleObject(plot[list].hMutexRefreshLog, INFINITE);
+  if (!FileExist(plot[list].refreshLog))
   {
-    fprintf(f, "刷新原因：%s\n", state[task].errorString);
-    fprintf(f, "DPI=%d\n", DPI);
-    fclose(f);
+    FILE *f;
+    if (fopen_s(&f, plot[list].refreshLog, "w") == 0)
+    {
+      fprintf(f, "刷新原因：%s\n", state[task].errorString);
+      strcpy_s(state[task].errorString, "");//记录完刷新原因就清空
+      fprintf(f, "DPI=%d\n", DPI);
+      fclose(f);
+    }
   }
-  char Message[100] = {};
+  ReleaseMutex(plot[list].hMutexRefreshLog);
+
+  char message[100] = {};
   isHallModified[task] = 1;//禁用CheckHallWindow
 
+  bool isRefreshRequired[2] = {};//两个号是否需要刷新
+  //同步任务：任务5只刷新1P，任务6只刷新2P
+  if (plot[list].playingAdvance->host == 2)
+  {
+    if (IsDual2P(task))
+      isRefreshRequired[1] = true;
+    else
+      isRefreshRequired[0] = true;
+  }
+  else //单线程任务：刷新所有参与的号
+  {
+    for (int account = 0; account < 2; account++)
+      if (plot[list].advanceInvolved[account])
+        isRefreshRequired[account] = true;
+  }
   HWND hWndOrigin[2] = {};//两个账号原来的游戏窗口
   for (int account = 0; account < 2; account++) //双号依次点击刷新按钮
-    if (advanceInvolved[account] == 1)
+    if (isRefreshRequired[account])
     {
       //点击刷新按钮前记录游戏窗口
-      hWndOrigin[account] = GetActiveGameWindow(project[task].hWndHall[account]);
+      hWndOrigin[account] = GetActiveGameWindow(param[task].hWndHall[account]);
       int RefreshX = 228 * DPI / 96, RefreshY = 44 * DPI / 96;
-      LeftClick(project[task].hWndHall[account], RefreshX, RefreshY); //点击刷新按钮
-      sprintf_s(Message, "%dP点击刷新按钮(%d,%d)", account + 1, RefreshX, RefreshY);
-      addToText(refreshRecordPath, Message);
+      LeftClick(param[task].hWndHall[account], RefreshX, RefreshY); //点击刷新按钮
+      sprintf_s(message, "%dP点击刷新按钮(%d,%d)", account + 1, RefreshX, RefreshY);
+      addToRefreshLog(task, message);
     }
 
   for (int account = 0; account < 2; account++) //双号依次等待原来的游戏窗口关闭
-    if (advanceInvolved[account] == 1)
+    if (isRefreshRequired[account])
     {
       int counter = 0;
-      while (hWndOrigin[account] && hWndOrigin[account] == GetActiveGameWindow(project[task].hWndHall[account]))
+      while (hWndOrigin[account] && hWndOrigin[account] == GetActiveGameWindow(param[task].hWndHall[account]))
       {
         counter++;
         if (counter > 100)
           RecordError(task, account, "刷新失败", "刷新按钮点击无效");
         CheckSleep(task, 100);
       }
-      sprintf_s(Message, "%dP游戏窗口已关闭", account + 1);
-      addToText(refreshRecordPath, Message);
+      sprintf_s(message, "%dP游戏窗口已关闭", account + 1);
+      addToRefreshLog(task, message);
     }
   CheckSleep(task, 1000);//游戏窗口关闭后等待1秒
 
   int platform[2] = {};//两个号的平台
   for (int account = 0; account < 2; account++) //双号依次点击最近服务器
-    if (advanceInvolved[account] == 1)
+    if (isRefreshRequired[account])
     {
-      hWndServer = GetActiveServerWindow(project[task].hWndHall[account]);//找到选服窗口
-      sprintf_s(Message, "%dP已找到选服窗口(%d)", account + 1, (int)hWndServer);
-      addToText(refreshRecordPath, Message);
+      work[task].hWndServer = GetActiveServerWindow(param[task].hWndHall[account]);//找到选服窗口
+      sprintf_s(message, "%dP已找到选服窗口(%d)", account + 1, (int)work[task].hWndServer);
+      addToRefreshLog(task, message);
 
       int ServerWidth, ServerHeight;
-      GetWindowRect(project[task].hWndHall[account], &hallRect);//获取大厅窗口位置
-      GetWindowRect(hWndServer, &serverRect);//获取选服窗口位置
-      GetWindowSize(hWndServer, &ServerWidth, &ServerHeight);
-      sprintf_s(Message, "%dP已获取选服窗口尺寸(%d*%d)", account + 1, ServerWidth, ServerHeight);
-      addToText(refreshRecordPath, Message);
+      GetWindowRect(param[task].hWndHall[account], &work[task].hallRect);//获取大厅窗口位置
+      GetWindowRect(work[task].hWndServer, &work[task].serverRect);//获取选服窗口位置
+      GetWindowSize(work[task].hWndServer, &ServerWidth, &ServerHeight);
+      sprintf_s(message, "%dP已获取选服窗口尺寸(%d*%d)", account + 1, ServerWidth, ServerHeight);
+      addToRefreshLog(task, message);
 
       int x = 0, y = 0;
       platform[account] = WaitServerInWindow(task, account, &x, &y);//等待找到最近服务器，并识别平台类型
       const char *const platformName[4] = { "4399微端", "4399网页", "QQ空间", "QQ大厅" };//平台名称
-      sprintf_s(Message, "%dP已识别到选服面板，平台为%d(%s)，识别位置(%d,%d)", account + 1, platform[account], platformName[platform[account]], x, y);
-      addToText(refreshRecordPath, Message);
+      sprintf_s(message, "%dP已识别到选服面板，平台为%d(%s)，识别位置(%d,%d)", account + 1, platform[account], platformName[platform[account]], x, y);
+      addToRefreshLog(task, message);
 
       //根据平台和大厅判定坐标确定最近服务器在选服窗口中的坐标
       int LatestServerX = 0, LatestServerY = 0;//最近服务器在选服窗口中的坐标
       if (platform[account] == 1) //4399网页：根据识别位置判断
       {
-        LatestServerX = (x - 285) * DPI / 96 + hallRect.left - serverRect.left;
-        LatestServerY = (y + 45) * DPI / 96 + hallRect.top - serverRect.top;
+        LatestServerX = (x - 285) * DPI / 96 + work[task].hallRect.left - work[task].serverRect.left;
+        LatestServerY = (y + 45) * DPI / 96 + work[task].hallRect.top - work[task].serverRect.top;
       }
       else if (platform[account] == 2)//QQ空间
       {
-        FILE *f;
-        char s[1000];
-        server3366[account] = 0;//3366选服默认为“关”
-        if (!fopen_s(&f, "用户参数\\空间3366登录设置.txt", "r"))//打开文件
+        if (plot[list].server[account] < 0 || plot[list].server[account] > 6)
+          plot[list].server[account] = 0;
+        if (plot[list].server[account] == 0) //空间服最近服务器
         {
-          fgets(f, s);//跳过前两行：登录头像
-          fgets(f, s);
-          if (account == 1) //2P再跳一行
-            fgets(f, s);
-          fgets(f, s);
-          server3366[account] = atoi(s + 9);//读取服务器
-          fclose(f);
-        }
-        if (server3366[account] < 0 || server3366[account] > 6)
-          server3366[account] = 0;
-        if (server3366[account] == 0) //空间服最近服务器
-        {
-          LatestServerX = (serverRect.right - serverRect.left) / 2 - 115 * DPI / 96;//中央位置左偏115
+          LatestServerX = (work[task].serverRect.right - work[task].serverRect.left) / 2 - 115 * DPI / 96;//中央位置左偏115
           LatestServerY = 267 * DPI / 96;//固定坐标267
         }
         else //3366固定服务器
         {
           const int Server3366X = 176, Server3366Y = 571, Server3366Width = 184, Server3366Height = 36;
-          int centerX = (serverRect.right - serverRect.left) / 2;//中心X位置
-          LatestServerX = centerX + (Server3366X - (server3366[account] - 1) % 3 * Server3366Width) * DPI / 96;//中央位置左偏115
-          LatestServerY = (Server3366Y - (server3366[account] - 1) / 3 * Server3366Height) * DPI / 96;//固定坐标267
+          int centerX = (work[task].serverRect.right - work[task].serverRect.left) / 2;//中心X位置
+          LatestServerX = centerX + (Server3366X - (plot[list].server[account] - 1) % 3 * Server3366Width) * DPI / 96;//中央位置左偏115
+          LatestServerY = (Server3366Y - (plot[list].server[account] - 1) / 3 * Server3366Height) * DPI / 96;//固定坐标267
         }
       }
       else if (platform[account] == 3) //QQ大厅
       {
-        LatestServerX = (serverRect.right - serverRect.left) / 2 + 30 * DPI / 96;//中央位置右偏30
+        LatestServerX = (work[task].serverRect.right - work[task].serverRect.left) / 2 + 30 * DPI / 96;//中央位置右偏30
         LatestServerY = 580 * DPI / 96;//固定坐标580
       }
-      sprintf_s(Message, "%dP最近服务器在选服窗口中的位置为(%d,%d)", account + 1, LatestServerX, LatestServerY);
-      addToText(refreshRecordPath, Message);
+      sprintf_s(message, "%dP最近服务器在选服窗口中的位置为(%d,%d)", account + 1, LatestServerX, LatestServerY);
+      addToRefreshLog(task, message);
       CheckSleep(task, 500);
 
-      project[task].hWnd[account] = NULL;//重新获取游戏窗口
+      param[task].hWnd[account] = NULL;//重新获取游戏窗口
       int counter = 0;
-      while (project[task].hWnd[account] == NULL) //每1000ms获取1次游戏窗口
+      while (param[task].hWnd[account] == NULL) //每1000ms获取1次游戏窗口
       {
         counter++;
         if (counter > 10)
@@ -5690,32 +7300,33 @@ void Refresh(int task)
         if (platform[account] >= 1 && platform[account] <= 3) //4399网页、QQ空间、QQ大厅需要点击最近服务器
         {
           char ServerShotPath[maxPath];//选服截图
-          sprintf_s(ServerShotPath, "%s\\ID%d_第%d次中断_%dP第%d次选服.png", work[task].folderPath, playingOrder + 1,
-            timesRefreshed[playingOrder], account + 1, counter);
-          WindowToBitmap(project[task].hWndHall[account], ServerShotPath);
+          sprintf_s(ServerShotPath, "%s\\ID%d_第%d次中断_%dP第%d次选服.png", work[task].logDirectory, plot[list].playingOrder + 1,
+            plot[list].timesRefreshed[plot[list].playingOrder], account + 1, counter);
+          WindowToBitmap(param[task].hWndHall[account], ServerShotPath);
 
-          LeftClick(hWndServer, LatestServerX, LatestServerY);//点击最近服务器
-          sprintf_s(Message, "%dP点击最近服务器(%d,%d)", account + 1, LatestServerX, LatestServerY);
-          addToText(refreshRecordPath, Message);
+          LeftClick(work[task].hWndServer, LatestServerX, LatestServerY);//点击最近服务器
+          sprintf_s(message, "%dP点击最近服务器(%d,%d)", account + 1, LatestServerX, LatestServerY);
+          addToRefreshLog(task, message);
         }
         CheckSleep(task, 1000);
-        project[task].hWnd[account] = GetActiveGameWindow(project[task].hWndHall[account]);
+        param[task].hWnd[account] = GetActiveGameWindow(param[task].hWndHall[account]);
       }
-      sprintf_s(Message, "%dP已进入服务器，游戏窗口(%d)", account + 1, (int)project[task].hWnd[account]);
-      addToText(refreshRecordPath, Message);
+      sprintf_s(message, "%dP已进入服务器，游戏窗口(%d)", account + 1, (int)param[task].hWnd[account]);
+      addToRefreshLog(task, message);
     }
   isHallModified[task] = 0;//恢复CheckHallWindow
 
   //游戏窗口已出现，双号依次等待进入游戏
   for (int account = 0; account < 2; account++)
-    if (advanceInvolved[account] == 1)
+    if (isRefreshRequired[account])
     {
-      work[task].hWnd[account] = project[task].hWnd[account];
-      WaitPicture(task, account, "跳转按钮", NULL, NULL, 0, 0, 60000);//等待出现跳转按钮，最多等60秒
+      work[task].hWnd[account] = param[task].hWnd[account];
+      const char *jumpButton[] = { "跳转按钮", "跳转按钮_高亮", "假期特惠" };
+      WaitPictures(APPEAR, task, account, jumpButton, NULL, NULL, 0, 0, 60000);//等待出现跳转按钮，最多等60秒
       if (platform[account] >= 0 && platform[account] <= 2) //非QQ大厅还要等健康提示
-        TryWaitPicture(task, account, "健康提示", 3000);//等待出现健康提示
-      sprintf_s(Message, "%dP刷新成功", account + 1);
-      addToText(refreshRecordPath, Message);
+        TryWaitPicture(APPEAR, task, account, "健康提示", 10000);//等待出现健康提示
+      sprintf_s(message, "%dP刷新成功", account + 1);
+      addToRefreshLog(task, message);
     }
 }
 //根据大厅句柄hWndHall和坐标Account绑定游戏窗口hWndGame。成功绑定返回1，原本就有窗口返回2
@@ -5724,17 +7335,19 @@ int BindWindow(int task, int account, HWND &hWndGame, HWND hWndHall, POINT Tag)
   if (!IsGameWindow(hWndGame))//如果hWndGame不存在或已失效，则通过大厅句柄寻找游戏窗口句柄
   {
     if (!IsWindow(hWndHall))//大厅窗口不存在，直接退出。
-      RecordError(task, account, "未找到游戏窗口", "未找到游戏窗口。本程序只能用于\n360游戏大厅（极速模式）或微端。", true);
+      RecordError(task, account, "未找到游戏窗口",
+        "未找到游戏窗口。本程序只能用于\n360游戏大厅（极速模式）或微端。", END_TASK);
     char ClassName[256];
     GetClassName(hWndHall, ClassName, 256);//获取窗口类名
 
     //不是游戏大厅或微端，直接退出
     if (strcmp(ClassName, "ApolloRuntimeContentWindow") != zero && strcmp(ClassName, "DUIWindow") != zero)
-      RecordError(task, account, "未找到游戏窗口", "未找到游戏窗口。本程序只能用于\n360游戏大厅（极速模式）或微端。", true);
+      RecordError(task, account, "未找到游戏窗口",
+        "未找到游戏窗口。本程序只能用于\n360游戏大厅（极速模式）或微端。", END_TASK);
 
     //运行到这里说明是游戏大厅或微端
     if (!PostMessage(hWndHall, WM_MOUSEMOVE, 0, MAKELPARAM(0, 0))) //检验权限
-      RecordError(task, account, "权限不足", "权限不足，请以管理员身份运行。", true);
+      RecordError(task, account, "权限不足", "权限不足，请右键执行器\n选择“以管理员身份运行”。", END_TASK);
 
     if (GetWindowLong(hWndHall, GWL_STYLE) & WS_MAXIMIZE)//如果窗口最大化，点击高度-8
       LeftClick(hWndHall, Tag.x, Tag.y - 8 * DPI / 96);//点击账号标签
@@ -5745,7 +7358,7 @@ int BindWindow(int task, int account, HWND &hWndGame, HWND hWndHall, POINT Tag)
 
     if (hWndGame == NULL) //如果无法通过大厅句柄获取游戏窗口句柄，则刷新或中断
     {
-      if (task == taskNum) //高级任务：刷新两个账号
+      if (IsAdvance(task)) //高级任务：刷新两个账号
         RecordError(task, account, "未找到游戏窗口", "未找到游戏窗口");
       else
         RecordError(task, account, "未找到游戏窗口", "未找到游戏窗口。本程序只能用于\n360游戏大厅（极速模式）或微端。");
@@ -5755,53 +7368,56 @@ int BindWindow(int task, int account, HWND &hWndGame, HWND hWndHall, POINT Tag)
 
   //如果hWndGame已存在，向hWndGame检验权限
   if (!PostMessage(hWndGame, WM_MOUSEMOVE, 0, MAKELPARAM(0, 0))) //检验权限
-    RecordError(task, account, "权限不足", "权限不足，请以管理员身份运行。", true);
+    RecordError(task, account, "权限不足", "权限不足，请右键执行器\n选择“以管理员身份运行”。", END_TASK);
   return 2;
 }
 //验证账号是否处在可以跳转至竞技岛的界面
-int isJumpButtonExist(int account)
+int isJumpButtonExist(int task, int account)
 {
-  int task = taskNum;
-  const char *jumpButton[] = { "跳转按钮", "跳转按钮_高亮" };
-  if (advanceInvolved[account] == 1)
-  {
-    int counter = 0;
-    while (FindPicturesInWindow(task, account, project[task].hWnd[account], jumpButton) == 0)
+  int list = GetList(task);
+  const char *jumpButton[] = { "跳转按钮", "跳转按钮_高亮", "假期特惠" };
+  int counter = 0;
+  work[task].hWnd[account] = param[task].hWnd[account];
+  if (plot[list].advanceInvolved[account])
+    while (FindPictures(task, account, jumpButton) == 0)
     {
       counter++;
       if (counter > 10) //1秒内找不到跳转按钮，返回0
-        return 0;
+        break;
       CheckSleep(task, 100);
     }
-  }
+  work[task].hWnd[account] = 0;
+  if (counter > 10) //1秒内找不到跳转按钮，返回0
+    return 0;
   return 1;
 }
-// 高级任务启动时绑定Project.hWnd。注意放到第一个任务线程里面去，放在传参到Work之前。
+// 高级任务启动时绑定Param.hWnd。注意放到第一个任务线程里面去，放在传参到Work之前。
 // 如果无法绑定，或者窗口不在可跳转界面，执行刷新。
-void AdvanceBindWindow()
+void AdvanceBindWindow(int task)
 {
-  if (isAdvanceWindowBound == 0)
+  int list = GetList(task);
+  if (plot[list].isAdvanceWindowBound == 0)
   {
-    int task = taskNum;
     time(&work[task].taskStartTime);
 
     for (int account = 0; account < 2; account++)//根据高级任务的参与人数绑定账号
-      if (advanceInvolved[account] == 1)
-        BindWindow(task, account, project[task].hWnd[account], project[task].hWndHall[account], project[task].tag[account]);
+      if (plot[list].advanceInvolved[account] == 1)
+        BindWindow(task, account, param[task].hWnd[account], param[task].hWndHall[account], param[task].tag[account]);
 
     for (int account = 0; account < 2; account++)//验证所有参与账号是否显示
-      if (advanceInvolved[account] == 1)
+      if (plot[list].advanceInvolved[account] == 1)
       {
-        if (!IsGameWindowVisible(project[task].hWnd[account]))
-          RecordError(task, account, "账号未显示", "所有参与刷图的账号都要显示。\n双开请用大厅右上角“多窗口玩游戏”。", true);
+        if (!IsGameWindowVisible(param[task].hWnd[account]))
+          RecordError(task, account, "账号未显示",
+            "所有参与刷图的账号都要显示。\n双开请点击大厅右上角“多窗口玩游戏”。", END_TASK);
         //账号已显示，如果不在可跳转界面，刷新两个账号
-        if (!isJumpButtonExist(account))
+        if (!isJumpButtonExist(task, account))
           RecordError(task, account, "未找到跳转按钮", "未找到跳转按钮");
       }
-    isAdvanceWindowBound = 1;
+    plot[list].isAdvanceWindowBound = 1;
   }
 }
-//每个任务启动时通过Work.hHall绑定Work.hWnd，并根据游戏窗口大小判断点击时是否需要DPI修正
+//每个任务启动时通过Work.hWndHall绑定Work.hWnd，并根据游戏窗口大小判断点击时是否需要DPI修正
 void BindWindow(int task, int account)
 {
   int result = BindWindow(task, account, work[task].hWnd[account], work[task].hWndHall[account], work[task].tag[account]);
@@ -5810,8 +7426,8 @@ void BindWindow(int task, int account)
     sprintf_s(Message, "已找到%dP窗口\n", account);
   else
     sprintf_s(Message, "已继承%dP窗口\n", account);
-  if (task < taskNum) //普通任务顺带更新Project句柄
-    project[task].hWnd[account] = work[task].hWnd[account];
+  if (IsNormal(task)) //普通任务顺带更新Param句柄
+    param[task].hWnd[account] = work[task].hWnd[account];
   strcat_s(work[task].embarkString, Message);
   RECT GameRect;
   GetClientRect(work[task].hWnd[account], &GameRect);//记录游戏窗口大小
@@ -5825,37 +7441,27 @@ void ResetWork(int task)
 {
   memset((char *)&work[task] + 8, 0, sizeof(work[task]) - 8);//清空Work[task]
 }
-//高级任务advance是不是公会任务
-bool isMission(AdvanceType &advance)
-{
-  return advance.type == 5 && advance.level == 0;
-}
-//是否签到施肥
-bool isSignOrManure(AdvanceType &advance)
-{
-  return advance.type == 17 && advance.level <= 1;
-}
-//是否无轨任务（公会任务或签到施肥）
-bool isNoTrack(AdvanceType &advance)
-{
-  return isMission(advance) || isSignOrManure(advance);
-}
 //读取轨道、绑定窗口并切换到放卡账号（读取公会任务不读轨道）
 void LoadTrackAndBindWindow(int task)
 {
   strcat_s(work[task].embarkString, "已进入启动程序\n");
 
-  work[task].games = 1;//初始化局数、波数、本局用时、平均用时、启动时间
+  //初始化波数、本局用时、平均用时、启动时间
   work[task].wave = waveOutOfLevel;//初始状态为未进入关卡
   work[task].currentTime = 0;
   work[task].averageTime = 0;
   time(&work[task].taskStartTime);
 
-  if (task < taskNum || !isNoTrack(advance[playingOrder]))
+  //普通任务或高级任务有轨关卡需要载入轨道
+  if (IsNormal(task) || !IsNoTrack(*plot[GetList(task)].playingAdvance))
   {
     for (int account = 0; account < 2; account++) //读取已填轨道信息
       if (strlen(work[task].track[account]) > (size_t)zero)
-        LoadTrack(task, account, true);
+      {
+        LoadTrack(task, account, true); //完整读取轨道（第1局执行前）
+        sprintf_s(work[task].backupTrack[account], "自动备份\\Actuator%d%d.txt", task, account);
+        Copy(work[task].pureTrack[account], work[task].backupTrack[account]);
+      }
     for (int account = 0; account < 2; account++) //不参与的账号人物位置个数清零
       if (work[task].isInvolved[account] == 0)
         work[task].roleLocNum[account] = 0;
@@ -5869,7 +7475,7 @@ void LoadTrackAndBindWindow(int task)
     {
       BindWindow(task, account);
       if (hWndExist && hWndExist == work[task].hWnd[account])
-        RecordError0(task, "绑定冲突", "1P和2P绑定了同一个账号", true);
+        RecordError0(task, "绑定冲突", "1P和2P绑定了同一个账号", END_TASK);
       hWndExist = work[task].hWnd[account];
     }
 
@@ -5888,19 +7494,17 @@ void LoadTrackAndBindWindow(int task)
       break;
     }
 }
-//重置状态信息
+//重置状态信息（保留错误原因，不然刷新记录看不到）
 void ResetState(int task)
 {
-  state[task].games = 0;
-  state[task].maxGames = 0;
-  state[task].wave = 0;//关卡状态
-  state[task].currentTime = 0;//本局用时
-  state[task].averageTime = 0;//平均用时
-  state[task].totalTime = 0;//累计用时
+  char errorString[100];
+  strcpy_s(errorString, state[task].errorString);
+  memset(&state[task], 0, sizeof(state[task]));
+  strcpy_s(state[task].errorString, errorString);
   sprintf_s(state[task].tip, "未开始");//任务状态
 }
-//获取Work[task], 记录任务已启动，返回1
-int ReadyStartTask(int task, int(&Involved)[2], int(&Performed)[2])
+//将param[task]传递到work[task], 记录任务已启动，返回1
+int TaskReady(int task, int(&Involved)[2], int(&Performed)[2])
 {
   ResetState(task);//重置任务task的状态
   ResetWork(task);//重置Work[task]
@@ -5908,37 +7512,69 @@ int ReadyStartTask(int task, int(&Involved)[2], int(&Performed)[2])
   work[task].isInvolved[1] = Involved[1];
   work[task].isPerformed[0] = Performed[0];
   work[task].isPerformed[1] = Performed[1];
-  GetWorkFromProject(task);//获取任务工作参数
+  GetWorkFromParam(task);//获取任务工作参数
   isHallModified[task] = 0;//允许自动获取大厅句柄（因为已清空工作参数，所以暂时不会自动获取）
   return 1;
 }
-//检查任务（Project[task]）能否启动，能则传递参数到Work[task]
-int CheckStartTask(int task)
+//是否为魔塔任务（含普通任务）
+bool IsTower(int task)
 {
+  if (IsAdvance(task))
+  {
+    int list = GetList(task);
+    return plot[list].playingAdvance->type == 2;
+  }
+  else
+    return work[task].towerx[0] > 0;
+}
+//是否为单塔或密室（含普通任务的单塔）
+bool IsSingleTower(int task)
+{
+  if (IsAdvance(task))
+  {
+    int list = GetList(task);
+    return plot[list].playingAdvance->type == 2 &&
+      (plot[list].playingAdvance->level / 1000 == 1 || plot[list].playingAdvance->level / 1000 == 3);
+  }
+  else
+    return work[task].towerx[0] > 0;
+}
+//检查param[task]能否启动，能则传递参数到work[task]，不能则报错
+int CheckTask(int task, bool isDualTask = false)
+{
+  ResetWork(task);//清空work[task]
+  // 非同步任务的2P任务槽不需要从param获取参数
+  // 只需要把games设为1，maxGames设为0，这样就不会在StartQuest中创建2P线程
+  if (IsDual2P(task) && isDualTask == false)
+  {
+    work[task].games = 1;
+    work[task].maxGames = 0;
+    return 1; //检查通过
+  }
+
   char info[2][1000] = {};//检查轨道文件时输出的错误信息
   int roleNumChecked[2] = {};//两个轨道检查获得的人数
   int trackNum = 0;//有效轨道数量
-  int Involved[2] = {};//两个账号是否参与
-  int Performed[2] = {};//两个账号是否放卡
-
-  ResetWork(task);//清空Work[task]
+  int isInvolved[2] = {};//两个账号是否参与
+  int isPerformed[2] = {};//两个账号是否放卡
 
   //如果是公会任务或签到施肥，不检查轨道，直接通过
-  if (task == taskNum)
+  if (IsAdvance(task))
   {
-    if (isMission(advance[playingOrder]) || isSignOrManure(advance[playingOrder]))
+    int list = GetList(task);
+    if (IsMission(*plot[list].playingAdvance) || IsSpecial(*plot[list].playingAdvance))
     {
       for (int account = 0; account < 2; account++)
-        Involved[account] = Performed[account] = advance[playingOrder].deck[account] ? 1 : 0;
-      return ReadyStartTask(task, Involved, Performed);//准备启动任务
+        isInvolved[account] = isPerformed[account] = plot[list].playingAdvance->deck[account] ? 1 : 0;
+      return TaskReady(task, isInvolved, isPerformed);//准备启动任务
     }
   }
 
   for (int account = 0; account < 2; account++)
-    if (strlen(project[task].track[account]) > 0)//若轨道存在
+    if (strlen(param[task].track[account]) > 0)//若轨道存在
     {
       roleNumChecked[account] = LoadTrack(task, account, info[account], true);//载入并检查轨道
-      Involved[account] = Performed[account] = 1;//账号参与+放卡
+      isInvolved[account] = isPerformed[account] = 1;//账号参与+放卡
       trackNum++;
     }
     else //轨道不存在
@@ -5952,52 +7588,63 @@ int CheckStartTask(int task)
   else if (roleNumChecked[1] == 0)//如果轨道2无法正常载入，弹窗提示
     PopMessage(task, info[1]);
   //如果能成功载入
-  else if (trackNum == 2 && (project[task].tag[0].x == -1 || project[task].tag[1].x == -1))
+  else if (trackNum == 2 && (param[task].tag[0].x == -1 || param[task].tag[1].x == -1))
     PopMessage(task, "双轨刷图需要抓取两个账号标签。\n如需单人刷图，请删除一个轨道。");
   //轨道数为2，但缺少一个账号标签时
-  else if (strlen(project[task].track[0]) > 0 && project[task].tag[0].x == -1)
+  else if (strlen(param[task].track[0]) > 0 && param[task].tag[0].x == -1)
     PopMessage(task, "请抓取房主标签。");
-  else if (strlen(project[task].track[1]) > 0 && project[task].tag[1].x == -1)
+  else if (strlen(param[task].track[1]) > 0 && param[task].tag[1].x == -1)
     PopMessage(task, "请抓取队友标签。");
   /*排除了上述错误后，双轨刷图必然已有两个标签，单轨刷图也至少有了对应账号的标签。
   但有可能使用单个双人轨道，而只抓取了一个标签*/
   else //没有错误才执行任务
   {
     int roleNum = GetRoleNum(task); //人物数量
-    if (task == taskNum && (project[task].deck[0] == 0 || project[task].deck[1] == 0))
+    if (IsAdvance(task) && (param[task].deck[0] == 0 || param[task].deck[1] == 0))
       roleNum = 1;//高级任务Deck = 0的账号不参与
-    if (roleNum == 2 && (project[task].tag[0].x == -1 || project[task].tag[1].x == -1))//双人轨道只抓了一个标签时
+    if (roleNum == 2 && (param[task].tag[0].x == -1 || param[task].tag[1].x == -1))//双人轨道只抓了一个标签时
     {
-      if (task < taskNum) //普通任务，由用户选择要不要执行
+      if (IsNormal(task)) //普通任务，由用户选择要不要执行
       {
-        int Options = PopMessageWithOptions(task, "您使用的是双人轨道，\n但只抓取了一个账号标签，\n是否以单人模式启动？");
+        int Options = PopMessageOK(task, "您使用的是双人轨道，\n但只抓取了一个账号标签，\n是否以单人模式启动？");
         if (Options != IDOK)
           return 0;
         roleNum = 1;
         for (int account = 0; account < 2; account++)
-          if (project[task].tag[account].x == -1)
+          if (param[task].tag[account].x == -1)
             work[task].roleLocNum[account] = 0;
       }
     }
     //单人刷图，只有放卡账号参与，前面已经记录了；双人刷图，则记录一下两个号都参与
     if (roleNum == 2)
-      Involved[0] = Involved[1] = 1;
-    if (Involved[1] == 1 && work[task].tower[0] + work[task].tower[1] > 0)
+      isInvolved[0] = isInvolved[1] = 1;
+    //普通任务魔塔轨道2P参与（高级任务work[task].tower[account]强制为0，不会触发此报错）
+    if (work[task].towerx[0] + work[task].towerx[1] > 0 && isInvolved[1])
     {
       PopMessage(task, "魔塔轨道仅限房主单人使用。");
-      return 0;//注：高级任务读轨道时Work[task].Tower[account]会强制设为0
+      return 0;
     }
-    if (work[task].tower[0] && work[task].quitTime[0] == 1)
+    //刷技能模式
+    if (work[task].isSkillMode)
     {
-      char tip[300] = "刷技能要求:\n"
-        "1. 所有卡片至少1星；\n"
-        "2. 操作速度建议调至“快”。\n"
-        "点击确认继续执行。";
-      int Options = PopMessageWithOptions(task, tip);
-      if (Options != IDOK)
+      if (!IsSingleTower(task)) //如果不是单人魔塔
+      {
+        PopMessage(task, "刷技能轨道只能用于单塔或密室。");
         return 0;
+      }
+      //普通任务在这里提示，高级任务就不在这里提示了
+      if (!IsAdvance(task))
+      {
+        char tip[300] = "刷技能要求:\n"
+          "1. 所有卡片至少1星；\n"
+          "2. 操作速度建议调至“快”。\n"
+          "点击确认继续执行。";
+        int Options = PopMessageOK(task, tip);
+        if (Options != IDOK)
+          return 0;
+      }
     }
-    return ReadyStartTask(task, Involved, Performed);//准备启动任务
+    return TaskReady(task, isInvolved, isPerformed);//准备启动任务
   }
   return 0;
 }
@@ -6022,24 +7669,23 @@ void OldJumpToContest(int task, int account)
     if (FindPicture(task, account, "跳转列表") == 0)
     {
       Click(task, account, Jump);//点击跳转按钮
-      WaitPicture(task, account, "跳转列表");//等待打开跳转列表
+      WaitPicture(APPEAR, task, account, "跳转列表");//等待打开跳转列表
     }
     Click(task, account, ContestIsland);//跳转到竞技岛
-    WaitPicture(task, account, "竞技");//等待进入竞技岛界面
+    WaitPicture(APPEAR, task, account, "竞技");//等待进入竞技岛界面
   }
-  WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+  WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
   CheckSleep(task, 200);
 }
 //点击活动图标name，进入活动
-void ClickActivity(int account, char *name)
+void ClickActivity(int task, int account, char *name)
 {
-  int task = taskNum;
   int SwitchActivityX = 787, SwitchActivityY = 35;//切换活动
   int x, y;
-  if (FindPicture(task, account, name, &x, &y) == 0)//如果没找到图标
+  if (TryWaitPicture(APPEAR, task, account, name, 500, &x, &y) == 0)//如果没找到图标
   {
     Click(task, account, SwitchActivityX, SwitchActivityY);//点一下箭头
-    WaitPicture(task, account, name, &x, &y);//等待图标出现
+    WaitPicture(APPEAR, task, account, name, &x, &y);//等待图标出现
   }
   Click(task, account, x, y);//点击悬赏图标
 }
@@ -6047,7 +7693,7 @@ void ClickActivity(int account, char *name)
 int DealInvitation(int task, int account, int deal)
 {
   POINT DealButton[2] = { { 609, 403 }, { 449, 403 }, };//拒绝和接受按钮位置
-  if (FindPicture(task, account, "被邀请界面") == 1)
+  if (FindPicture(task, account, "被邀请界面"))
   {
     Click(task, account, DealButton[deal]);
     CheckSleep(task, 100);
@@ -6055,35 +7701,66 @@ int DealInvitation(int task, int account, int deal)
   }
   return 0;
 }
-//领取悬赏奖励
-void ClaimBountyReward(int account, int level)
+//领取悬赏奖励。level>=0为开局领奖（需检查第level关能否挑战），level==-1为打完领奖。
+void ClaimBountyReward(int task, int account, int level = -1)
 {
-  int task = taskNum;
-  int ClaimBountyX = 253, ClaimBountyY = 244, ClaimBountyWidth = 215;//领取悬赏奖励
-  int CloseBountyX = 902, CloseBountyY = 77;
-  ClickActivity(account, "悬赏图标");//点击悬赏图标
-  WaitPicture(task, account, "悬赏界面");//等待打开悬赏界面
-  CheckSleep(task, 2000);//等待奖励加载出来
-  DealInvitation(task, account, 0);
-  Click(task, account, ClaimBountyX + level * ClaimBountyWidth, ClaimBountyY);//点击领取奖励
-  CheckSleep(task, 1000);
-  Click(task, account, CloseBountyX, CloseBountyY);//点击关闭悬赏
+  int list = GetList(task);
+  const POINT closeBounty = { 909, 36 };
+  //4个关卡领奖按钮的位置
+  const POINT claim[4] = { { 174, 411 }, { 344, 380 }, { 518, 376 }, { 690, 414 } };
+  const char *claimButton[] = { "领取悬赏", "领取悬赏_亮" };//领取按钮图片名
+  const int claimWidth = 107, claimHeight = 38;//领奖按钮尺寸
+  if (level == -1)
+  {
+    ClickActivity(task, account, "悬赏图标");//点击悬赏图标
+    WaitPicture(APPEAR, task, account, "悬赏界面");//等待打开悬赏界面
+    CheckSleep(task, 2000);//等待奖励加载出来
+  }
+  DealInvitation(task, account, 0);//拒绝邀请
+  if (level == -1) //如果是打完领奖，最多等5秒，以免漏领
+    TryWaitPictures(APPEAR, task, account, claimButton, 5000);//等待奖励出现
+  int x = 0, y = 0;
+  int counter = 0;
+  //每次领奖等待1秒，防止识图失败
+  while (TryWaitPictures(APPEAR, task, account, claimButton, 1000, &x, &y))
+  {
+    counter++;
+    if (counter > 10)
+      break;
+    Click(task, account, x, y);//点击领取奖励
+    CheckSleep(task, 1000);
+    DealInvitation(task, account, 0);
+  }
+  if (counter > 10)//如果领取失败
+  {
+    if (level == -1)//打完后领奖失败：记录本关状态为“未领奖”
+      plot[list].playingAdvance->result = 1;
+    else //开局领奖失败：能建房就建房打，不能就跳过
+    {
+      //如果要打的关有“领取”字样，只能跳过任务
+      if (FindPictures(task, account, claimButton, &x, &y, claim[level].x, claim[level].y,
+        claim[level].x + claimWidth, claim[level].y + claimHeight))
+        RecordError(task, account, "悬赏领奖失败", "悬赏领奖失败", SKIP_TASK);
+      //如果要打的关没有“领取”字样则忽略，继续建房开打（打完领不了会记录）
+    }
+  }
+  if (level == -1)
+    Click(task, account, closeBounty);//点击关闭悬赏
 }
 //进入公会任务列表
-void EnterMission(int account)
+void EnterMission(int task, int account)
 {
   const POINT Jump = { 870, 560 };//跳转按钮
   const POINT GuildMission = { 870, 257 };//跳转到公会任务
   const POINT Uncheck = { 608, 401 };//拒绝邀请+取消选中公会任务
-  int task = taskNum;
   if (FindPicture(task, account, "跳转列表") == 0)
   {
     Click(task, account, Jump);//点击跳转按钮
-    WaitPicture(task, account, "跳转列表");//等待打开跳转列表
+    WaitPicture(APPEAR, task, account, "跳转列表");//等待打开跳转列表
   }
   Click(task, account, GuildMission);//跳转到公会任务
-  WaitPicture(task, account, "公会任务");//等待进入公会任务界面
-  WaitPictureDisappear(task, account, "完成次数");//等待“完成次数”字样消失
+  WaitPicture(APPEAR, task, account, "公会任务");//等待进入公会任务界面
+  WaitPicture(DISAPPEAR, task, account, "完成次数");//等待“完成次数”字样消失
   CheckSleep(task, 1000);//等待系统自动选中第一个任务
   Click(task, account, Uncheck);//取消选中任务
   CheckSleep(task, 100);
@@ -6092,17 +7769,17 @@ void EnterMission(int account)
 }
 POINT CloseMission = { 853, 56 };//关闭公会任务界面
 //领取公会任务奖励
-void ClaimMissionAward(int account, bool isOpenRequired = true)
+void ClaimMissionAward(int task, int account, bool isOpenRequired = true)
 {
-  int task = taskNum;
+  int list = GetList(task);
   POINT Claim = { 642, 533 };//领取按钮
 
   //如果已经领奖失败过，就不反复领了
-  if (isMissionClaimFailed)
+  if (plot[list].isMissionClaimFailed)
     return;
 
   if (isOpenRequired)
-    EnterMission(account);//进入公会任务面板
+    EnterMission(task, account);//进入公会任务面板
 
   int x, y;
   int counter = 0;
@@ -6112,15 +7789,15 @@ void ClaimMissionAward(int account, bool isOpenRequired = true)
     counter++;
     if (counter > 15)
     {
-      isMissionClaimFailed = true;
+      plot[list].isMissionClaimFailed = true;
       break;
     }
     Click(task, account, x + 5, y + 5);//点击已完成(+5是为了防止点边角无效）
     CheckSleep(task, 500);
     Click(task, account, Claim);//点击领取按钮
-    if (!WaitPicture(task, account, "公会任务已领取", nullptr, nullptr, x, y, 3000, false))
+    if (!WaitPicture(APPEAR, task, account, "公会任务已领取", nullptr, nullptr, x, y, 3000, false))
     {
-      isMissionClaimFailed = true;
+      plot[list].isMissionClaimFailed = true;
       break;
     }
     CheckSleep(task, 500);
@@ -6130,15 +7807,14 @@ void ClaimMissionAward(int account, bool isOpenRequired = true)
     Click(task, account, CloseMission);//关闭公会任务
 }
 //领取美食大赛奖励
-void ClaimContestAward(int account)
+void ClaimContestAward(int task, int account)
 {
-  int task = taskNum;
   POINT CloseContest = { 887, 51 };
   POINT ScrollTop = { 537, 360 };
   int ScrollHeight = 35;
 
-  ClickActivity(account, "大赛图标");//点击大赛图标
-  WaitPicture(task, account, "大赛界面");//等待打开大赛界面
+  ClickActivity(task, account, "大赛图标");//点击大赛图标
+  WaitPicture(APPEAR, task, account, "大赛界面");//等待打开大赛界面
   CheckSleep(task, 1000);//等待奖励加载出来
   int counter = 0;
   while (FindPicture(task, account, "大赛背景")) //如果10秒还没加载出来，很可能是网卡了
@@ -6171,15 +7847,15 @@ void ClaimContestAward(int account)
 //关闭健康提示和充值面板
 void CloseHealthAndPayment(int task, int account)
 {
-  const POINT CloseHealthPrompt = { 588, 212 };//关闭健康提示
-  const POINT ClosePayment = { 764, 124 };//关闭充值面板
+  const POINT closeHealthPrompt = { 588, 212 };//关闭健康提示
+  const POINT closePayment = { 899, 51 };//关闭充值面板
   int counter = 0;
   while (FindPicture(task, account, "健康提示")) //关闭健康提示
   {
     counter++;
     if (counter > 10)
       RecordError(task, account, "无法关闭提示", "无法关闭健康提示");
-    Click(task, account, CloseHealthPrompt);
+    Click(task, account, closeHealthPrompt);
     CheckSleep(task, 500);
   }
   counter = 0;
@@ -6188,26 +7864,27 @@ void CloseHealthAndPayment(int task, int account)
     counter++;
     if (counter > 10)
       RecordError(task, account, "无法关闭特惠", "无法关闭假期特惠");
-    Click(task, account, CloseHealthPrompt);
-    Click(task, account, ClosePayment);
+    Click(task, account, closeHealthPrompt);
+    Click(task, account, closePayment);
     CheckSleep(task, 500);
   }
 }
 //生成随机换区顺序
-void ShuffleRandomZone()
+void ShuffleRandomZone(int list)
 {
   for (int i = 0; i < 7; i++)
-    randomZone[i] = i;
+    plot[list].randomZone[i] = i;
   srand((unsigned)time(0));
   for (int i = 0; i < 6; i++)
   {
     int j = i + rand() % (7 - i);
-    Swap(&randomZone[i], &randomZone[j]);
+    Swap(&plot[list].randomZone[i], &plot[list].randomZone[j]);
   }
 }
 //跳转到海洋一二区，星际一二区，营地一二区，遗迹一区，竞技一区
 void RandomJump(int task, int account)
 {
+  int list = GetList(task);
   const POINT closeWorldMap = { 828, 61 };
   const POINT changeZone = { 819, 84 };//换线按钮
   char *const zoneName[8] = { "营地一区", "营地二区", "星际一区", "星际二区", "海洋一区", "海洋二区", "遗迹一区", "竞技一区" };
@@ -6216,31 +7893,31 @@ void RandomJump(int task, int account)
   int zoneOrder = 7;//目标小区编号
   const char *targetIslandName = "竞技";//目标岛屿名称
   POINT targetIslandLocation = { 201, 346 };//目标岛屿位置
-  if (!isLevelInsufficient) //如果等级足够，执行随机跳转
+  if (!plot[list].isLevelInsufficient) //如果等级足够，执行随机跳转
   {
-    zoneOrder = randomZone[playedAdvanceNum % 7];//跳转到的小区编号
-    targetIslandName = advanceName[islandOrder[zoneOrder] + basicTypeNum];
+    zoneOrder = plot[list].randomZone[plot[list].playedAdvanceNum % 7];//跳转到的小区编号
+    targetIslandName = typeName[islandOrder[zoneOrder] + basicTypeNum];
     targetIslandLocation = islandLocation[islandOrder[zoneOrder]];
   }
 
   if (FindPicture(task, account, targetIslandName) == 0)//如果不在目标岛屿，换到目标岛屿
   {
-    Click(task, account, worldMapX, worldMapY);//打开世界地图
-    WaitPicture(task, account, "世界地图");//等待打开世界地图
+    Click(task, account, worldMap);//打开世界地图
+    WaitPicture(APPEAR, task, account, "世界地图");//等待打开世界地图
     DealInvitation(task, account, 0);
     Click(task, account, targetIslandLocation);//点击岛屿
 
     //等待世界地图消失。如果无法跳转至指定岛屿，判定等级不足，重新跳转
-    if (!TryWaitPictureDisappear(task, account, "世界地图", 3000))
+    if (!TryWaitPicture(DISAPPEAR, task, account, "世界地图", 3000))
     {
-      if (isLevelInsufficient) //如果竞技岛都跳不了
-        RecordError(task, account, "等级不足", "等级不足8级，无法使用高级任务", true);
+      if (plot[list].isLevelInsufficient) //如果竞技岛都跳不了
+        RecordError(task, account, "等级不足", "等级不足8级，无法使用高级任务", END_TASK);
       //如果是普通岛屿跳不了
-      isLevelInsufficient = true;//记录等级不足，下次跳竞技岛
+      plot[list].isLevelInsufficient = true;//记录等级不足，下次跳竞技岛
       RecordError(task, account, "等级不足", "等级不足，尝试跳转至竞技岛");
     }
-    WaitPicture(task, account, targetIslandName);//等待进入岛屿
-    WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+    WaitPicture(APPEAR, task, account, targetIslandName);//等待进入岛屿
+    WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
     CheckSleep(task, 200);
   }
   //换到目标区域
@@ -6260,46 +7937,46 @@ void RandomJump(int task, int account)
     Click(task, account, zoneLocation[zoneOrder]);//点击区名
     CheckSleep(task, 200);
     SelectiveSleep(task, 300);
-    WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+    WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
   }
   CheckSleep(task, 500);//多等一会儿，免得不能操作
 
-  //已经在正确的去，也要等蓝框消失
-  WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);
+  //已经在正确的区，也要等蓝框消失
+  WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);
 }
 //高级任务完成后的退出操作。
-void Retreat()
+void Retreat(int task)
 {
-  int task = taskNum;
+  int list = GetList(task);
   POINT CloseChallenge = { 845, 57 };//关闭勇士界面
   POINT CloseTower = { 927, 34 };//关闭魔塔界面
   POINT CloseCross = { 916, 34 };//关闭跨服界面
 
   CheckSleep(task, 500);
   //无轨关卡直接退
-  if (isNoTrack(advance[playingOrder]))
+  if (IsNoTrack(*plot[list].playingAdvance))
     return;
   for (int account = 0; account <= 1; account++)
     if (work[task].isInvolved[account])
     {
-      if (work[task].isQuitUsed == 0) //如果没有退出房间
+      if (!work[task].isQuitUsed) //如果没有退出房间
       {
         Click(task, account, bagCancelX, bagCancelY);//取消掉背包满的弹窗
         CheckSleep(task, 500);
-        if (advance[playingOrder].type == 3)//跨服：直接跳竞技岛
+        if (plot[list].playingAdvance->type == 3)//跨服：直接跳竞技岛
           OldJumpToContest(task, account);
         else //其他模式
         {
-          if (advance[playingOrder].type != 2)
-            Click(task, account, retreatX, retreatY);//除魔塔外，翻牌完成后要退出房间
+          if (plot[list].playingAdvance->type != 2)
+            Click(task, account, retreat);//除魔塔外，翻牌完成后要退出房间
           CheckSleep(task, 1000);//等待1秒
 
-          if (advance[playingOrder].type == 0) //对于悬赏任务，退出后要领取奖励
-            ClaimBountyReward(account, advance[playingOrder].level);//领取悬赏奖励
+          if (plot[list].playingAdvance->type == 0) //对于悬赏任务，退出后要领取奖励
+            ClaimBountyReward(task, account);//领取悬赏奖励
           //对于勇士任务，房主后要关闭勇士界面
-          else if (advance[playingOrder].type == 1 && account == work[task].hostAccount)
+          else if (plot[list].playingAdvance->type == 1 && account == work[task].host)
             Click(task, account, CloseChallenge);
-          else if (advance[playingOrder].type == 2)//对于魔塔任务，退出后要关闭魔塔界面
+          else if (plot[list].playingAdvance->type == 2)//对于魔塔任务，退出后要关闭魔塔界面
             Click(task, account, CloseTower);
         }
       }
@@ -6307,15 +7984,15 @@ void Retreat()
       {
         //悬赏：都退出了肯定没奖励，啥也不用干；
         //勇士：房主关闭界面即可
-        if (advance[playingOrder].type == 1 && account == work[task].hostAccount)
+        if (plot[list].playingAdvance->type == 1 && account == work[task].host)
           Click(task, account, CloseChallenge);
-        else if (advance[playingOrder].type == 2)//魔塔：关闭魔塔界面
+        else if (plot[list].playingAdvance->type == 2)//魔塔：关闭魔塔界面
           Click(task, account, CloseTower);
-        else if (advance[playingOrder].type == 3)//跨服：关闭跨服界面后跳竞技岛
+        else if (plot[list].playingAdvance->type == 3)//跨服：关闭跨服界面后随机跳转
         {
           Click(task, account, CloseCross);
           const char *jumpButton[] = { "跳转按钮", "跳转按钮_高亮" };
-          WaitPictures(task, account, jumpButton);
+          WaitPictures(APPEAR, task, account, jumpButton);
           CheckSleep(task, 500);
           RandomJump(task, account);
         }
@@ -6324,12 +8001,12 @@ void Retreat()
       if (contestOption == 1)
       {
         CheckSleep(task, 1000);
-        ClaimContestAward(account);
+        ClaimContestAward(task, account);
       }
-      if (advance[playingOrder].isMission)
+      if (plot[list].playingAdvance->isMission)
       {
         CheckSleep(task, 1000);
-        ClaimMissionAward(account);
+        ClaimMissionAward(task, account);
       }
     }
   CheckSleep(task, 1000);//退出后等待1秒，任务线程结束
@@ -6337,37 +8014,47 @@ void Retreat()
 void FinishTask(int task)
 {
   RecordLevelTime(task, true);//记录每局用时
-  if (task == taskNum)//高级任务执行退出程序
+  if (IsAdvance(task))//高级任务执行退出程序
   {
-    Retreat();//退出房间并完成领奖、关闭窗口等操作（胜退）
+    int list = GetList(task);
+    Retreat(task);//退出房间并完成领奖、关闭窗口等操作
+    reserve[task].arriveFinish = true;
+    if (plot[list].playingAdvance->host == 2) //如果是同步任务，要等另一个任务一起完成
+    {
+      int anotherTask = IsDual2P(task) ? task - 1 : task + 1;//另一个任务编号
+      while (reserve[anotherTask].arriveFinish == false) //等另一个任务也到达
+        CheckSleep(task, 10);
+    }
     ReturnState(task, "已完成");//进度MaxGames+1/MaxGames，第Wave波第0秒，平均用时刷新，累计时间刷新
   }
   else //普通任务直接弹窗退出
   {
-    char Message[30];
+    char message[30];
     ReturnState(task, "已完成");//进度MaxGames+1/MaxGames，第Wave波第0秒，平均用时刷新，累计时间刷新
-    sprintf_s(Message, "任务%d完成，共刷%d局", task, work[task].maxGames);
+    sprintf_s(message, "普通任务%d完成，共刷%d局", task, work[task].maxGames);
     isTaskStarted[task] = 0;//让按钮显示“启动”
     isRepaintRequired = 1;//发送重绘指令
-    PopMessage(task, Message);
+    PopMessage(task, message);
   }
   ExitTask(task);
 }
 /*高级任务进入房间相关函数*/
-//等待进入房间，返回房间号（最长等待waitTime毫秒）
-int WaitIndoor(int account, bool noError = false, int waitTime = 5000)
+
+//等待进入房间（检测到选卡界面），返回房间号（无房间号返回0，进房失败返回-1）
+//最长等待waitTime毫秒
+int WaitIndoor(int task, int account, bool noError = false, int waitTime = 5000)
 {
-  int task = taskNum;
-  int IndoorDigit = -1;
+  int list = GetList(task);
+  int digit = -1;
   int counter = 0;
-  while (IndoorDigit == -1)//等待房主进入房间
+  while (digit == -1)//等待房主进入房间
   {
     counter++;
     if (counter >= waitTime / 100)
     {
       if (noError == false)
       {
-        if (account == advance[playingOrder].hostAccount)
+        if (account == work[task].host)
           RecordError(task, account, "创建房间失败", "创建房间失败");
         else
           RecordError(task, account, "进入房间失败", "进入房间失败");
@@ -6375,18 +8062,23 @@ int WaitIndoor(int account, bool noError = false, int waitTime = 5000)
       return -1;
     }
     CheckSleep(task, 100);
-    if (UpdateMap(task, account))
-      IndoorDigit = indoorDigit.Get(task);
-    else
-      IndoorDigit = -1;
+
+    const char *indoor[] = { "选卡界面", "选卡界面2" };
+    if (FindPictures(task, account, indoor))//如果检测到进入房间
+    {
+      digit = indoorDigit.Get(task);//读取一次房间号
+      if (digit == -1) //进了房间没有房间号，视为0
+        digit = 0;
+    }
+    else //截图失败或未进入房间，房间号为-1
+      digit = -1;
   }
   CheckSleep(task, 100);
-  return IndoorDigit;
+  return digit;
 }
 //进入指定房间号的密码房（含输入密码）
-int EnterRoom(int account, int roomDigit)
+int EnterRoom(int task, int account, int roomDigit)
 {
-  int task = taskNum;
   int RoomScrollX = 723, RoomScrollY = 150, RoomScrollHeight = 93;//房间列表滚动条
   int ConfirmPasswordX = 475, ConfirmPasswordY = 335;//进入房间确认密码
   int num, height[5], room[5];
@@ -6410,16 +8102,16 @@ int EnterRoom(int account, int roomDigit)
           Press(task, account, 98);
         CheckSleep(task, 500);
         Click(task, account, ConfirmPasswordX, ConfirmPasswordY);//确认密码，进入房间
-        WaitIndoor(account);
+        WaitIndoor(task, account);
         return 1;
       }
   }
   return 0;
 }
 //等待进入房间，返回房间号
-int WaitCrossIndoor(int account)
+int WaitCrossIndoor(int task, int account)
 {
-  int task = taskNum;
+  int list = GetList(task);
   int roomDigit = -1;
   int iColor = 0;
   while (roomDigit == -1)//等待房主进入房间
@@ -6427,7 +8119,7 @@ int WaitCrossIndoor(int account)
     iColor++;
     if (iColor >= 100)
     {
-      if (account == advance[playingOrder].hostAccount)
+      if (account == work[task].host)
         RecordError(task, account, "跨服创房失败", "跨服创建房间失败");
       else
         RecordError(task, account, "跨服进房失败", "跨服进入房间失败");
@@ -6441,43 +8133,41 @@ int WaitCrossIndoor(int account)
   return roomDigit;
 }
 //在房间列表创建密码房，返回房间号
-int CreatePasswordRoom(int account)
+int CreatePasswordRoom(int task, int account)
 {
-  int task = taskNum;
-  int TickPasswordX = 490, TickPasswordY = 452;//勾选密码
-  int InputPasswordX = 686, InputPasswordY = 454;//输入密码
-  int CreateX = 585, CreateY = 495;//创建房间
+  const POINT tickPassword = { 490, 452 };//勾选密码
+  const POINT  inputPassword = { 686, 454 };//输入密码
+  const POINT  create = { 585, 495 };//创建房间
 
   CheckSleep(task, 500);//等待500 ms
-  Click(task, account, TickPasswordX, TickPasswordY);//勾选密码
-  WaitPicture(task, account, "密码已勾选");
-  Click(task, account, InputPasswordX, InputPasswordY);//点击密码输入框
+  Click(task, account, tickPassword);//勾选密码
+  WaitPicture(APPEAR, task, account, "密码已勾选");
+  Click(task, account, inputPassword);//点击密码输入框
   CheckSleep(task, 500);//必要的停顿
   for (int i = 1; i <= 6; i++)//连续6下退格
     Press(task, account, 8);
   for (int i = 1; i <= 3; i++)//输入222
     Press(task, account, 98);
   CheckSleep(task, 500);//必要的停顿
-  Click(task, account, CreateX, CreateY);
-  return WaitIndoor(account);//等待房主进入房间
+  Click(task, account, create);
+  return WaitIndoor(task, account);//等待房主进入房间
 }
 //进入跨服界面并切换到2区
-void EnterCrossInterface(int account)
+void EnterCrossInterface(int task, int account)
 {
-  int task = taskNum;
   int x, y;
-  int CrossX = 352, CrossY = 333;//地图“跨服远征”点击位置
-  int ChangeZoneX = 793, ChangeZoneY = 32;
-  int Zone2X = 814, Zone2Y = 86;
+  const POINT cross = { 352, 333 };//地图“跨服远征”点击位置
+  const POINT changeZone = { 793, 32 };
+  const POINT zone2 = { 814, 86 };
 
   if (FindPicture(task, account, "跨服界面") == 0) //如果不在跨服界面，则打开跨服界面并换到二区
   {
-    Click(task, account, worldMapX, worldMapY);//打开世界地图
-    WaitPicture(task, account, "世界地图", &x, &y);//等待打开世界地图
-    Click(task, account, CrossX, CrossY);//打开勇士挑战
-    WaitPicture(task, account, "跨服界面", &x, &y);//等待进入跨服界面
+    Click(task, account, worldMap);//打开世界地图
+    WaitPicture(APPEAR, task, account, "世界地图", &x, &y);//等待打开世界地图
+    Click(task, account, cross);//打开勇士挑战
+    WaitPicture(APPEAR, task, account, "跨服界面", &x, &y);//等待进入跨服界面
     SelectiveSleep(task, 500);
-    WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+    WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
     CheckSleep(task, 500); //蓝框消失后有个刷新过程，还是等500ms比较好
     SelectiveSleep(task, 500);
     int counter = 0;
@@ -6486,20 +8176,19 @@ void EnterCrossInterface(int account)
       counter++;
       if (counter > 10)
         RecordError(task, account, "跨服换区失败", "跨服换区失败");
-      Click(task, account, ChangeZoneX, ChangeZoneY);//点击换区
+      Click(task, account, changeZone);//点击换区
       CheckSleep(task, 200);
       SelectiveSleep(task, 300);
-      Click(task, account, Zone2X, Zone2Y);//换到2区
+      Click(task, account, zone2);//换到2区
       CheckSleep(task, 200);
       SelectiveSleep(task, 300);
-      WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+      WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
     }
   }
 }
 //筛选跨服关卡
-void FilterCrossLevel(int account, int level)
+void FilterCrossLevel(int task, int account, int level)
 {
-  int task = taskNum;
   int type = level / 8;//关卡类型：古堡=0，冰封=5
   int grade = level % 8;//关卡等级，8星=0，15星=7
   const int ChooseTypeX = 640, ChooseTypeY = 77;//选择关卡类型
@@ -6529,9 +8218,8 @@ void FilterCrossLevel(int account, int level)
   Click(task, account, GradeX, GradeY + grade * GradeHeight);//选择等级
 }
 //创建跨服房间
-int CreateCrossRoom(int account, int level)
+int CreateCrossRoom(int task, int account, int level)
 {
-  int task = taskNum;
   int x, y;
   int CreateX = 854, CreateY = 552;
   int ClassX = 62, ClassY = 70, ClassWidth = 102;//古堡位置和类型之间的宽度
@@ -6543,13 +8231,13 @@ int CreateCrossRoom(int account, int level)
   int column = grade % 4;
 
   Click(task, account, CreateX, CreateY);//点击创建房间
-  WaitPicture(task, account, "跨服创房界面");//等待进入创建房间界面
+  WaitPicture(APPEAR, task, account, "跨服创房界面");//等待进入创建房间界面
   SelectiveSleep(task, 1000);
   Click(task, account, ClassX + ClassWidth * type, ClassY);//点击关卡类型
   CheckSleep(task, 300);
   SelectiveSleep(task, 700);
   const char *createButton[] = { "跨服创房按钮", "跨服创房按钮亮" };
-  WaitPictures(task, account, createButton, &x, &y);//等待第一个关卡创房按钮亮起
+  WaitPictures(APPEAR, task, account, createButton, &x, &y);//等待第一个关卡创房按钮亮起
   CheckSleep(task, 300);
   SelectiveSleep(task, 700);
   Click(task, account, TickPasswordX + column * LevelWidth, TickPasswordY + row * LevelHeight);//勾选密码
@@ -6560,12 +8248,11 @@ int CreateCrossRoom(int account, int level)
   CheckSleep(task, 200);
   SelectiveSleep(task, 300);
   Click(task, account, x + column * LevelWidth, y + row * LevelHeight);//点击该关卡的创建房间按钮
-  return WaitCrossIndoor(account);//等待进入房间并返回房间号
+  return WaitCrossIndoor(task, account);//等待进入房间并返回房间号
 }
 //【跨服】进入指定房间号的密码房（含输入密码）
-int EnterCrossRoom(int account, int roomDigit)
+int EnterCrossRoom(int task, int account, int roomDigit)
 {
-  int task = taskNum;
   const POINT NextPage = { 698, 486 };//下一页
   const POINT RefreshRoom = { 892, 74 };//刷新按钮
   int ConfirmPasswordX = 490, ConfirmPasswordY = 351;//进入房间确认密码
@@ -6585,7 +8272,7 @@ int EnterCrossRoom(int account, int roomDigit)
           Press(task, account, 98);
         CheckSleep(task, 500);
         Click(task, account, ConfirmPasswordX, ConfirmPasswordY);//确认密码，进入房间
-        WaitCrossIndoor(account);//等待进入房间
+        WaitCrossIndoor(task, account);//等待进入房间
         return 1;
       }
     if (page % 5 == 0)
@@ -6597,21 +8284,20 @@ int EnterCrossRoom(int account, int roomDigit)
   return 0;
 }
 //进入跨服关卡
-void EnterCross(int level)
+void EnterCross(int task, int level)
 {
-  int task = taskNum;
-  EnterCrossInterface(work[task].hostAccount);//房主进入跨服2区
+  EnterCrossInterface(task, work[task].host);//房主进入跨服2区
   CheckSleep(task, 500);//必要的停顿
-  int RoomDigit = CreateCrossRoom(work[task].hostAccount, level);//房主创建跨服房间
+  int RoomDigit = CreateCrossRoom(task, work[task].host, level);//房主创建跨服房间
 
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
-    EnterCrossInterface(1 - work[task].hostAccount);//队友进入跨服2区
+    EnterCrossInterface(task, 1 - work[task].host);//队友进入跨服2区
     CheckSleep(task, 500);//必要的停顿
-    FilterCrossLevel(1 - work[task].hostAccount, level);//筛选跨服关卡
+    FilterCrossLevel(task, 1 - work[task].host, level);//筛选跨服关卡
     CheckSleep(task, 500);//必要的停顿
-    if (EnterCrossRoom(1 - work[task].hostAccount, RoomDigit) == 0)//按房间号进入房主的关卡（找不到则翻页）
-      RecordError(task, 1 - work[task].hostAccount, "未找到房间号", "未找到房主创建的房间号");
+    if (EnterCrossRoom(task, 1 - work[task].host, RoomDigit) == 0)//按房间号进入房主的关卡（找不到则翻页）
+      RecordError(task, 1 - work[task].host, "未找到房间号", "未找到房主创建的房间号");
   }
 }
 //搜索账号account的名字
@@ -6628,7 +8314,7 @@ void SearchInviteeName(int task, int account)
   Click(task, 1 - account, Search);//搜索
   CheckSleep(task, 100);//必要的停顿
   const char *addFriend[] = { "加为好友", "加为好友_亮" };
-  WaitPictures(task, 1 - account, addFriend);
+  WaitPictures(APPEAR, task, 1 - account, addFriend);
 }
 //记录细角色名
 void RecordLightName(int task)
@@ -6657,34 +8343,33 @@ bool IsLightNameEqual(int task, int line)
   return true;
 }
 //等待出现邀请界面并接受，成功接受邀请返回1，没有被邀请返回0
-int WaitInvitationAndAccept(int account)
+int WaitInvitationAndAccept(int task, int account)
 {
-  int task = taskNum;
-  POINT Accept = { 449, 403 };
-  if (TryWaitPicture(task, account, "被邀请界面", 3000) == 1)//如果3秒内出现了被邀请界面
+  POINT accept = { 449, 403 };
+  if (TryWaitPicture(APPEAR, task, account, "被邀请界面", 3000) == 1)//如果3秒内出现了被邀请界面
   {
-    Click(task, account, Accept);//接受邀请
+    Click(task, account, accept);//接受邀请
     return 1;
   }
   return 0;
 }
-//账号1-account邀请account加入room房间，发送成功返回1，否则返回0
-int Invite(int account, int room)
+//账号1-account邀请account加入room房间（room==0则不验证房间号）
+//邀请成功返回1，否则返回0
+int Invite(int task, int account, int room = 0)
 {
   const int pageNum = 6;
   //翻页按钮位置（大厅3页，好友3页）
   const POINT pageButton[pageNum] = {
     { 458, 130 }, { 562, 459 }, { 562, 459 },
     { 527, 130 }, { 562, 459 }, { 562, 459 } };
-  POINT OpenInvite = { 410, 546 };
-  POINT SendInvite = { 600, 156 };
-  POINT Quit = { 587, 491 };
+  POINT openInvitation = { 410, 546 };
+  POINT sendInvitation = { 600, 156 };
+  POINT quitInvitation = { 587, 491 };
 
-  int task = taskNum;
-  int InviteeOrder = -1;//被邀请者序号
-  int InvitationSuccess = 0;//是否邀请成功
+  int inviteeOrder = -1;//被邀请者序号
+  int invitationSuccess = 0;//是否邀请成功
 
-  Click(task, 1 - account, OpenInvite);//房主打开邀请界面
+  Click(task, 1 - account, openInvitation);//房主打开邀请界面
   CheckSleep(task, 500);//必要的停顿
   for (int page = 0; page < pageNum; page++)
   {
@@ -6697,29 +8382,29 @@ int Invite(int account, int room)
       //如果队友细角色名和邀请列表第line行名字匹配，进行记录
       if (IsLightNameEqual(task, line))
       {
-        InviteeOrder = line;
+        inviteeOrder = line;
         break;
       }
-    if (InviteeOrder >= 0) //如果找到了被邀请者的名字
+    if (inviteeOrder >= 0) //如果找到了被邀请者的名字
     {
       DealInvitation(task, account, 0);//如果队友已被邀请，拒绝邀请
-      Click(task, 1 - account, SendInvite.x, SendInvite.y + 30 * InviteeOrder);//房主发送邀请
-      if (WaitInvitationAndAccept(account) == 1)//如果队友成功接受邀请
+      Click(task, 1 - account, sendInvitation.x, sendInvitation.y + 30 * inviteeOrder);//房主发送邀请
+      if (WaitInvitationAndAccept(task, account) == 1)//如果队友成功接受邀请
       {
-        if (WaitIndoor(account) == room)//等待队友进入房间，检验房间号是否正确
-          InvitationSuccess = 1; //正确说明邀请成功
+        if (room == WaitIndoor(task, account))//检验房间号是否正确
+          invitationSuccess = 1; //正确说明邀请成功
         else
-          InvitationSuccess = 0; //否则说明邀请失败
+          invitationSuccess = 0; //否则说明邀请失败
       }
       else
-        InvitationSuccess = 0; //虽然成功点击了邀请按钮，但队友没有收到邀请
+        invitationSuccess = 0; //虽然成功点击了邀请按钮，但队友没有收到邀请
       break;
     }
   }
-  if (InvitationSuccess == 0)
+  if (invitationSuccess == 0)
     RecordError(task, account, "邀请失败", "邀请失败");
-  Click(task, 1 - account, Quit);//房主退出邀请界面
-  return InvitationSuccess;
+  Click(task, 1 - account, quitInvitation);//房主退出邀请界面
+  return invitationSuccess;
 }
 //将细角色名保存到文件
 bool SaveLightName(int task, const char *path)
@@ -6739,8 +8424,8 @@ void SaveRoleName(int task)
   char heavyNamePath[maxPath], lightNamePath[maxPath];
   for (int code = 0; code < 99; code++)
   {
-    sprintf_s(heavyNamePath, "用户参数\\角色名\\%d.bmp", code);
-    if (_access(heavyNamePath, 0) != 0)
+    sprintf_s(heavyNamePath, "用户参数\\角色名\\%d.png", code);
+    if (!FileExist(heavyNamePath)) //如果该粗角色名不存在，进行新增
     {
       ColorToBitmap(work[task].heavyName, heavyNamePath);
       sprintf_s(lightNamePath, "用户参数\\角色名\\%d.txt", code);
@@ -6777,7 +8462,7 @@ int CatchInviteeName(int task, int account)
   CheckSleep(task, 500);//必要的停顿
   PressCtrl(task, account, 'C');//复制
   Click(task, 1 - account, Friend);//房主打开好友界面
-  WaitPicture(task, 1 - account, "好友界面");
+  WaitPicture(APPEAR, task, 1 - account, "好友界面");
   CheckSleep(task, 1000);
   SearchInviteeName(task, account);//搜索队友名字
   RecordLightName(task);//记录队友细角色名
@@ -6788,49 +8473,47 @@ int CatchInviteeName(int task, int account)
   return 1;
 }
 //创建假期房间
-int CreateVacationRoom(int account)
+int CreateVacationRoom(int task, int account)
 {
-  int task = taskNum;
-  const POINT Challenge = { 655, 198 };
-  ClickActivity(account, "假期图标");//点击假期图标
-  WaitPicture(task, account, "假期界面");//等待打开假期界面
+  const POINT startChallenge = { 655, 198 };
+  ClickActivity(task, account, "假期图标");//点击假期图标
+  WaitPicture(APPEAR, task, account, "假期界面");//等待打开假期界面
   SelectiveSleep(task, 500);
-  Click(task, account, Challenge);//进入房间
-  return WaitIndoor(account);
+  Click(task, account, startChallenge);//进入房间
+  return WaitIndoor(task, account);
 }
 //进入假期关卡
 void EnterVacation(int task)
 {
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
-    if (!CatchInviteeName(task, 1 - work[task].hostAccount))//截图保存队友名字
-      RecordError(task, 1 - work[task].hostAccount, "截图昵称失败", "无法截图队友昵称");
+    if (!CatchInviteeName(task, 1 - work[task].host))//截图保存队友名字
+      RecordError(task, 1 - work[task].host, "截图昵称失败", "无法截图队友昵称");
     CheckSleep(task, 500);//必要的停顿
   }
-  int room = CreateVacationRoom(work[task].hostAccount);//房主创建假期房间
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  int room = CreateVacationRoom(task, work[task].host);//房主创建假期房间
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
     SelectiveSleep(task, 500);
-    Invite(1 - work[task].hostAccount, room);//邀请队友加入房间，邀请失败会报错
+    Invite(task, 1 - work[task].host, room);//邀请队友加入房间，邀请失败会报错
   }
 }
 //进入勇士挑战房间列表
-void EnterChallengeRoomList(int account)
+void EnterChallengeRoomList(int task, int account)
 {
-  int task = taskNum;
   if (FindPicture(task, account, "勇士界面"))//如果已经打开勇士界面，则无需操作
     return;
   //打开世界地图，点击勇士挑战。房主：切换BOSS，创建房间；队友：进入房间
-  const POINT Challenge = { 523, 437 };
-  Click(task, account, worldMapX, worldMapY);//打开世界地图
-  WaitPicture(task, account, "世界地图");//等待打开世界地图
-  Click(task, account, Challenge);//打开勇士挑战
-  if (TryWaitPicture(task, account, "勇士界面", 3000) == 0) //如果没等到就再打开一次
+  const POINT challenge = { 523, 437 };
+  Click(task, account, worldMap);//打开世界地图
+  WaitPicture(APPEAR, task, account, "世界地图");//等待打开世界地图
+  Click(task, account, challenge);//打开勇士挑战
+  if (TryWaitPicture(APPEAR, task, account, "勇士界面", 3000) == 0) //如果没等到就再打开一次
   {
-    Click(task, account, worldMapX, worldMapY);//打开世界地图
-    WaitPicture(task, account, "世界地图");//等待打开世界地图
-    Click(task, account, Challenge);//打开勇士挑战
-    WaitPicture(task, account, "勇士界面");//等待进入勇士挑战界面
+    Click(task, account, worldMap);//打开世界地图
+    WaitPicture(APPEAR, task, account, "世界地图");//等待打开世界地图
+    Click(task, account, challenge);//打开勇士挑战
+    WaitPicture(APPEAR, task, account, "勇士界面");//等待进入勇士挑战界面
   }
 }
 //读取当前选择的勇士BOSS编号
@@ -6839,7 +8522,7 @@ int GetChallengeLevel(int task, int account)
   int x, y;
   UpdateMap(task, account);
   for (int level = 0; level < challengeNum; level++)
-    if (FindPictureInMap(taskNum, account, challenge[level], &x, &y) == 1)//如果找到BOSS
+    if (FindPictureInMap(task, challenge[level], &x, &y) == 1)//如果找到BOSS
       return level;
   return -1;
 }
@@ -6873,7 +8556,7 @@ void SwitchToChallengeLevel(int task, int account, int level)
   while (CurrentLevel < level)//当前关卡小于目标关卡，向后切换
   {
     Click(task, account, NextBossX, NextBossY);
-    if (WaitPicture(task, account, challenge[CurrentLevel + 1], &x, &y))
+    if (WaitPicture(APPEAR, task, account, challenge[CurrentLevel + 1], &x, &y))
       CurrentLevel++;
     else
       RecordError(task, account, "BOSS切换失败", "勇士BOSS向后切换失败");
@@ -6881,26 +8564,24 @@ void SwitchToChallengeLevel(int task, int account, int level)
   while (CurrentLevel > level)//当前关卡大于目标关卡，向前切换
   {
     Click(task, account, LastBossX, LastBossY);
-    if (WaitPicture(task, account, challenge[CurrentLevel - 1], &x, &y))
+    if (WaitPicture(APPEAR, task, account, challenge[CurrentLevel - 1], &x, &y))
       CurrentLevel--;
     else
       RecordError(task, account, "BOSS切换失败", "勇士BOSS向前切换失败");
   }
 }
 //进入指定房间号，进入失败返回0
-int EnterChallengeRoom(int task, int account, int RoomDigit)
+int EnterChallengeRoom(int task, int account, int roomDigit)
 {
   int ListX = 755, ListY = 149, ListHeight = 44;
   int num = GetChallengeListNum(task, account);//获取列表数量
-  int IndoorDigit;
   for (int i = 0; i < num; i++)
   {
     Click(task, account, ListX, ListY + i * ListHeight);//点击第i个房间
-    IndoorDigit = WaitIndoor(account, true, 5000);//等待进入房间，进入失败不抛出异常
-    if (IndoorDigit == RoomDigit) //如果房间号匹配则结束
+    if (WaitIndoor(task, account, true) == roomDigit) //如果房间号匹配则结束
       return 1;
-    Click(task, account, retreatX, retreatY);//不匹配则退出房间
-    WaitPicture(task, account, "勇士界面");//等待进入勇士挑战界面
+    Click(task, account, retreat);//不匹配则退出房间
+    WaitPicture(APPEAR, task, account, "勇士界面");//等待进入勇士挑战界面
     SelectiveSleep(task, 1000);
   }
   return 0; //进入失败返回0
@@ -6909,42 +8590,49 @@ int EnterChallengeRoom(int task, int account, int RoomDigit)
 int CreateChallengeRoom(int task, int account, int level)
 {
   int CreateX = 450, CreateY = 533;//创建房间
-  EnterChallengeRoomList(account);//房主进入勇士挑战界面
+  EnterChallengeRoomList(task, account);//房主进入勇士挑战界面
   SwitchToChallengeLevel(task, account, level);//房主切换到指定BOSS
   SelectiveSleep(task, 1000);
   Click(task, account, CreateX, CreateY);//房主创建房间
-  return WaitIndoor(account);//等待房主进入房间，读取房主房间号
+  return WaitIndoor(task, account);//等待房主进入房间，读取房主房间号
 }
 //双号进入勇士挑战房间
 void EnterChallenge(int task, int level)
 {
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
-    if (!CatchInviteeName(task, 1 - work[task].hostAccount))//截图保存队友名字
-      RecordError(task, 1 - work[task].hostAccount, "截图昵称失败", "无法截图队友昵称");
+    if (!CatchInviteeName(task, 1 - work[task].host))//截图保存队友名字
+      RecordError(task, 1 - work[task].host, "截图昵称失败", "无法截图队友昵称");
     CheckSleep(task, 500);//必要的停顿
   }
-  int room = CreateChallengeRoom(task, work[task].hostAccount, level);//房主创建假期房间
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  int room = CreateChallengeRoom(task, work[task].host, level);//房主创建假期房间
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
     SelectiveSleep(task, 500);
-    Invite(1 - work[task].hostAccount, room);//邀请队友加入房间，邀请失败会报错
+    Invite(task, 1 - work[task].host, room);//邀请队友加入房间，邀请失败会报错
   }
 }
-//进入魔塔主界面
-void EnterTower(int task, int account)
+//进入魔塔界面(tag：1单人 2双人 3密室)
+void EnterTower(int task, int account, int rolesNum)
 {
   int TowerX = 319, TowerY = 456;
-  POINT Single = {};//单人
-  POINT Double = {};//单人
-  POINT Secret = {};//密室
+  const POINT tagLocation[3] = { { 43, 67 }, { 114, 67 }, { 189, 67 } };//单人 双人 密室
 
-  Click(task, account, worldMapX, worldMapY);//打开世界地图
-  WaitPicture(task, account, "世界地图");//等待打开世界地图
+  if (rolesNum == 2) //双塔先截图队友昵称，用于邀请
+  {
+    if (!CatchInviteeName(task, 1 - work[task].host))//截图保存队友名字
+      RecordError(task, 1 - work[task].host, "截图昵称失败", "无法截图队友昵称");
+    CheckSleep(task, 500);//必要的停顿
+  }
+
+  Click(task, account, worldMap);//打开世界地图
+  WaitPicture(APPEAR, task, account, "世界地图");//等待打开世界地图
   Click(task, account, TowerX, TowerY);//进入魔塔蛋糕
-  WaitPicture(task, account, "魔塔界面");//等待进入魔塔选层界面
+  WaitPicture(APPEAR, task, account, "魔塔界面");//等待进入魔塔选层界面
   CheckSleep(task, 500);
   WaitColorDisappear(task, account, 273, 557, 0x4f6e87, "魔塔加载超时");//等待层数正常加载
+  CheckSleep(task, 500);
+  Click(task, account, tagLocation[rolesNum - 1]);//选择标签（单人 双人 密室）
   CheckSleep(task, 500);
 }
 bool isMissionInProgress(int task, int missionY)
@@ -6959,55 +8647,105 @@ bool isMissionInProgress(int task, int missionY)
   return true;
 }
 //添加高级任务
-void AddAdvance(int Type, int Level, int MaxGames, int Deck0, int Deck1)
+void AddAdvance(int list, int type, int level, int maxGames, int deck0, int deck1)
 {
-  advance[advanceNum].selected = 1;
-  advance[advanceNum].type = Type;
-  advance[advanceNum].level = Level;
-  advance[advanceNum].maxGames = MaxGames;
-  advance[advanceNum].isProceed = 1;
-  strcpy_s(advance[advanceNum].track[0], "Track.txt");
-  strcpy_s(advance[advanceNum].track[1], "");
-  advance[advanceNum].deck[0] = Deck0;
-  advance[advanceNum].deck[1] = Deck1;
-  advanceNum++;
+  plot[list].advance[plot[list].advanceNum].selected = 1;
+  plot[list].advance[plot[list].advanceNum].type = type;
+  plot[list].advance[plot[list].advanceNum].level = level;
+  plot[list].advance[plot[list].advanceNum].maxGames = maxGames;
+  plot[list].advance[plot[list].advanceNum].isProceed = 1;
+  strcpy_s(plot[list].advance[plot[list].advanceNum].track[0], "Track.txt");
+  strcpy_s(plot[list].advance[plot[list].advanceNum].track[1], "");
+  plot[list].advance[plot[list].advanceNum].deck[0] = deck0;
+  plot[list].advance[plot[list].advanceNum].deck[1] = deck1;
+  plot[list].advanceNum++;
+}
+//一键配轨：为所有任务填写通用轨道
+void MatchCommonTrack(int list)
+{
+  char levelName[100];//关卡名
+  char track[2][maxPath] = {};//房主和队友的轨道路径
+  for (int order = 0; order < plot[list].advanceNum; order++)
+  {
+    AdvanceType &advance = plot[list].advance[order];
+    if (advance.selected == 0) //跳过未勾选的任务
+      continue;
+    for (int account = 0; account < 2; account++)
+    {
+      strcpy_s(advance.track[account], "");//轨道先留空
+      if (advance.deck[account] > 0)
+        advance.deck[account] = 1;//原本有卡组的，卡组设为1
+    }
+    if (IsNoTrack(advance)) //跳过无轨关卡
+      continue;
+    GetLevelName(levelName, advance.type, advance.level);//获取关卡名称 
+    char levelProfix[10] = {};//关卡编号前缀
+    if (advance.type != 2) //非魔塔轨道文件带关卡编号前缀
+      sprintf_s(levelProfix, "%d", advance.level);
+    //获取房主和队友轨道路径
+    sprintf_s(track[0], "预制轨道\\通用轨道\\%d%s\\%s%s.txt",
+      advance.type, typeName[advance.type], levelProfix, levelName);
+    sprintf_s(track[1], "预制轨道\\通用轨道\\%d%s\\%s%s+.txt",
+      advance.type, typeName[advance.type], levelProfix, levelName);
+    if (advance.host == 2)//同步任务：激活两个卡组，轨道都填房主轨道
+    {
+      if (FileExist(track[0]))
+        for (int account = 0; account < 2; account++)
+          strcpy_s(advance.track[account], track[0]);
+    }
+    else //单线程任务：分别填写房主和队友轨道
+    {
+      if (FileExist(track[0]))
+        strcpy_s(advance.track[advance.host], track[0]);
+      if (FileExist(track[1]))
+        strcpy_s(advance.track[1 - advance.host], track[1]);
+    }
+  }
+}
+//带弹窗选择的一键配轨
+void MatchCommonTrackWithChoice(int list)
+{
+  const char *message = "将为勾选的任务填写通用轨道和卡组1，\n是否继续？";
+  if (PopMessageOK(GetTask(list), message) == IDOK)
+    MatchCommonTrack(list);
 }
 //创建默认高级任务
-void CreateInitialAdvance()
+void CreateInitialAdvance(int list)
 {
-  advanceNum = 0;
-  AddAdvance(17, 0, 1, 1, 1);//签到
-  AddAdvance(17, 1, 1, 1, 1);//施肥
-  AddAdvance(0, 0, 1, 1, 1);//悬赏
-  AddAdvance(0, 1, 1, 1, 1);
-  AddAdvance(0, 2, 1, 1, 1);
-  AddAdvance(1, 17, 10, 1, 2);//勇士
-  AddAdvance(2, 151, 10, 2, 2);//魔塔
-  AddAdvance(3, 35, 10, 2, 2);//跨服
-  AddAdvance(4, 0, 130, 3, 3);//假期
-  AddAdvance(5, 0, 1, 1, 1);//公会任务
-  AddAdvance(6, 7, 45, 4, 4);//三岛
-  AddAdvance(6, 15, 45, 4, 4);
-  AddAdvance(7, 5, 45, 4, 4);
-  AddAdvance(13, 7, 45, 5, 5);//沙漠
+  plot[list].advanceNum = 0;
+  AddAdvance(list, 17, 0, 1, 1, 1);//签到
+  AddAdvance(list, 17, 1, 1, 1, 1);//施肥
+  AddAdvance(list, 0, 0, 1, 1, 1);//美味悬赏
+  AddAdvance(list, 0, 1, 1, 1, 1);//火山悬赏
+  AddAdvance(list, 0, 2, 1, 1, 1);//浮空悬赏
+  AddAdvance(list, 1, 17, 10, 1, 1);//勇士
+  AddAdvance(list, 2, 1151, 10, 1, 1);//魔塔
+  AddAdvance(list, 3, 35, 10, 1, 1);//跨服
+  AddAdvance(list, 5, 0, 1, 1, 1);//公会任务
+  AddAdvance(list, 6, 7, 45, 1, 1);//神殿
+  plot[list].advance[6].host = 2;//魔塔房主改为“同步”
+  MatchCommonTrack(list);
+  for (int order = 2; order <= 4; order++)
+    strcpy_s(plot[list].advance[order].track[0], "Track.txt");
 }
+const int ADVANCE = 0, MISSION = 1;//高级任务列表和公会任务列表
 //从path读取任务列表。target：0=Advance，1=MissionAdvance
-int LoadAdvanceFrom(char *path, int target)
+int LoadAdvanceFrom(int list, char *path, int target)
 {
-  AdvanceType(&adv)[maxAdvanceNum] = target == 0 ? advance : missionAdvance;
-  int &num = target == 0 ? advanceNum : missionAdvanceNum;
-  bool &isLocked = target == 0 ? isAdvanceLocked : isMissionAdvanceLocked;
+  AdvanceType *adv = target == ADVANCE ? plot[list].advance : plot[list].missionAdvance;
+  int &num = target == ADVANCE ? plot[list].advanceNum : plot[list].missionAdvanceNum;
+  bool &isLocked = target == ADVANCE ? plot[list].isAdvanceLocked : plot[list].isMissionAdvanceLocked;
 
   char s[1000];//列表一行信息
   FILE *f;
 
   if (fopen_s(&f, path, "r")) //读取失败
   {
-    if (target == 0) //如果是读取当前列表失败，则创建初始列表
-      CreateInitialAdvance();
+    if (target == ADVANCE) //如果是读取当前列表失败，则创建初始列表
+      CreateInitialAdvance(list);
     return 0;
   }
-  memset(adv, 0, sizeof(adv));
+  memset(adv, 0, maxAdvanceNum * sizeof(AdvanceType));
   num = 0;
   isLocked = false;
 
@@ -7026,7 +8764,7 @@ int LoadAdvanceFrom(char *path, int target)
       else
         version = 1;
       fgets(f, s);
-      if (strstr(s, "锁定")) //锁定
+      if (strstr(s, "锁定="))
       {
         isLocked = atoi(s + 5) == 1;
         fgets(f, s);
@@ -7036,14 +8774,16 @@ int LoadAdvanceFrom(char *path, int target)
     {
       int itemsScanned = sscanf_s(s, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d", &adv[num].selected,
         &adv[num].type, &adv[num].level, &adv[num].maxGames,
-        &adv[num].deck[0], &adv[num].deck[1], &adv[num].hostAccount,
+        &adv[num].deck[0], &adv[num].deck[1], &adv[num].host,
         &adv[num].isMission, &adv[num].isProceed);
       if (version == 0 && adv[num].type >= 5) //旧版5以上的类型要加1
         adv[num].type++;
+      if (adv[num].type == 2 && adv[num].level < 1000)//如果是魔塔类型
+        adv[num].level += 1000;
       if (version <= 1 && adv[num].type == 5) //中间版本没有公会任务，关卡+1
         adv[num].level++;
       if (itemsScanned < 7)
-        adv[num].hostAccount = 0;//房主
+        adv[num].host = 0;//房主
       if (itemsScanned < 8)
         adv[num].isMission = 0;//是否公会任务
       if (itemsScanned < 9)
@@ -7057,16 +8797,16 @@ int LoadAdvanceFrom(char *path, int target)
   return 1;
 }
 //从列表文件读取任务列表
-int LoadAdvance()
+int LoadAdvance(int list)
 {
-  return LoadAdvanceFrom(advancePath, 0);
+  return LoadAdvanceFrom(list, plot[list].advancePath, ADVANCE);
 }
 //保存高级任务列表
-void SaveAdvanceTo(char *path, int target)
+void SaveAdvanceTo(int list, char *path, int target)
 {
-  AdvanceType(&adv)[maxAdvanceNum] = target == 0 ? advance : missionAdvance;
-  int &num = target == 0 ? advanceNum : missionAdvanceNum;
-  bool &isLocked = target == 0 ? isAdvanceLocked : isMissionAdvanceLocked;
+  AdvanceType *adv = target == ADVANCE ? plot[list].advance : plot[list].missionAdvance;
+  int &num = target == ADVANCE ? plot[list].advanceNum : plot[list].missionAdvanceNum;
+  bool &isLocked = target == ADVANCE ? plot[list].isAdvanceLocked : plot[list].isMissionAdvanceLocked;
 
   FILE *f;
   if (fopen_s(&f, path, "w"))
@@ -7076,35 +8816,35 @@ void SaveAdvanceTo(char *path, int target)
   for (int order = 0; order < num; order++)
     fprintf(f, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n%s\n%s\n", adv[order].selected, adv[order].type,
       adv[order].level, adv[order].maxGames, adv[order].deck[0], adv[order].deck[1],
-      adv[order].hostAccount, adv[order].isMission, adv[order].isProceed,
+      adv[order].host, adv[order].isMission, adv[order].isProceed,
       adv[order].track[0], adv[order].track[1]);
   fclose(f);
 }
 //任务列表是否改变
-int IsAdvanceChanged()
+int IsAdvanceChanged(int list)
 {
   char path[50];
-  sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", runTimeString, currentBackup);
-  return (int)!IsFileEqual(advancePath, path);//如果当前任务列表与最新备份不同，则视为改变
+  sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", plot[list].backupFolder, plot[list].currentBackup);
+  return (int)!IsFileEqual(plot[list].advancePath, path);//如果当前任务列表与最新备份不同，则视为改变
 }
 //保存高级任务并备份
-void SaveAdvance()
+void SaveAdvance(int list)
 {
-  SaveAdvanceTo(advancePath, 0);
-  if (IsAdvanceChanged())//如果轨道有变，进行备份
+  SaveAdvanceTo(list, plot[list].advancePath, ADVANCE);
+  if (IsAdvanceChanged(list))//如果列表有变，进行备份
   {
     char path[50];
-    currentBackup++;
-    backupNum = currentBackup;
-    sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", runTimeString, currentBackup);
-    SaveAdvanceTo(path, 0);
+    plot[list].currentBackup++;
+    plot[list].backupNum = plot[list].currentBackup;
+    sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", plot[list].backupFolder, plot[list].currentBackup);
+    SaveAdvanceTo(list, path, 0);
   }
 }
 //识别公会任务，将“进行中”的战斗任务编号在missionExist中记为1；发现新公会任务返回true
-bool ReadMission(int account, bool(&missionExist)[maxAdvanceNum])
+bool ReadMission(int task, int account, bool(&missionExist)[maxAdvanceNum])
 {
   bool isNewMissionPrompted = false;
-  int task = taskNum;
+  int list = GetList(task);
   int counter = 0;
   //截取公会任务面板
   while (!UpdateMap(task, account))
@@ -7147,24 +8887,24 @@ bool ReadMission(int account, bool(&missionExist)[maxAdvanceNum])
           {
             char newMissionPath[maxPath] = {};
             char newTrackPath[maxPath] = {};
-            sprintf_s(newMissionPath, "附加程序\\公会任务\\%d.bmp", missionNum + 1);
+            sprintf_s(newMissionPath, "附加程序\\公会任务\\%d.png", missionNum + 1);
             sprintf_s(newTrackPath, "预制轨道\\公会任务\\%d_未命名.txt", missionNum + 1);
             ColorToBitmap(work[task].map, newMissionPath, missionX, missionY, missionWidth, missionHeight);
 
             LoadMission();//更新公会任务截图
-            LoadAdvanceFrom("预制列表\\公会任务.txt", 1);
-            missionAdvance[missionAdvanceNum].selected = 0;
-            missionAdvance[missionAdvanceNum].type = 6;
-            missionAdvance[missionAdvanceNum].level = 2;
-            missionAdvance[missionAdvanceNum].maxGames = 1;
-            missionAdvance[missionAdvanceNum].hostAccount = 1;
-            strcpy_s(missionAdvance[missionAdvanceNum].track[0], newTrackPath);
-            strcpy_s(missionAdvance[missionAdvanceNum].track[1], "");
-            missionAdvance[missionAdvanceNum].deck[0] = 1;
-            missionAdvance[missionAdvanceNum].deck[1] = 1;
-            missionAdvance[missionAdvanceNum].isMission = 0;
-            missionAdvanceNum++;
-            SaveAdvanceTo("预制列表\\公会任务.txt", 1);
+            LoadAdvanceFrom(list, "预制列表\\公会任务.txt", MISSION);
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].selected = 0;
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].type = 6;
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].level = 2;
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].maxGames = 1;
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].host = 0;
+            strcpy_s(plot[list].missionAdvance[plot[list].missionAdvanceNum].track[0], newTrackPath);
+            strcpy_s(plot[list].missionAdvance[plot[list].missionAdvanceNum].track[1], "");
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].deck[0] = 1;
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].deck[1] = 1;
+            plot[list].missionAdvance[plot[list].missionAdvanceNum].isMission = 0;
+            plot[list].missionAdvanceNum++;
+            SaveAdvanceTo(list, "预制列表\\公会任务.txt", MISSION);
           }
         }
       }
@@ -7175,9 +8915,8 @@ bool ReadMission(int account, bool(&missionExist)[maxAdvanceNum])
   return isNewMissionPrompted;
 }
 //【全程识图】进入公会副本房间列表，并切换到竞技一区
-void EnterGuildRoomList(int account, int level)
+void EnterGuildRoomList(int task, int account, int level)
 {
-  int task = taskNum;
   int GuildLevelX = 154, GuildLevelY = 415, GuildLevelWidth = 211;//选择公会关卡
   const POINT Jump = { 870, 560 };//跳转按钮
   const POINT Guild = { 870, 222 };//跳转到公会副本
@@ -7185,31 +8924,33 @@ void EnterGuildRoomList(int account, int level)
   if (FindPicture(task, account, "跳转列表") == 0)
   {
     Click(task, account, Jump);//点击跳转按钮
-    WaitPicture(task, account, "跳转列表");//等待打开跳转列表
+    WaitPicture(APPEAR, task, account, "跳转列表");//等待打开跳转列表
   }
   Click(task, account, Guild);//跳转到公会副本
-  WaitPicture(task, account, "公会副本进入地图");//等待进入公会副本界面，且“进入地图”按钮亮起
+  WaitPicture(APPEAR, task, account, "公会副本进入地图");//等待进入公会副本界面，且“进入地图”按钮亮起
   Click(task, account, GuildLevelX + GuildLevelWidth * (level - 1), GuildLevelY);//选关进入房间列表
-  WaitPicture(task, account, "房间列表");//等待打开房间列表
+  WaitPicture(APPEAR, task, account, "房间列表");//等待打开房间列表
   RandomJump(task, account);
 }
 //【全程识图】进入悬赏房间列表，并切换到竞技一区
-void EnterBoutyRoomList(int account, int level)
+void EnterBoutyRoomList(int task, int account, int level)
 {
-  int task = taskNum;
-  int BountyLevelX = 262, BountyLevelY = 451, BountyLevelWidth = 215;//选择悬赏关卡
-  ClickActivity(account, "悬赏图标");//点击悬赏图标
-  WaitPicture(task, account, "悬赏界面");//等待打开悬赏界面
-  Click(task, account, BountyLevelX + BountyLevelWidth * level, BountyLevelY);//选关进入房间列表
-  WaitPicture(task, account, "房间列表");//等待打开房间列表
+  //悬赏关卡
+  const POINT bountyLevel[4] = { { 230, 430 }, { 405, 400 }, { 577, 400 }, { 750, 430 } };
+  ClickActivity(task, account, "悬赏图标");//点击悬赏图标
+  WaitPicture(APPEAR, task, account, "悬赏界面");//等待打开悬赏界面
+  ClaimBountyReward(task, account, level);//尝试领取悬赏奖励
+  Click(task, account, bountyLevel[level]);//选关进入房间列表
+  WaitPicture(APPEAR, task, account, "房间列表");//等待打开房间列表
   RandomJump(task, account);
 }
 //每日签到
 int DailySign(int task, int account)
 {
-  const POINT closeSign = { 854, 55 };
-  ClickActivity(account, "签到图标");//点击悬赏图标
-  WaitPicture(task, account, "每日签到");//等待打开每日签到界面
+  int list = GetList(task);
+  const POINT closePanel = { 854, 55 };
+  ClickActivity(task, account, "每日签到图标");//点击签到图标
+  WaitPicture(APPEAR, task, account, "每日签到");//等待打开每日签到界面
   WaitColorDisappear(task, account, 215, 370, 0x174684, "签到界面加载失败");
 
   int x = 0, y = 0;
@@ -7219,11 +8960,50 @@ int DailySign(int task, int account)
     Click(task, account, x + 5, y + 5);//点击领取按钮(+5是为了防止点边角无效）
     CheckSleep(task, 500);
     //如果无法领取签到奖励，记录签到失败
-    if (!WaitPictureDisappear(task, account, "签到按钮", nullptr, nullptr, x, y, 3000, false))
-      isAdvanceFailed[playingOrder] = true;
+    if (!WaitPicture(DISAPPEAR, task, account, "签到按钮", nullptr, nullptr, x, y, 3000, false))
+      plot[list].playingAdvance->result = 2;
   }
-  Click(task, account, closeSign);//点击关闭签到面板
+  Click(task, account, closePanel);//点击关闭签到面板
+  WaitPicture(DISAPPEAR, task, account, "每日签到");//等待每日签到面板消失
+  CheckSleep(task, 100);
   return 1;
+}
+//VIP签到
+int VipSign(int task, int account)
+{
+  int list = GetList(task);
+  const POINT closePanel = { 821, 55 };
+  const POINT sign = { 738, 186 };
+  const POINT wage = { 225, 280 };
+  ClickActivity(task, account, "VIP签到图标");//点击签到图标
+  WaitPicture(APPEAR, task, account, "VIP签到");//等待打开VIP签到界面
+  int isSignRequired = TryWaitPicture(APPEAR, task, account, "VIP签到按钮", 3000);//先等VIP签到按钮亮
+  int isWageRequired = TryWaitPicture(APPEAR, task, account, "工资领取按钮", 1000);//再等待工资领取按钮亮
+  //点击VIP签到
+  if (isSignRequired)
+  {
+    Click(task, account, sign);
+    if (!TryWaitPicture(APPEAR, task, account, "VIP签到按钮_灰", 3000))
+      plot[list].playingAdvance->result = 2;
+    CheckSleep(task, 500);
+  }
+  //点击工资领取
+  if (isWageRequired)
+  {
+    Click(task, account, wage);
+    if (!TryWaitPicture(APPEAR, task, account, "工资领取按钮_灰", 3000))
+      plot[list].playingAdvance->result = 2;
+    CheckSleep(task, 500);
+  }
+  Click(task, account, closePanel);//点击关闭签到面板
+  CheckSleep(task, 100);
+  return 1;
+}
+//签到（每日签到和VIP签到）
+void Sign(int task, int account)
+{
+  DailySign(task, account);
+  VipSign(task, account);
 }
 //判定本页的4颗树是否可以选择
 void BasicJudgeTree(int task, int account, char(&avaliable)[4])
@@ -7240,10 +9020,10 @@ void BasicJudgeTree(int task, int account, char(&avaliable)[4])
   //如果有前往，没有"成熟了"，没有"已解散"，说明这是一棵可以选择的公会树（avaliable==1)
   for (int i = 0; i < 4; i++)
   {
-    if (FindPictureInMap(task, account, "已解散", nullptr, nullptr, 0, textHeight[i], dismissColor))
+    if (FindPictureInMap(task, "已解散", nullptr, nullptr, 0, textHeight[i], 0, 0, dismissColor))
       avaliable[i] = -1;
-    else if (FindPictureInMap(task, account, "前往", nullptr, nullptr, 0, height * i)
-      && !FindPictureInMap(task, account, "成熟了", nullptr, nullptr, 0, textHeight[i], matureColor))
+    else if (FindPictureInMap(task, "前往", nullptr, nullptr, 0, height * i)
+      && !FindPictureInMap(task, "成熟了", nullptr, nullptr, 0, textHeight[i], 0, 0, matureColor))
       avaliable[i] = 1;
     else
       avaliable[i] = 0;
@@ -7388,19 +9168,33 @@ int Water(int task, int account, POINT operation, POINT confirm, int times, char
 //浇水施肥
 int WaterAndManure(int task, int account)
 {
+  int list = GetList(task);
   const POINT guild = { 778, 557 };
   const POINT guildActivity = { 747, 412 };
-  const POINT guildGarden = { 801, 308 };
+  const POINT guildGarden = { 839, 331 };
   const POINT closeGarden = { 853, 56 };
   const POINT closeGuild = { 904, 57 };
 
-  //进入公会花园
-  Click(task, account, guild);//打开公会
-  WaitPicture(task, account, "公会");
+  //打开公会
+  Click(task, account, guild);
+  WaitPicture(APPEAR, task, account, "公会");
   CheckSleep(task, 500);
-  Click(task, account, guildActivity);//点击公会活动
-  Click(task, account, guildGarden);//点击公会花园
+
+  //点击公会花园，直到公会界面消失
   int counter = 0;
+  while (true)
+  {
+    Click(task, account, guildActivity);//点击公会活动
+    Click(task, account, guildGarden);//点击公会花园
+    if (TryWaitPicture(DISAPPEAR, task, account, "公会", 1000))
+      break;
+    counter++;
+    if (counter > 5)
+      RecordError(task, account, "无法进入花园", "无法进入公会花园");
+  }
+
+  //等待公会花园加载完成
+  counter = 0;
   char growth[10];
   while (true)
   {
@@ -7412,7 +9206,7 @@ int WaterAndManure(int task, int account)
     {
       growthDigit.GetGrowth(task, growth);
       //第一条件：成长值不为"0/0"且标题为“我的公会花园”
-      if (strcmp(growth, "0/0") != 0 && FindPictureInMap(task, account, "我的公会花园"))
+      if (strcmp(growth, "0/0") != 0 && FindPictureInMap(task, "我的公会花园"))
       {
         //达成第一条件后，继续等待第二条件
         int counter1 = 0;
@@ -7434,12 +9228,6 @@ int WaterAndManure(int task, int account)
       }
     }
   }
-  /*
-  CheckSleep(task, 3000);
-  MapShot(Work[task].hWnd[account], Work[task].newMap);
-  int length = growthDigit.GetFruit(task, growth);
-  RecordError(task, account, "累计成长值", growth, true);
-  */
 
   //开始浇水施肥
   const POINT water = { 782, 357 };//浇水按钮
@@ -7463,36 +9251,204 @@ int WaterAndManure(int task, int account)
   CheckSleep(task, 100);
   Click(task, account, closeGuild);
   CheckSleep(task, 100);
-  EnterMission(account);//进入公会任务面板
-  ClaimMissionAward(account, false);//领奖
+  EnterMission(task, account);//进入公会任务面板
+  ClaimMissionAward(task, account, false);//领奖
   memset(missionExist, 0, sizeof(missionExist));//所有公会任务预设为不存在
-  ReadMission(account, missionExist);//识别公会任务存入数组
+  ReadMission(task, account, missionExist);//识别公会任务存入数组
   //如果施肥任务还未完成，宣告任务失败
   if (missionExist[1])
-    isAdvanceFailed[playingOrder] = true;
+    plot[list].playingAdvance->result = 2;
   Click(task, account, CloseMission);//关闭公会任务
   return 1;
 }
-//执行特殊任务：签到施肥
-int EnterSpecial(int level)
+//判断(x,y)位置的道具是否为可删物品
+bool IsTrash(int task, int x, int y)
 {
-  int task = taskNum;
+  for (int code = 0; code < trashNum; code++)
+    if (IsBitmapEqual(work[task].map, trash[code].image, lootCoreWidth, lootCoreHeight,
+      x + lootCoreX, y + lootCoreY, lootCoreX, lootCoreY))
+      return true;
+  return false;
+}
+//寻找第一个可删物品位置（物品区左上角(x0,y0)，列数columnsNum）
+bool FindTrash(int task, int account, int x0, int y0, int columnsNum,
+  int *pRow, int *pColumn)
+{
+  ForcedUpdateMap(task, account);//强制截图
+  //起始搜索位置：宝石从头开始搜，道具从上次删除的位置开始搜
+  int start = columnsNum == 7 ? 0 : *pRow * columnsNum + *pColumn + 1;
+  for (int order = start; order < 63; order++)
+  {
+    int row = order / columnsNum;
+    int column = order % columnsNum;
+    int x = x0 + column * lootWidth;
+    int y = y0 + row * lootHeight;
+    if (IsTrash(task, x, y))
+    {
+      *pRow = row;
+      *pColumn = column;
+      return true;
+    }
+  }
+  return false;
+}
+//寻找第一个可删道具
+bool FindTrashProp(int task, int account, int *pRow, int *pColumn)
+{
+  return FindTrash(task, account, propX, propY, 9, pRow, pColumn);
+}
+//寻找第一个可删宝石
+bool FindTrashJewel(int task, int account, int *pRow, int *pColumn)
+{
+  return FindTrash(task, account, jewelX, jewelY, 7, pRow, pColumn);
+}
+//解除二级密码（通过礼券购买物品）
+void ReleasePassword(int task, int account)
+{
+  int list = GetList(task);
+
+  const POINT set = { 210, 84 };//打开游戏设置
+  const POINT closeSet = { 609, 140 };//关闭游戏设置
+  //该任务是刷新后执行的，所以现在正在美味镇
+
+  //1. 查看是否存在二级密码：打开设置，检查是否有“修改、删除密码”选项
+  Click(task, account, set);//打开游戏设置
+  WaitPicture(APPEAR, task, account, "游戏设置");
+  int isSecondExist = TryWaitPicture(APPEAR, task, account, "有二级密码", 2000);//是否存在二级密码
+  Click(task, account, closeSet);//关闭游戏设置
+  CheckSleep(task, 500);
+
+  //2. 如果有二级密码，去许愿池解除二级
+  if (isSecondExist) //如果有二级密码，尝试删除第一格物品触发二级验证
+  {
+    const POINT mall = { 550, 555 };//商城
+    const POINT propMall = { 574, 67 };//商城_道具
+    const POINT giftWares = { 892, 515 };//礼券商品
+    const POINT purchase = { 172, 290 };//购买
+    const POINT confirmPurchase = { 426, 346 };//确认购买
+    const POINT confirmPassword = { 438, 387 };//确认二级密码
+    const POINT closeMall = { 919, 27 };//关闭商城
+
+    Click(task, account, mall);//打开商城
+    WaitPicture(APPEAR, task, account, "商城");
+    CheckSleep(task, 500);
+    Click(task, account, propMall);//点击道具
+    WaitPicture(APPEAR, task, account, "商城_道具");
+    CheckSleep(task, 500);
+    Click(task, account, giftWares);//点击礼券商品
+    WaitPicture(APPEAR, task, account, "礼券商品");
+    CheckSleep(task, 500);
+    Click(task, account, purchase);//点击购买
+    WaitPicture(APPEAR, task, account, "系统提示_购买");
+    CheckSleep(task, 500);
+    Click(task, account, confirmPurchase);//确认购买
+    WaitPicture(APPEAR, task, account, "二级密码确认");
+    CheckSleep(task, 500);
+    StringToWindow(plot[list].password[account], work[task].hWnd[account]);//输入二级密码
+    CheckSleep(task, 1000);
+    Click(task, account, confirmPassword);//确认二级密码
+    WaitPicture(DISAPPEAR, task, account, "二级密码确认");//等待二级密码确认消失
+    CheckSleep(task, 500);
+    Click(task, account, closeMall);//关闭商城
+    CheckSleep(task, 500);
+  }
+}
+//删除无用道具
+void DeleteProp(int task, int account)
+{
+  const POINT bag = { 592, 559 };//背包
+  const POINT propBag = { 781, 68 };//道具背包
+  const POINT arrange = { 902, 474 };//整理
+  const POINT delete0 = { 845, 474 };//删除物品
+  const POINT confirmDelete = { 425, 350 };//确认删除物品
+  const POINT closeBag = { 919, 58 };//关闭背包
+
+  //1. 打开背包，选择道具背包
+  Click(task, account, bag);//打开背包
+  WaitPicture(APPEAR, task, account, "装备背包");
+  CheckSleep(task, 500);
+  Click(task, account, propBag);//打开道具背包
+  WaitPicture(APPEAR, task, account, "道具背包");
+  CheckSleep(task, 500);
+  Click(task, account, arrange);//点击整理，默认2秒整理好
+  CheckSleep(task, 2000);
+
+  //2. 等待道具加载完成，30秒加载不好则刷新
+  int counter = 0;
+  while (!(UpdateMap(task, account) && isPropLoaded(task)))
+  {
+    counter++;
+    if (counter > 30)
+      RecordError(task, account, "道具加载失败", "道具加载失败");
+    CheckSleep(task, 1000);
+  }
+
+  //3. 删除物品
+  Click(task, account, delete0);//拿起删除按钮
+  CheckSleep(task, 500);
+  int row = -1, column = 8;//可删物品位置（预设为(0,0)前一个位置）
+  //查找第一个可删物品，直到没有可删物品为止
+  while (FindTrashProp(task, account, &row, &column))
+  {
+    Click(task, account, propX + (2 * column + 1) * propWidth / 2,
+      propY + (2 * row + 1) * propHeight / 2);//点击可删物品
+    WaitPicture(APPEAR, task, account, "删除物品提示");//等待删除提示出现
+    Click(task, account, confirmDelete);//确认删除
+    WaitPicture(DISAPPEAR, task, account, "删除物品提示");//等待删除提示消失
+    CheckSleep(task, 500);//等待500ms
+  }
+  Click(task, account, arrange);//删完再点一次整理
+  CheckSleep(task, 2000);
+  Click(task, account, closeBag);//关闭背包
+  CheckSleep(task, 100);
+}
+//分解宝石
+void DecomposeJewel(int task, int account)
+{
+  const POINT workshop = { 686, 561 };//合成屋
+  const POINT jewelDecomposition = { 458, 435 };//宝石分解
+  const POINT decompose = { 286, 377 };//分解按钮
+  const POINT closeWorkshop = { 910, 42 };//关闭合成屋
+  //执行这一步时，二级密码已经解锁
+  Click(task, account, workshop);//打开合成屋
+  WaitPicture(APPEAR, task, account, "合成屋");
+  Click(task, account, jewelDecomposition);//打开宝石分解
+  WaitPicture(APPEAR, task, account, "宝石分解");
+
+  //宝石：9行7列
+  int row = -1, column = 6;//可分解宝石位置（预设为(0,0)前一个位置）
+  //查找第一个可分解宝石，直到没有可分解宝石为止
+  while (FindTrashJewel(task, account, &row, &column))
+  {
+    Click(task, account, jewelX + (2 * column + 1) * jewelWidth / 2,
+      jewelY + (2 * row + 1) * jewelHeight / 2);//点击可删宝石
+    WaitPicture(DISAPPEAR, task, account, "宝石分解槽");//等待宝石放入分解槽
+    Click(task, account, decompose);//点击分解
+    WaitPicture(APPEAR, task, account, "宝石分解槽");//等待宝石消失
+    CheckSleep(task, 500);//等待500ms
+  }
+  Click(task, account, closeWorkshop);//关闭背包
+  CheckSleep(task, 100);
+}
+//执行特殊任务：签到施肥
+int EnterSpecial(int task, int level)
+{
   if (level == 0)//签到
   {
     for (int account = 0; account < 2; account++)
-      if (project[task].deck[account])
-        DailySign(task, account);
+      if (param[task].deck[account])
+        Sign(task, account);
     FinishTask(task);
   }
   else if (level == 1)//浇水施肥
   {
     for (int account = 0; account < 2; account++)
-      if (project[task].deck[account])
+      if (param[task].deck[account])
       {
-        EnterMission(account);//进入公会任务面板
+        EnterMission(task, account);//进入公会任务面板
         memset(missionExist, 0, sizeof(missionExist));//所有公会任务预设为不存在
-        ReadMission(account, missionExist);//识别公会任务存入数组
-        ClaimMissionAward(account, false);//领取奖励
+        ReadMission(task, account, missionExist);//识别公会任务存入数组
+        ClaimMissionAward(task, account, false);//领取奖励
         Click(task, account, CloseMission);//关闭公会任务界面
         CheckSleep(task, 500);
 
@@ -7503,85 +9459,90 @@ int EnterSpecial(int level)
       }
     FinishTask(task);
   }
+  else if (level == 2)//清理背包
+  {
+    LoadTrash();//更新可删物品
+    for (int account = 0; account < 2; account++)
+      if (param[task].deck[account])
+      {
+        ReleasePassword(task, account);//去许愿池解除二级密码
+        DeleteProp(task, account);//删除道具
+        DecomposeJewel(task, account);//分解宝石
+      }
+    FinishTask(task);
+  }
   return 1;
 }
 //进入公会任务识别或公会副本，进入成功返回1
-int EnterGuild(int level)
+int EnterGuild(int task, int level)
 {
-  int task = taskNum;
-
   if (level == 0) //如果是公会任务识别
   {
     bool isNewMissionFound[2] = {};
     memset(missionExist, 0, sizeof(missionExist));//所有公会任务预设为不存在
     for (int account = 0; account < 2; account++)
-      if (project[task].deck[account])
+      if (param[task].deck[account])
       {
-        EnterMission(account);//进入公会任务面板
-        isNewMissionFound[account] = ReadMission(account, missionExist);//识别公会任务存入数组
-        ClaimMissionAward(account, false);//领取奖励
+        EnterMission(task, account);//进入公会任务面板
+        isNewMissionFound[account] = ReadMission(task, account, missionExist);//识别公会任务存入数组
+        ClaimMissionAward(task, account, false);//领取奖励
         Click(task, account, CloseMission);
       }
-    /*
-    if (isNewMissionFound[0] || isNewMissionFound[1])
-      MessageBox(hWndActuator, "检测到尚未录入的公会任务，\n请将截图[新公会任务.png]发送给作者", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
-      */
     FinishTask(task);//直接宣告任务完成（完成后根据数组替换任务）
   }
 
-  EnterGuildRoomList(work[task].hostAccount, level);//房主进入房间列表
+  EnterGuildRoomList(task, work[task].host, level);//房主进入房间列表
   SelectiveSleep(task, 500);
-  int IndoorDigit = CreatePasswordRoom(work[task].hostAccount);//房主创建密码房并获取房间号
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  int IndoorDigit = CreatePasswordRoom(task, work[task].host);//房主创建密码房并获取房间号
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
-    EnterGuildRoomList(1 - work[task].hostAccount, level);//队友进入房间列表
+    EnterGuildRoomList(task, 1 - work[task].host, level);//队友进入房间列表
     SelectiveSleep(task, 1000);
-    if (EnterRoom(1 - work[task].hostAccount, IndoorDigit) == 0)//队友进入密码房
-      RecordError(task, 1 - work[task].hostAccount, "未找到房间号", "未找到房主创建的房间号");
+    if (EnterRoom(task, 1 - work[task].host, IndoorDigit) == 0)//队友进入密码房
+      RecordError(task, 1 - work[task].host, "未找到房间号", "未找到房主创建的房间号");
   }
   return 1;
 }
 //双号进入悬赏房间，进入成功返回1
 int EnterBounty(int task, int level)
 {
-  EnterBoutyRoomList(work[task].hostAccount, level);//房主进入房间列表
+  EnterBoutyRoomList(task, work[task].host, level);//房主进入房间列表
   SelectiveSleep(task, 500);
-  int IndoorDigit = CreatePasswordRoom(work[task].hostAccount);//房主创建密码房并获取房间号
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  int IndoorDigit = CreatePasswordRoom(task, work[task].host);//房主创建密码房并获取房间号
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
-    EnterBoutyRoomList(1 - work[task].hostAccount, level);//队友进入房间列表
+    EnterBoutyRoomList(task, 1 - work[task].host, level);//队友进入房间列表
     SelectiveSleep(task, 1000);
-    if (EnterRoom(1 - work[task].hostAccount, IndoorDigit) == 0)//队友进入密码房
-      RecordError(task, 1 - work[task].hostAccount, "未找到房间号", "未找到房主创建的房间号");
+    if (EnterRoom(task, 1 - work[task].host, IndoorDigit) == 0)//队友进入密码房
+      RecordError(task, 1 - work[task].host, "未找到房间号", "未找到房主创建的房间号");
   }
   return 1;
 }
 //跳转到指定岛屿
-void EnterIsland(int account, int islandOrder)
+void EnterIsland(int task, int account, int islandOrder)
 {
-  int task = taskNum;
   const POINT Adventure = { 620, 366 };//探险港口
   const POINT SwitchActivity = { 787, 35 };//切换活动
 
   //0=美味，1=火山，2=遗迹，3=浮空，4=海底，5=星际，6=营地，7以上先进营地
-  Click(task, account, worldMapX, worldMapY);//打开世界地图
-  WaitPicture(task, account, "世界地图");//等待打开世界地图
+  Click(task, account, worldMap);//打开世界地图
+  WaitPicture(APPEAR, task, account, "世界地图");//等待打开世界地图
   DealInvitation(task, account, 0);
   Click(task, account, islandLocation[min(islandOrder, 6)]);//点击岛屿
-  WaitPicture(task, account, advanceName[min(islandOrder, 6) + basicTypeNum]);//等待进入岛屿
-  WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+  WaitPicture(APPEAR, task, account, typeName[min(islandOrder, 6) + basicTypeNum]);//等待进入岛屿
+  WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
 
   if (islandOrder >= 7) //7=沙漠 8=雪山 9=雷城 10=奇境
   {
     Click(task, account, Adventure);//点击探险港口
-    WaitPicture(task, account, "探险港口界面");//等待进入探险港口界面
+    WaitPicture(APPEAR, task, account, "探险港口界面");//等待进入探险港口界面
     Click(task, account, islandLocation[islandOrder]);//点击副本
-    WaitPicture(task, account, advanceName[basicTypeNum + islandOrder]);//等待进入副本
-    WaitColorDisappear(task, account, blueBoxX, blueBoxY, boxColor);//等待服务器蓝框消失
+    WaitPicture(APPEAR, task, account, typeName[basicTypeNum + islandOrder]);//等待进入副本
+    WaitColorDisappear(task, account, blueBox.x, blueBox.y, boxColor);//等待服务器蓝框消失
   }
 
   char AboveName[13];
-  sprintf_s(AboveName, "%s上", advanceName[basicTypeNum + islandOrder]);
+  sprintf_s(AboveName, "%s上", typeName[basicTypeNum + islandOrder]);
   int counter = 0;
   while (FindPicture(task, account, AboveName) == 0)//如果没找到岛屿上方界面图像，说明被活动图标遮挡
   {
@@ -7598,30 +9559,28 @@ void EnterIsland(int account, int islandOrder)
   }
 }
 //进入普通关卡房间列表，并切换到竞技一区
-void EnterNormalRoomList(int account, int IslandOrder, int Level)
+void EnterNormalRoomList(int task, int account, int IslandOrder, int Level)
 {
-  int task = taskNum;
-  EnterIsland(account, IslandOrder);//跳转至指定岛屿
+  EnterIsland(task, account, IslandOrder);//跳转至指定岛屿
   SelectiveSleep(task, 500);
   DealInvitation(task, account, 0);
   Click(task, account, islandLevelButton[IslandOrder][Level]);
-  WaitPicture(task, account, "房间列表");//等待打开房间列表
+  WaitPicture(APPEAR, task, account, "房间列表");//等待打开房间列表
   RandomJump(task, account);
 }
 //进入普通关卡
-void EnterNormal(int IslandOrder, int Level)
+void EnterNormal(int task, int IslandOrder, int Level)
 {
-  int task = taskNum;
-  EnterNormalRoomList(work[task].hostAccount, IslandOrder, Level);//房主进入房间列表
+  EnterNormalRoomList(task, work[task].host, IslandOrder, Level);//房主进入房间列表
   SelectiveSleep(task, 500);
-  int IndoorDigit = CreatePasswordRoom(work[task].hostAccount);//房主创建密码房并获取房间号
+  int IndoorDigit = CreatePasswordRoom(task, work[task].host);//房主创建密码房并获取房间号
 
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1)//如果有队友
+  if (work[task].isInvolved[1 - work[task].host] == 1)//如果有队友
   {
-    EnterNormalRoomList(1 - work[task].hostAccount, IslandOrder, Level);//队友进入房间列表
+    EnterNormalRoomList(task, 1 - work[task].host, IslandOrder, Level);//队友进入房间列表
     SelectiveSleep(task, 1000);
-    if (EnterRoom(1 - work[task].hostAccount, IndoorDigit) == 0)//队友进入密码房
-      RecordError(task, 1 - work[task].hostAccount, "未找到房间号", "未找到房主创建的房间号");
+    if (EnterRoom(task, 1 - work[task].host, IndoorDigit) == 0)//队友进入密码房
+      RecordError(task, 1 - work[task].host, "未找到房间号", "未找到房主创建的房间号");
   }
 }
 //点击num张牌的“免费”按钮
@@ -7641,7 +9600,6 @@ void ClickFree(int task, int account, int num)
 //确认关卡完成已经回到选卡界面（只检测显示的号，因此高级任务没问题）
 void ReturnStart(int task)
 {
-  POINT Retreat = { 915, 556 };
   int wave[2] = { 0, 0 };
   int counter = 0;
   bool isAnyAccountQuitted = false; //是否有账号退出房间
@@ -7650,7 +9608,7 @@ void ReturnStart(int task)
   for (int account = 0; account <= 1; account++)
     if (work[task].isInvolved[account] == 1 && work[task].isQuitted[account] == 1)
     {
-      work[task].isQuitted[account] = 0;//账号恢复未退出状态（这样才能进行Click点击）
+      work[task].isQuitted[account] = false;//账号恢复未退出状态（这样才能进行Click点击）
       isAnyAccountQuitted = true;
       GetGameState(task, account, NULL, &wave[account], NULL);
       counter = 0;
@@ -7711,12 +9669,13 @@ void ReturnStart(int task)
     work[task].currentTime++;
   }
 
+  const char *indoor[] = { "选卡界面", "选卡界面2" };
   //如果回到的是waveOutOfLevel（选卡界面、岛屿主界面、勇士界面、跨服界面），且执行过手动退出，则所有在房间内的账号都要退出
   for (int account = 0; account <= 1; account++)
     if (work[task].isInvolved[account] == 1 && IsGameWindowVisible(work[task].hWnd[account]))
       if (wave[account] == waveOutOfLevel && isAnyAccountQuitted)
-        if (FindPicture(task, account, "选卡界面") || FindPicture(task, account, "选卡界面2"))
-          Click(task, account, Retreat);
+        if (FindPictures(task, account, indoor))
+          Click(task, account, retreat);
 
   //如果退出了房间
   if (isAnyAccountQuitted)
@@ -7724,28 +9683,34 @@ void ReturnStart(int task)
     //不是最后一局，则需要重回房间
     if (work[task].games < work[task].maxGames)
     {
-      if (!work[task].isSkillMode)
-        CheckSleep(task, 100);//等100ms，以免太快了
+      //普通任务只有魔塔（含刷技能）能触发退出
+      if (!work[task].isSkillMode) //非刷技能模式等100ms，以免太快了
+        CheckSleep(task, 100);
       SelectiveSleep(task, 400);
-      if (work[task].tower[work[task].hostAccount]) //魔塔啥也不做
+      if (work[task].towerx[work[task].host]) //魔塔（普通任务）：啥也不做
         return;
-      if (advance[playingOrder].type == 0) //悬赏：直接重走进房程序
-        EnterBounty(task, advance[playingOrder].level);
-      else if (advance[playingOrder].type == 1) //勇士：重走进房程序（勇士界面已打开不影响）
-        EnterChallenge(task, advance[playingOrder].level);
+
+      //到这里就只可能是高级任务了
+      int list = GetList(task);
+      if (plot[list].playingAdvance->type == 2) //魔塔（高级任务）：啥也不做
+        return;
+      if (plot[list].playingAdvance->type == 0) //悬赏：直接重走进房程序
+        EnterBounty(task, plot[list].playingAdvance->level);
+      else if (plot[list].playingAdvance->type == 1) //勇士：重走进房程序（勇士界面已打开不影响）
+        EnterChallenge(task, plot[list].playingAdvance->level);
       //魔塔：啥也不需要做
-      else if (advance[playingOrder].type == 3) //跨服：重走进房程序（省去了进跨服界面这一步）
-        EnterCross(advance[playingOrder].level);
-      else if (advance[playingOrder].type == 4) //假期：直接重走进房程序
+      else if (plot[list].playingAdvance->type == 3) //跨服：重走进房程序（省去了进跨服界面这一步）
+        EnterCross(task, plot[list].playingAdvance->level);
+      else if (plot[list].playingAdvance->type == 4) //假期：直接重走进房程序
         EnterVacation(task);
-      else if (advance[playingOrder].type == 5)//公会副本：直接重走进房程序
-        EnterGuild(advance[playingOrder].level);
-      else if (advance[playingOrder].type >= 6)//普通关卡：重走进房程序
-        EnterNormal(advance[playingOrder].type - basicTypeNum, advance[playingOrder].level);
+      else if (plot[list].playingAdvance->type == 5)//公会副本：直接重走进房程序
+        EnterGuild(task, plot[list].playingAdvance->level);
+      else if (plot[list].playingAdvance->type >= 6)//普通关卡：重走进房程序
+        EnterNormal(task, plot[list].playingAdvance->type - basicTypeNum, plot[list].playingAdvance->level);
       CheckSleep(task, 100);//进房后等0.1秒
     }
     else //最后一局无需重回房间，只需记录已退出房间，调整Retreat操作
-      work[task].isQuitUsed = 1;
+      work[task].isQuitUsed = true;
   }
 }
 //退出关卡，退出成功返回1
@@ -7758,87 +9723,128 @@ int QuitLevel(int task, int account)
     return 0;//未发现退出按钮，本次退出失败
   Click(task, account, Quit);
   Click(task, account, ConfirmQuit);
-  work[task].isQuitted[account] = 1;//记录关卡已退出
+  work[task].isQuitted[account] = true;//记录关卡已退出
   return 1;
 }
 //进入关卡
 void EnterLevel(int task)
 {
+  int list = GetList(task);
   for (int account = 0; account < 2; account++)
     if (work[task].isInvolved[account])
       CloseHealthAndPayment(task, account);
 
-  //打勇士/假期前先把两个号换到一个区
-  if (playingAdvance->type == 1 || playingAdvance->type == 4)
+  //打勇士/假期/双塔前先把两个号换到一个区
+  if (plot[list].playingAdvance->type == 1 || plot[list].playingAdvance->type == 4
+    || (plot[list].playingAdvance->type == 2 && plot[list].playingAdvance->level / 1000 == 2))
     for (int account = 0; account < 2; account++)
       if (work[task].isInvolved[account])
         RandomJump(task, account);
 
   CheckSleep(task, 100);
-  if (advance[playingOrder].type == 0)//悬赏
-    EnterBounty(task, advance[playingOrder].level);
-  else if (advance[playingOrder].type == 1)//勇士
-    EnterChallenge(task, advance[playingOrder].level);
-  else if (advance[playingOrder].type == 2)//魔塔
-  {
-    work[task].tower[work[task].hostAccount] = advance[playingOrder].level;
-    if (work[task].quitTime[work[task].hostAccount] == 1)
-      work[task].isSkillMode = true;
-    EnterTower(task, work[task].hostAccount);//进入魔塔界面
-  }
-  else if (advance[playingOrder].type == 3)//跨服
-    EnterCross(advance[playingOrder].level);
-  else if (advance[playingOrder].type == 4)//假期
+  if (plot[list].playingAdvance->type == 0)//悬赏
+    EnterBounty(task, plot[list].playingAdvance->level);
+  else if (plot[list].playingAdvance->type == 1)//勇士
+    EnterChallenge(task, plot[list].playingAdvance->level);
+  else if (plot[list].playingAdvance->type == 2)//魔塔
+    EnterTower(task, work[task].host, plot[list].playingAdvance->level / 1000);//房主进入魔塔界面
+  else if (plot[list].playingAdvance->type == 3)//跨服
+    EnterCross(task, plot[list].playingAdvance->level);
+  else if (plot[list].playingAdvance->type == 4)//假期
     EnterVacation(task);
-  else if (advance[playingOrder].type == 5)//公会副本
-    EnterGuild(advance[playingOrder].level);
-  else if (advance[playingOrder].type == 17)//签到施肥定时
-    EnterSpecial(advance[playingOrder].level);
+  else if (plot[list].playingAdvance->type == 5)//公会副本
+    EnterGuild(task, plot[list].playingAdvance->level);
+  else if (plot[list].playingAdvance->type == 17)//签到施肥清包
+    EnterSpecial(task, plot[list].playingAdvance->level);
   else
-    EnterNormal(advance[playingOrder].type - basicTypeNum, advance[playingOrder].level);
+    EnterNormal(task, plot[list].playingAdvance->type - basicTypeNum, plot[list].playingAdvance->level);
   CheckSleep(task, 100);
 }
-//进入魔塔层数。page：是否翻页
-void EnterTowerLevel(int task)
+//进入魔塔层数
+void EnterTowerFloor(int task, int account, int rolesNum, int floor)
 {
-  int TargetPage = (work[task].tower[work[task].hostAccount] + 14) / 15;//目标层所在页数
-  int TowerThisPage = (work[task].tower[work[task].hostAccount] - 1) % 15 + 1;//本层高度
+  int targetPage = (floor + 14) / 15;//目标层所在页数
+  int towerThisPage = (floor - 1) % 15 + 1;//本层高度
+  const POINT secret[5] = { { 60, 135 }, { 60, 230 }, { 60, 325 }, { 60, 420 }, { 60, 515 } };
 
-  if (work[task].games == 1) //第一局时检查是否处于魔塔选层界面，并翻到指定页数
+  //第一局时检查是否处于魔塔选层界面，并翻到指定页数
+  if (work[task].games == reserve[task].gamesFinished + 1)
   {
-    int InTower = 0;
+    int wave = 0;
     int counter = 0;//识图次数
-    GetGameState(task, work[task].hostAccount, NULL, &InTower, NULL);//第一次检查波数，第18波是魔塔界面
-    while (InTower != waveTower)
+    GetGameState(task, account, NULL, &wave, NULL);//第一次检查波数，第18波是魔塔界面
+    while (wave != waveTower)
     {
       counter++;
       if (counter >= 3) //检查三次还没到就报错
-        RecordError(task, work[task].hostAccount, "未进入选层界面", "请进入魔塔选层界面启动");
+        RecordError(task, account, "未进入选层界面", "请进入魔塔选层界面启动");
       CheckSleep(task, 50);
-      GetGameState(task, work[task].hostAccount, NULL, &InTower, NULL);
+      GetGameState(task, account, NULL, &wave, NULL);
     }
-    TurnToPage(task, work[task].hostAccount, TargetPage);//翻到目标页
+    if ((rolesNum == 1 || rolesNum == 2) && floor > 0) //单塔或双塔
+      TurnToPage(task, account, targetPage);//翻到目标页
   }
-  Click(task, work[task].hostAccount, towerX, towerY - (TowerThisPage - 1) * towerHeight);//已翻到目标页，选择层数
-  if (!work[task].isSkillMode)
-    CheckSleep(task, 100);
-  SelectiveSleep(task, 100);
-  Click(task, work[task].hostAccount, embarkX, embarkY);//开始挑战
+
+  //选择层数
+  if ((rolesNum == 1 || rolesNum == 2) && floor > 0) //单塔或双塔
+    Click(task, account, towerX, towerY - (towerThisPage - 1) * towerHeight);
+  else if (rolesNum == 3)//密室
+    Click(task, account, secret[floor]);
   if (!work[task].isSkillMode)
     CheckSleep(task, 100);
   SelectiveSleep(task, 100);
 
+  //开始挑战
+  Click(task, account, embarkX, embarkY);
+  if (!work[task].isSkillMode)
+    CheckSleep(task, 100);
+  SelectiveSleep(task, 100);
+
+  //等待进入房间
   int counter = 0;
   int wave = 0;
-  while (true)
+  GetGameState(task, account, NULL, &wave, NULL);
+  while (wave != waveOutOfLevel)
   {
-    GetGameState(task, work[task].hostAccount, NULL, &wave, NULL);
-    if (wave == waveOutOfLevel)//已经进入房间，则跳出循环
-      break;
     counter++;
     if (counter >= 20)//如果超过10秒没进入房间，报错退出
-      RecordError(task, work[task].hostAccount, "进入魔塔失败", "进入魔塔失败");
-    CheckSleep(task, 500);//每个循环等0.5秒，但也不继续点“开始”或“准备”
+      RecordError(task, account, "进入魔塔失败", "进入魔塔失败");
+    CheckSleep(task, 500);//每个循环等0.5秒
+    GetGameState(task, account, NULL, &wave, NULL);
+  }
+}
+//进入魔塔关卡
+void EnterTowerLevel(int task)
+{
+  //单塔和密室直接房主进层；双塔在EnterTower前截图队友名字，先队友退房，然后房主进房，然后邀请
+
+  int level = 0; //魔塔关卡
+  if (IsAdvance(task)) //高级任务：从列表获取
+  {
+    int list = GetList(task);
+    level = plot[list].playingAdvance->level;
+  }
+  else //普通任务：轨道中的魔塔层数+1000
+  {
+    int tower = work[task].towerx[work[task].host];
+    level = tower == 0 ? 0 : 1000 + tower;
+  }
+  int rolesNum = level / 1000;//人数
+  int floor = level % 1000;//层数
+
+  if (rolesNum == 2) //双塔模式：队友先退房
+  {
+    const char *indoor[] = { "选卡界面", "选卡界面2" };
+    if (FindPictures(task, 1 - work[task].host, indoor))
+      Click(task, 1 - work[task].host, retreat);
+  }
+
+  EnterTowerFloor(task, work[task].host, rolesNum, floor);//房主进入层数
+
+  if (rolesNum == 2) //双塔模式：邀请队友
+  {
+    SelectiveSleep(task, 500);
+    Invite(task, 1 - work[task].host);//邀请队友加入房间
   }
 }
 //准备程序，超过MaxWaitTime秒未准备则报错
@@ -7882,30 +9888,31 @@ void Ready(int task, int MaxWaitTime, int &Entry)
             }
           }
         if (iColor % 20 == 1) //先点准备再点确认背包满，以免取消准备
-          Click(task, 1 - work[task].hostAccount, startX, startY);//队友准备
+          Click(task, 1 - work[task].host, startX, startY);//队友准备
         if (iColor % 10 == 1)//经验满和背包满
         {
-          if (GetGameState(task, 1 - work[task].hostAccount, NULL, &Wave, &Box)) //如果识别到了图像
+          if (GetGameState(task, 1 - work[task].host, NULL, &Wave, &Box)) //如果识别到了图像
           {
             if (Wave == waveOutOfLevel) //仅在选卡界面确认
             {
               if (Box == 3) //经验满弹窗
               {
                 if (expFullOperation == 0) //如果设置经验满时停止
-                  RecordError(task, 1 - work[task].hostAccount, "经验已达上限", "经验已达上限", true);
+                  RecordError(task, 1 - work[task].host, "经验已达上限", "经验已达上限", END_TASK);
                 else //如果设置经验满时继续
                 {
-                  Click(task, 1 - work[task].hostAccount, expNoMoreTip);//勾选不再提示
-                  Click(task, 1 - work[task].hostAccount, bagConfirmX, bagConfirmY);//确认
+                  Click(task, 1 - work[task].host, expNoMoreTip);//勾选不再提示
+                  Click(task, 1 - work[task].host, bagConfirmX, bagConfirmY);//确认
                 }
               }
               else if (Box == 2) //背包满弹窗
               {
                 if (bagFullOperation == 0) //如果设置背包满时停止
-                  RecordError(task, 1 - work[task].hostAccount, "背包满或未带卡", "背包已满或未带指定卡片", true);
+                  RecordError(task, 1 - work[task].host, "背包满或未带卡",
+                    "检测到背包满或未带卡的弹窗，\n如需跳过，请将“背包满时”设为继续。", END_TASK);
                 else //如果设置背包满时继续
                 {
-                  Click(task, 1 - work[task].hostAccount, bagConfirmX, bagConfirmY);//确认准备
+                  Click(task, 1 - work[task].host, bagConfirmX, bagConfirmY);//确认准备
                   isBagConfirmed = true;//记录已经点击确认
                 }
               }
@@ -7915,22 +9922,22 @@ void Ready(int task, int MaxWaitTime, int &Entry)
           {
             if (expFullOperation == 1) //如果设置经验满时继续
             {
-              Click(task, 1 - work[task].hostAccount, expNoMoreTip);//勾选不再提示
-              Click(task, 1 - work[task].hostAccount, bagConfirmX, bagConfirmY);//确认
+              Click(task, 1 - work[task].host, expNoMoreTip);//勾选不再提示
+              Click(task, 1 - work[task].host, bagConfirmX, bagConfirmY);//确认
             }
             if (bagFullOperation == 1) //如果设置背包满时继续
-              Click(task, 1 - work[task].hostAccount, bagConfirmX, bagConfirmY);//确认准备
+              Click(task, 1 - work[task].host, bagConfirmX, bagConfirmY);//确认准备
           }
         }
       }
       CheckSleep(task, 100);//每0.1秒识图一次
     }
-    if (work[task].games == 1)
+    if (work[task].games == reserve[task].gamesFinished + 1)
       strcat_s(work[task].embarkString, "队友已准备\n");
   }
   else //非识图模式：点完准备等2秒直接进入开始程序
   {
-    Click(task, 1 - work[task].hostAccount, startX, startY);//只点一次准备
+    Click(task, 1 - work[task].host, startX, startY);//只点一次准备
     for (int i = 1; i <= 4; i++)//退出准备程序再等2秒
     {
       CheckSleep(task, 500);//一共等待2000ms
@@ -7939,11 +9946,11 @@ void Ready(int task, int MaxWaitTime, int &Entry)
         break;
       if (expFullOperation == 1) //如果设置经验满时继续
       {
-        Click(task, 1 - work[task].hostAccount, expNoMoreTip);//勾选不再提示
-        Click(task, 1 - work[task].hostAccount, bagConfirmX, bagConfirmY);//确认
+        Click(task, 1 - work[task].host, expNoMoreTip);//勾选不再提示
+        Click(task, 1 - work[task].host, bagConfirmX, bagConfirmY);//确认
       }
       if (bagFullOperation == 1) //如果设置背包满时继续
-        Click(task, 1 - work[task].hostAccount, bagConfirmX, bagConfirmY);//确认准备
+        Click(task, 1 - work[task].host, bagConfirmX, bagConfirmY);//确认准备
     }
   }
 }
@@ -7952,7 +9959,7 @@ void Start(int task, int MaxWaitTime, int &Entry)
 {
   int Wave = 0, Box = 0;
   bool isBagConfirmed = false;//是否已经点了背包满确认，点了就不用操作了
-  Click(task, work[task].hostAccount, startX, startY);//房主开始
+  Click(task, work[task].host, startX, startY);//房主开始
   for (int iColor = 1; iColor <= 300; iColor++)//最多等30秒
   {
     GetGameStateFromAnyAccount(task, &Entry, &Wave, NULL);//读取关卡进入状态，Box=2意味着弹出提示
@@ -7967,34 +9974,35 @@ void Start(int task, int MaxWaitTime, int &Entry)
       //翻牌：有可能点到格子，只能放在点开始前。每3秒1次
       if (iColor % 30 == 0)
       {
-        if (GetGameState(task, work[task].hostAccount, NULL, &Wave, &Box) == 0 || Wave == waveFlip)
+        if (GetGameState(task, work[task].host, NULL, &Wave, &Box) == 0 || Wave == waveFlip)
         {
-          ClickFree(task, work[task].hostAccount, flipNum);
-          Click(task, work[task].hostAccount, finish);
+          ClickFree(task, work[task].host, flipNum);
+          Click(task, work[task].host, finish);
         }
       }
 
-      if (GetGameState(task, work[task].hostAccount, NULL, &Wave, &Box)) //如果识别到了图像
+      if (GetGameState(task, work[task].host, NULL, &Wave, &Box)) //如果识别到了图像
       {
         if (Wave == waveOutOfLevel) //仅在选卡界面确认
         {
           if (Box == 3) //经验满弹窗
           {
             if (expFullOperation == 0) //如果设置经验满时停止
-              RecordError(task, work[task].hostAccount, "经验已达上限", "经验已达上限", true);
+              RecordError(task, work[task].host, "经验已达上限", "经验已达上限", END_TASK);
             else //如果设置经验满时继续
             {
-              Click(task, work[task].hostAccount, expNoMoreTip);//勾选不再提示
-              Click(task, work[task].hostAccount, bagConfirmX, bagConfirmY);//确认
+              Click(task, work[task].host, expNoMoreTip);//勾选不再提示
+              Click(task, work[task].host, bagConfirmX, bagConfirmY);//确认
             }
           }
           else if (Box == 2) //背包满弹窗
           {
             if (bagFullOperation == 0) //如果设置背包满时停止
-              RecordError(task, work[task].hostAccount, "背包满或未带卡", "背包已满或未带指定卡片", true);
+              RecordError(task, work[task].host, "背包满或未带卡",
+                "检测到背包满或未带卡的弹窗，\n如需跳过，请将“背包满时”设为继续。", END_TASK);
             else //如果设置背包满时继续
             {
-              Click(task, work[task].hostAccount, bagConfirmX, bagConfirmY);//确认准备
+              Click(task, work[task].host, bagConfirmX, bagConfirmY);//确认准备
               isBagConfirmed = true;//记录已经点击确认
             }
           }
@@ -8006,33 +10014,46 @@ void Start(int task, int MaxWaitTime, int &Entry)
         {
           if (expFullOperation == 1) //如果设置经验满时继续
           {
-            Click(task, work[task].hostAccount, expNoMoreTip);//勾选不再提示
-            Click(task, work[task].hostAccount, bagConfirmX, bagConfirmY);//确认
+            Click(task, work[task].host, expNoMoreTip);//勾选不再提示
+            Click(task, work[task].host, bagConfirmX, bagConfirmY);//确认
           }
           if (bagFullOperation == 1) //如果设置背包满时继续
-            Click(task, work[task].hostAccount, bagConfirmX, bagConfirmY);//确认准备
+            Click(task, work[task].host, bagConfirmX, bagConfirmY);//确认准备
         }
       }
 
       if (isBagConfirmed == false && iColor % 30 == 0) //如果已经识别到蓝框并点击，就不用再点开始按钮了
-        Click(task, work[task].hostAccount, startX, startY);//房主开始
+        Click(task, work[task].host, startX, startY);//房主开始
     }
     CheckSleep(task, 100);//每0.1秒识图
   }
-  if (work[task].games == 1)
+  if (work[task].games == reserve[task].gamesFinished + 1)
     strcat_s(work[task].embarkString, "房主已开始\n");
 }
 int outSkillNum = 0;
-//写入TracePrint
-void DebugTracePrint(int task)
+//统计截图成功率
+void CountUpdateSuccessRate(int &updateNum, int &successfulUpdateNum, int &iconicNum)
 {
-  char Message[1000] = {}, Trace[1000] = {};//提示消息
-  sprintf_s(Message, "识图%d帧, 成功%d帧", updateNum, successfulUpdateNum);
-  strcat_s(Trace, Message);
+  for (int task = 0; task < maxTaskNum; task++)
+  {
+    updateNum += reserve[task].updateNum;
+    successfulUpdateNum += reserve[task].successfulUpdateNum;
+    iconicNum += reserve[task].iconicNum;
+  }
+}
+//将任务0的调试输出信息写入字符串tracePrint（重绘界面时会显示这个字符串）
+//内容：显示所有任务的截图数和成功次数，debug模式下显示其他信息
+void WriteTracePrint(int task)
+{
+  int updateNum = 0, successfulUpdateNum = 0, iconicNum = 0;
+  CountUpdateSuccessRate(updateNum, successfulUpdateNum, iconicNum);
+  char message[1000] = {}, trace[1000] = {};//提示消息
+  sprintf_s(message, "识图%d帧, 成功%d帧", updateNum, successfulUpdateNum);
+  strcat_s(trace, message);
   if (iconicNum > 0)
   {
-    sprintf_s(Message, ", 最小化%d帧", iconicNum);
-    strcat_s(Trace, Message);
+    sprintf_s(message, ", 最小化%d帧", iconicNum);
+    strcat_s(trace, message);
   }
 #ifdef _DEBUG
   /*
@@ -8057,44 +10078,44 @@ void DebugTracePrint(int task)
   }
   strcat_s(Trace, "）");
   */
-
   for (int account = 0; account <= 1; account++)
   {
-    sprintf_s(Message, "[%dP]火苗%d, 卡槽%d, 冷却",
-      account + 1, Work[task].energy[account], Work[task].realSlotNum[account]);
-    strcat_s(Trace, Message);
-    for (int i = 1; i <= Work[task].realSlotNum[account]; i++)
+    sprintf_s(message, "[%dP]收集%d, 火苗%d, 卡槽%d, 冷却",
+      account + 1, work[task].isCollect[account], work[task].energy[account],
+      work[task].realSlotNum[account]);
+    strcat_s(trace, message);
+    for (int i = 1; i <= work[task].realSlotNum[account]; i++)
     {
-      sprintf_s(Message, "%d", Work[task].isCold[account][i]);
-      strcat_s(Trace, Message);
+      sprintf_s(message, "%d", work[task].isCold[account][i]);
+      strcat_s(trace, message);
     }
-    strcat_s(Trace, " ");
+    strcat_s(trace, " ");
   }
 
-  sprintf_s(Message, " | 读CD次数%d", GetColdNum);
-  strcat_s(Trace, Message);
+  sprintf_s(message, " | 读CD次数%d", getColdNum);
+  strcat_s(trace, message);
   /*
   sprintf_s(message, " | 海星=%d", Work[task].starfishOrder[0]);
   strcat_s(Trace, message);
   */
 #endif
-  strcpy_s(tracePrint, Trace);
+  strcpy_s(tracePrint, trace);
 }
 //准备和开始
 void ReadyAndStart(int task, int &Entry)
 {
   int MaxWaitTime;
-  if (work[task].games == 1)//如果是第一局，只给10秒，方便查错
+  if (work[task].games == reserve[task].gamesFinished + 1)//如果是第一局，只给10秒，方便查错
     MaxWaitTime = 10;
   else //后续都给30秒，以应对翻牌不同步
     MaxWaitTime = 30;
 
   /*准备程序*/
-  if (work[task].isInvolved[1 - work[task].hostAccount] == 1) //如果队友参与，则执行准备程序
+  if (work[task].isInvolved[1 - work[task].host] == 1) //如果队友参与，则执行准备程序
     Ready(task, MaxWaitTime, Entry);
 
   /*开始程序*/
-  if (work[task].isInvolved[work[task].hostAccount] == 1) //如果房主参与，则执行开始程序
+  if (work[task].isInvolved[work[task].host] == 1) //如果房主参与，则执行开始程序
     Start(task, MaxWaitTime, Entry);
 
   /*等待加载完成进入关卡*/
@@ -8107,7 +10128,7 @@ void ReadyAndStart(int task, int &Entry)
     CheckSleep(task, 100);//每0.1秒识图
     GetGameStateFromAnyAccount(task, &Entry, NULL, NULL);//读取关卡进入状态
   }
-  if (work[task].games == 1)
+  if (work[task].games == reserve[task].gamesFinished + 1)
     strcat_s(work[task].embarkString, "已进入关卡\n");
 
   /*检查人物数量*/
@@ -8141,41 +10162,129 @@ void goToSlotEnd(int task, int account, int end, bool isConfirmRequired = false)
     CheckSleep(task, 100);//截完图等100 ms，否则下次截图可能会黑
   }
 }
-//检查所有空卡槽。咖啡粉不算空卡槽
-void CheckEmptySlot(int task, int account, bool(&isSlotEmpty)[maxSlotNum + 1], bool &isAnySlotEmpty)
+//检查所有空卡槽。需要分出咖啡粉前后的卡槽。
+void CheckEmptySlot(int task, int account, bool &isCoffeeExist, bool(&isBeforeCoffee)[maxSlotNum + 1],
+  bool &isAnySlotBeforeCoffee, bool(&isAfterCoffee)[maxSlotNum + 1], bool &isAnySlotAfterCoffee)
 {
   const COLORREF emptySlotColor = 0x1a4263;
   const POINT DeckSlot = { 395, 91 };
   const int DeckSlotWidth = 48;
-  isAnySlotEmpty = false;
+  bool isDay = false;//是否白天关卡
+  isCoffeeExist = false;//咖啡是否需要携带
+  isAnySlotBeforeCoffee = false;
+  isAnySlotAfterCoffee = false;
+  memset(isBeforeCoffee, 0, sizeof(isBeforeCoffee));
+  memset(isAfterCoffee, 0, sizeof(isAfterCoffee));
   for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
   {
     if (order == 1) //翻到1-11槽
     {
       goToSlotEnd(task, account, 0, true);
-      forcedShot(task, account);//获取截图
+      if (FindPictureInMap(task, "白天关卡", nullptr, nullptr, 0, 0, 0, 0, 0xffffff))
+        isDay = true;
     }
     else if (order == 12)//翻到12-21槽
-    {
       goToSlotEnd(task, account, 1, true);
-      forcedShot(task, account);//获取截图
-    }
-    //咖啡粉不算空卡槽，不进行自动带卡
-    if (strcmp(work[task].originalName[account][order], "咖啡粉") == 0)
-      isSlotEmpty[order] = false;
-    else //其他卡根据图像判断是否为空卡槽
+    int orderInPage = order <= 11 ? order - 1 : order - 11;//卡槽order在画面中的位置
+    //如果本卡槽是空卡槽
+    if (work[task].map[DeckSlot.y][DeckSlot.x + orderInPage * DeckSlotWidth] == emptySlotColor)
     {
-      int orderInPage = order <= 11 ? order - 1 : order - 11;
-      isSlotEmpty[order] = work[task].map[DeckSlot.y][DeckSlot.x + orderInPage * DeckSlotWidth] == emptySlotColor;
+      //如果是白天关卡，本卡槽为咖啡粉，记录咖啡粉存在
+      if (isDay && strcmp(work[task].originalName[account][order], "咖啡粉") == 0)
+        isCoffeeExist = true;
+      else if (isCoffeeExist) //对于非咖啡粉，如果咖啡粉已存在，记入咖啡后卡槽
+      {
+        isAfterCoffee[order] = true;
+        isAnySlotAfterCoffee = true;
+      }
+      else //如果咖啡粉尚未存在，记入咖啡前卡槽
+      {
+        isBeforeCoffee[order] = true;
+        isAnySlotBeforeCoffee = true;
+      }
     }
-    if (isSlotEmpty[order])
-      isAnySlotEmpty = true;
   }
   CheckSleep(task, 100);//截完图等待100 ms
+}
+//携带一组自定卡。isSlotRequired：每张卡是否需要携带
+void TakeCustomGroup(int task, int account, bool(&isSlotRequired)[maxSlotNum + 1])
+{
+  char message[100] = {};
+  int bestCode[maxSlotNum + 1] = {};//每个卡槽匹配到的最佳候选卡的编号
+  int bestStar[maxSlotNum + 1] = {};//每个卡槽匹配到的最佳候选卡的星级
+  //第一轮扫描：检查每个空卡槽所能匹配的最高优先级，记录其编号
+  ScanCustom(task, account, isSlotRequired, bestCode, bestStar);
+
+  if (customOption == 1) //如果带卡选择为“位置”，则最优星级设为-1（表示不选择星级）
+    for (int order = 0; order <= maxSlotNum; order++)
+      bestStar[order] = -1;
+
+  //如果某张空卡槽最优编号为-1，宣告order号卡不存在
+  for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
+    if (isSlotRequired[order] && bestCode[order] == -1)
+    {
+      if (strcmp(work[task].originalName[account][order], "咖啡粉") == 0)
+        strcpy_s(message, "未找到[木塞子]（替咖啡粉）");
+      else
+        sprintf_s(message, "未找到[%s]卡片", work[task].originalName[account][order]);
+      RecordError(task, account, "找卡失败1", message);
+    }
+
+  //依次查找并携带每个空卡槽的最高优先级卡片
+  for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
+    if (isSlotRequired[order] && !TakeCustom(task, account, bestCode[order], bestStar[order]))
+    {
+      sprintf_s(message, "未找到[%s]卡片", work[task].originalName[account][order]);
+      RecordError(task, account, "找卡失败2", message);
+    }
+
+}
+//如果卡组全空，带木塞子
+void TakePlugIfEmpty(int task, int account)
+{
+  const COLORREF emptySlotColor = 0x1a4263;
+  const POINT DeckSlot = { 395, 91 };
+  const int DeckSlotWidth = 48;
+  for (int order = 1; order <= 21; order++)
+  {
+    if (order == 1) //翻到1-11槽
+      goToSlotEnd(task, account, 0, true);
+    else if (order == 12)//翻到12-21槽
+      goToSlotEnd(task, account, 1, true);
+    int orderInPage = order <= 11 ? order - 1 : order - 11;//卡槽order在画面中的位置
+    //有一个卡槽非空就无需带卡
+    if (work[task].map[DeckSlot.y][DeckSlot.x + orderInPage * DeckSlotWidth] != emptySlotColor)
+      return;
+  }
+  CheckSleep(task, 100);//截完图等待100 ms
+  //如果全是空的，带木塞子
+  for (int code = 0; code < reserve[task].customNum; code++)
+    if (strcmp(reserve[task].custom[code].name, "木塞子") == 0)
+    {
+      TakeCustom(task, account, code, -1);
+      return;
+    }
 }
 //选择卡组，并根据ban卡列表取消携带某些卡组
 void ChooseDeck(int task)
 {
+  bool isDeckRequired = false;//是否需要携带卡组
+  //第1局需要带卡
+  if (work[task].games == reserve[task].gamesFinished + 1)
+    isDeckRequired = true;
+  else
+  {
+    //魔塔关卡需要带卡
+    if (IsTower(task))
+      isDeckRequired = true;
+    //某账号设置了退出时间需要带卡
+    for (int account = 0; account < 2; account++)
+      if (work[task].isPerformed[account] && work[task].quitTime[account] > 0)
+        isDeckRequired = true;
+  }
+  if (!isDeckRequired)
+    return;
+
   const POINT DeckSlot = { 411, 73 };
   const int DeckSlotWidth = 48;
   for (int account = 0; account <= 1; account++)//选择卡组
@@ -8194,38 +10303,34 @@ void ChooseDeck(int task)
         return;
 
       //如果设置了自定卡，查找并选择自定卡（条件：账号参与放卡且可见）
-      if (work[task].isPerformed[account] == 1 && IsGameWindowVisible(work[task].hWnd[account]))
+      if (IsGameWindowVisible(work[task].hWnd[account]))
       {
-        bool isSlotEmpty[maxSlotNum + 1] = {};//1-21槽是否为空
-        bool isAnySlotEmpty = false;
-        if (!work[task].isSkillMode)
-          CheckEmptySlot(task, account, isSlotEmpty, isAnySlotEmpty);//检查1-21槽是否为空
-
-        //如果有空卡槽，则执行自动带卡
-        if (isAnySlotEmpty)
+        if (work[task].isPerformed[account])//放卡账号：按轨道带卡
         {
-          char message[100] = {};
-          int bestCode[maxSlotNum + 1] = {};//每个卡槽匹配到的最佳候选卡的编号
-          int bestStar[maxSlotNum + 1] = {};//每个卡槽匹配到的最佳候选卡的星级
-          //第一轮扫描：检查每个空卡槽所能匹配的最高优先级，记录其编号
-          ScanCustom(task, account, isSlotEmpty, bestCode, bestStar);
+          //1-21槽是否为咖啡粉前（后）的空卡槽
+          bool isBeforeCoffee[maxSlotNum + 1] = {}, isAfterCoffee[maxSlotNum + 1] = {};
+          //是否存在咖啡粉前（后）的空卡槽
+          bool isAnySlotBeforeCoffee = false, isAnySlotAfterCoffee = false;
+          //是否存在咖啡粉空卡槽
+          bool isCoffeeExist = false;
 
-          //如果某张空卡槽最优编号为-1，宣告order号卡不存在
-          for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
-            if (isSlotEmpty[order] && bestCode[order] == -1)
-            {
-              sprintf_s(message, "未找到[%s]卡片", work[task].originalName[account][order]);
-              RecordError(task, account, "找卡失败1", message);
-            }
+          //非刷技能模式，检查空卡槽，并按照咖啡前、咖啡、咖啡后分类
+          if (!work[task].isSkillMode)
+            CheckEmptySlot(task, account, isCoffeeExist, isBeforeCoffee, isAnySlotBeforeCoffee,
+              isAfterCoffee, isAnySlotAfterCoffee);
 
-          //依次查找并携带每个空卡槽的最高优先级卡片
-          for (int order = 1; order <= work[task].originalSlotNum[account]; order++)
-            if (isSlotEmpty[order] && !TakeCustomCard(task, account, bestCode[order], bestStar[order]))
-            {
-              sprintf_s(message, "未找到[%s]卡片", work[task].originalName[account][order]);
-              RecordError(task, account, "找卡失败2", message);
-            }
+          //如果有咖啡粉前的空卡槽，检查并携带
+          if (isAnySlotBeforeCoffee)
+            TakeCustomGroup(task, account, isBeforeCoffee);
+          //如果有咖啡粉，携带咖啡粉
+          if (isCoffeeExist)
+            TakeCustom(task, account, 1, -1);
+          //如果有咖啡粉后的卡槽，检查并携带
+          if (isAnySlotAfterCoffee)
+            TakeCustomGroup(task, account, isAfterCoffee);
         }
+        else //不放卡账号：如果卡组全空，带木塞子
+          TakePlugIfEmpty(task, account);
       }
 
       int isBanEnabled = 0;//这个账号是否需要ban卡
@@ -8277,7 +10382,7 @@ byte dragonTable[16777216 / 8];
 void LoadDragon()
 {
   FILE *f;
-  fopen_s(&f, "附加程序\\龙图.txt", "rb");
+  fopen_s(&f, "附加程序\\文本\\龙图.txt", "rb");
   for (int i = 0; i < 1 << 21; i++)
     dragonTable[i] = fgetc(f);
   fclose(f);
@@ -8294,7 +10399,7 @@ COLORREF musicInnateGrid[7 * gridHeight][7 * gridWidth];
 //载入音乐节夜的初始地图
 void LoadMusicInnateGrid()
 {
-  BitmapToColor("附加程序\\音乐夜.bmp", musicInnateGrid);
+  BitmapToColor("附加程序\\图片\\内置地图\\音乐夜.png", musicInnateGrid);
 }
 //载入初始地图格子
 void LoadInnateGrid(int task)
@@ -8340,24 +10445,64 @@ void LoadInnateGrid(int task)
             reserve[task].innateGrid[row - 1][column - 1][y][x] = work[task].map[y0 + y][x0 + x];
     }
 }
+COLORREF vipImage[15][vipHeight][vipWidth];//各级vip图片
+//载入VIP图片
+void LoadVip()
+{
+  char folder[maxPath] = "附加程序\\图片\\VIP";
+  if (!FileExist(folder))
+  {
+    PopMessage(nullptr, "没有VIP图片。");
+    exit(0);
+  }
+  char path[maxPath];
+  for (int vip = 0; vip <= 14; vip++)
+  {
+    sprintf_s(path, "%s\\%d.png", folder, vip);
+    BitmapToColor(path, vipImage[vip]);
+  }
+}
+//获取VIP等级
+int GetVip(int task, int account)
+{
+  int location = account == work[task].host ? 0 : 1;//房主在左，队友在右
+  for (int vip = 0; vip <= 14; vip++)
+    if (IsBitmapEqual(work[task].map, vipImage[vip], vipWidth, vipHeight,
+      vipX + location * vipDistance, vipY))
+      return vip;
+  return -1;
+}
 //【任务线程】开始任务task
 DWORD __stdcall StartTask(void *VPtask)
 {
   int task = (int)VPtask;//获取任务序号
   int entry = 0, box = 0;//关卡进入状态（1=关卡内，2=加载中，0=其他）；弹窗（1=继续作战，2=掉线，0=无）
   char message[100] = {};
-  work[task].games = 1;
+  if (reserve[task].gamesFinished == 0) //如果是从第1局开始，则清空战利品数量
+    memset(reserve[task].lootNum, 0, sizeof(reserve[task].lootNum));
   RecordStartTime(task);//记录任务启动时间
   work[task].wave = waveOutOfLevel;//每局开始前，波数为“未进入关卡”
   ReturnState(task, "运行中");//进度games/MaxGames，第waveOutOfLevel波第0秒，平均用时刷新，累计时间刷新
-  if (task == taskNum) //高级任务首次启动需要绑定Project.hWnd窗口（此时会检查窗口是否显示）
+  if (IsAdvance(task)) //高级任务首次启动需要绑定Param.hWnd窗口（此时会检查窗口是否显示）
   {
-    if (isRefreshRequired == 1) //如果高级任务需要刷新（上轮中断时触发）
+    int list = GetList(task);
+    if (plot[list].playingAdvance->type == 17 && plot[list].playingAdvance->level == 2) //清包任务强制刷新
+      plot[list].isRefreshRequired = 1;
+    if (plot[list].isRefreshRequired == 1) //如果高级任务需要刷新（上轮中断时触发）
     {
-      isRefreshRequired = 0;
-      Refresh(task);//刷新游戏并更新Project.hWnd和Work.hWnd
+      reserve[task].arriveRefresh = true;
+      if (plot[list].playingAdvance->host == 2) //如果是同步任务，要等另一个任务一起刷新
+      {
+        int anotherTask = IsDual2P(task) ? task - 1 : task + 1;//另一个任务编号
+        while (reserve[anotherTask].arriveRefresh == false) //等另一个任务也到达
+          CheckSleep(task, 10);
+      }
+      plot[list].isRefreshRequired = 0;//取消“需要刷新”标记
+      Refresh(task);//刷新游戏并更新param.hWnd和work.hWnd
     }
-    AdvanceBindWindow();//首次执行时绑定Project.hWnd。绑定失败将刷新游戏并获取Project.hWnd。保证在可跳转界面。
+    if (plot[list].playingAdvance->type == 17 && plot[list].playingAdvance->level == 2) //清包任务的下一轮也强制刷新
+      plot[list].isRefreshRequired = 1;
+    AdvanceBindWindow(task);//首次执行时绑定param.hWnd。绑定失败将刷新游戏并获取param.hWnd。保证在可跳转界面。
   }
   LoadTrackAndBindWindow(task);//读取轨道、绑定Work.hWnd和DPI修正（此后才能用Click进行点击）、切换到放卡账号
 
@@ -8368,14 +10513,21 @@ DWORD __stdcall StartTask(void *VPtask)
     while (!isPerformedAccountVisible(task))
       CheckSleep(task, 500);
   }
+  //AutoSaveProp(task, 0);
 
-  if (task == taskNum) //高级任务：进入关卡（如果不在竞技岛，会跳转至竞技岛）
-    EnterLevel(task);//（执行公会任务则会进入公会任务面板）
+  //UpdateMap(task, 0);
+  //SaveBanner(task);
+
+  if (IsAdvance(task)) //高级任务：进入关卡（如果不在竞技岛，会跳转至竞技岛）
+    EnterLevel(task);//非轨道关卡会直接在这里结束
 
   /*开始循环刷图*/
   int skillSlotNum = 0;//刷技能模式的卡槽数，只在第一局读取
-  for (work[task].games = 1; work[task].games <= MAXINT; work[task].games++)
+  //从已完成局数+1开始刷
+  for (work[task].games = reserve[task].gamesFinished + 1; work[task].games < MAXINT; work[task].games++)
   {
+    if (IsAdvance(task)) //更新已完成局数
+      plot[GetList(task)].playingAdvance->gamesFinished = work[task].games - 1;
     ResetData(task);//重置读第0波轨道，重置种植次数、索敌卡位置
     ResetWave(task, waveOutOfLevel);//每局开始前，波数为“未进入关卡”
     if (work[task].games > work[task].maxGames)//刷完指定局数，结束任务
@@ -8383,27 +10535,48 @@ DWORD __stdcall StartTask(void *VPtask)
     RecordLevelTime(task, false);//记录每局用时
     ReturnState(task, "运行中");//进度games/MaxGames，第waveOutOfLevel波第0秒，平均用时刷新，累计时间刷新
 
-    if (work[task].tower[work[task].hostAccount] > zero)//魔塔选层
+    if (IsTower(task)) //魔塔选层
       EnterTowerLevel(task);
 
     int wave = -1;
     bool isEnterRequired = true;//是否需要进入关卡
     for (int account = 0; account < 2; account++)
-      if (work[task].isInvolved[account] == 1)
+      if (work[task].isInvolved[account])
         if (GetGameState(task, account, &entry, &wave, &box))//如果成功读取状态
         {
-          const char *room[] = { "选卡界面", "选卡界面2" };
+          const char *indoor[] = { "选卡界面", "选卡界面2" };
           if (entry > 0 || box == 1)//已进入关卡（包括继续作战弹窗时）：跳过选卡、准备、开始阶段
-            isEnterRequired = false;
-          else if (wave == waveOutOfLevel && TryWaitPictures(task, account, room, 1000) == 1)
-            isEnterRequired = true; //在选卡界面：需要走带卡、准备开始程序
+            isEnterRequired = false; //不需要走带卡、准备开始程序
+          //处于选卡界面
+          else if (wave == waveOutOfLevel && TryWaitPictures(APPEAR, task, account, indoor, 1000))
+          {
+            isEnterRequired = true; //需要走带卡、准备开始程序
+            work[task].roamType = GetRoamType(task);//记录漫游类型
+          }
           else //其他情况报错
             RecordError(task, account, "未进入房间", "未进入房间");
           break;
         }
 
+    for (int account = 0; account < 2; account++)
+      if (work[task].isPerformed[account])
+        ReloadWave(task, account, 0);//重新读取第0波轨道
+
     if (isEnterRequired) //正常进入关卡，需要执行选卡、准备、开始、截取初始地图和填写强制棉麦格子
     {
+      if (IsAdvance(task)) //高级任务根据VIP等级设置自动收集
+        for (int account = 0; account < 2; account++)
+          if (work[task].isInvolved[account])
+          {
+            ForcedUpdateMap(task, account);
+            int vip = GetVip(task, account);//获取本账号的VIP等级
+            if (vip >= 7)
+              work[task].isCollect[account] = 0;//V7以上无需自动收集
+            else if (vip >= 4)
+              work[task].isCollect[account] = 1;//V4以上只需收集物品
+            else
+              work[task].isCollect[account] = 2;//否则全部都要收集
+          }
       ChooseDeck(task);//选择卡组
       ReadyAndStart(task, entry);//准备和开始（第2局开始，另一个号可能还没翻牌完）
       work[task].isGridCatched = 0;
@@ -8414,18 +10587,21 @@ DWORD __stdcall StartTask(void *VPtask)
     work[task].totalWaveTick[0] = GetTickCount();//记录进入关卡时刻（第0波时刻）
     for (int account = 0; account <= 1; account++)//两个账号的计时起点均设为进入关卡时刻
       for (int order = 0; order <= maxSlotNum + 1; order++)
+      {
         work[task].slot[account][order].startTick = work[task].totalWaveTick[0];
+        work[task].slot[account][order].avaliableTick = work[task].totalWaveTick[0] - 1000;
+      }
 
     //刷技能模式 brushSkill
     if (work[task].isSkillMode)
     {
       outSkillNum = skillSlotNum;
-      DebugTracePrint(task);
+      WriteTracePrint(task);
       ResetWave(task, 0);
       work[task].currentTime = 0;
       ReturnState(task, "运行中");//每局第一次记录：进度games/MaxGames，第0波第1秒，第1局平均用时0，累计时间已有
 
-      int &host = work[task].hostAccount;
+      int &host = work[task].host;
       if (skillSlotNum == 0)
       {
         UpdateMap(task, host);
@@ -8457,12 +10633,12 @@ DWORD __stdcall StartTask(void *VPtask)
             PlantToGrid(task, host, order, slot.row[1], slot.column[1]);//立即放置
         }
       }
-      //SelectiveSleep(task, 100);
       QuitLevel(task, host);//放完退出
       ReturnStart(task);//回到开始界面
       continue;//本局结束
     }
 
+    int firstPerformedAccount = GetFirstPerformedAccount(task);//第1个放卡账号
     //普通模式等1秒进关放人物
     for (int account = 0; account <= 1; account++)//人物挪到1行1列
       if (work[task].isInvolved[account] == 1)
@@ -8479,7 +10655,7 @@ DWORD __stdcall StartTask(void *VPtask)
         if (UpdateMap(task, account)) //从放卡账号截图
         {
           //记录初始地图格子（用于棉麦补阵）
-          if (account == GetFirstPerformedAccount(task))
+          if (account == firstPerformedAccount)
           {
             if (!work[task].isGridCatched)
               LoadInnateGrid(task);
@@ -8490,10 +10666,24 @@ DWORD __stdcall StartTask(void *VPtask)
           work[task].isBackgroundCatched[account] = 1;
         }
       }
-    CheckSleep(task, 300);
     for (int account = 0; account <= 1; account++)//放置参与的账号的人物
       if (work[task].isInvolved[account] == 1)
         LayRole(task, account);
+
+    //如果是从房间进入关卡，对第1个放卡账号进行加速，加速时间为两号设置的加速时间的最大值
+    if (isEnterRequired)
+    {
+      int accelerationTime = 0;
+      for (int account = 0; account < 2; account++)
+        if (work[task].isPerformed[account])
+          accelerationTime = max(accelerationTime, work[task].accelerationTime[account]);
+      if (accelerationTime)
+      {
+        Accelerate(task, firstPerformedAccount);//开启加速
+        CheckSleep(task, accelerationTime);
+        Accelerate(task, firstPerformedAccount);//关闭加速
+      }
+    }
 
     CheckSleep(task, 1000 - (GetTickCount() - work[task].totalWaveTick[0]));//等足1秒
     work[task].currentTime = 1;
@@ -8508,7 +10698,7 @@ DWORD __stdcall StartTask(void *VPtask)
         bool isImagePicked = false;//是否识图成功
         bool isProceedPopped = false;//是否弹出继续作战
         for (int account = 0; account < 2; account++)
-          if (work[task].isPerformed[account] == 1 && work[task].isQuitted[account] == 0)
+          if (work[task].isPerformed[account] && !work[task].isQuitted[account])
           {
             //读取关卡状态（不修改波次），读取成功则记录识图成功
             if (GetGameState(task, account, &entry, NULL, &box))
@@ -8519,7 +10709,7 @@ DWORD __stdcall StartTask(void *VPtask)
             }
             if (box == 2) //如果检测到掉线蓝框
             {
-              if (account == work[task].hostAccount) //如果是用房主识的图，说明掉线的是房主
+              if (account == work[task].host) //如果是用房主识的图，说明掉线的是房主
                 RecordError(task, account, "房主已掉线", "房主已掉线");
               else
                 RecordError(task, account, "队友已掉线", "队友已掉线");
@@ -8528,38 +10718,69 @@ DWORD __stdcall StartTask(void *VPtask)
         if (isProceedPopped) //如果出现继续作战框，点击继续作战或领取奖励
           for (int account = 0; account <= 1; account++)
           {
-            if (work[task].isProceed[account] == 1)
+            if (work[task].isProceed[account] == 1) //继续作战
               Click(task, account, proceedX, proceedY);
-            else
+            else if (work[task].currentTime >= 92)//领取奖励（需要时间达到1分30秒）
               Click(task, account, claimX, claimY);
           }
         if (!isImagePicked) //如果没有一个号能识别到图像，则进行无图像处理（非识图模式不会处理）
           NoImageProcess(task);
 
-        DebugTracePrint(task);//调试输出卡组冷却状态和出怪行信息
+        WriteTracePrint(task);//调试输出卡组冷却状态和出怪行信息
 
-        if (work[task].wave == waveGrade)//识别到结算界面，停止放卡，等待进入翻牌或开始界面
+        //如果所有参与账号都已检测到结束波次，则执行结束程序
+        if (IsLevelEnded(task))
         {
-          int counter = 0;
-          while (!(work[task].wave == waveFlip || work[task].wave == waveOutOfLevel || work[task].wave == waveTower))
+          //战利品或结算界面：停止放卡，等待进入翻牌或开始界面。
+          if (work[task].wave == waveLoot || work[task].wave == waveGrade)
           {
-            ReturnState(task, "运行中");//进度games/MaxGames，第Wave波第CurrentTime秒，平均用时刷新，累计时间刷新
-            counter++;
-            if (counter > 10)
-              RecordError0(task, "结算超时", "结算超时");
-            CheckSleep(task, 1000);
-            work[task].currentTime++;
-            GetGameStateFromAnyAccount(task, &entry, &work[task].wave, &box);
+            bool isAccelerationRequired = work[task].isAccelerationRequired;
+            for (int account = 0; account < 2; account++)
+              if (work[task].isInvolved[account] && !IsGameWindowVisible(work[task].hWnd[account]))
+                isAccelerationRequired = false; //所有参与账号都可见才加速
+
+            if (isAccelerationRequired) //开启加速
+              for (int account = 0; account < 2; account++)
+                if (work[task].isInvolved[account])
+                  Accelerate(task, account);
+
+            //等待回到翻牌界面或关卡外
+            int counter = 0;
+            const int secondCount = 5;//每秒计数
+            while (!(work[task].wave == waveFlip || work[task].wave == waveOutOfLevel || work[task].wave == waveTower))
+            {
+              ReturnState(task, "运行中");//进度games/MaxGames，第Wave波第CurrentTime秒，平均用时刷新，累计时间刷新
+              counter++;
+              if (counter > 20 * secondCount)//20秒未完成结算算超时
+                RecordError0(task, "结算超时", "结算超时");
+              CheckSleep(task, 1000 / secondCount);
+              if (counter % secondCount == 0)
+                work[task].currentTime++;
+              ReadLevelInfo(task);
+            }
+
+            if (isAccelerationRequired) //关闭加速
+              for (int account = 0; account < 2; account++)
+                if (work[task].isInvolved[account])
+                  Accelerate(task, account);
+          }
+
+          //选卡或魔塔选层界面：进入ReturnStart函数
+          if (work[task].wave == waveOutOfLevel || work[task].wave == waveTower)
+            break;
+
+          //翻牌界面：显示翻牌状态，进入ReturnStart函数
+          if (work[task].wave == waveFlip)
+          {
+            ReturnState(task, "运行中");//进度games/MaxGames，第Wave波第CurrentTime秒，平均用时不变，累计时间刷新
+            break;//进入ReturnStart函数：双号翻牌直到回到选卡界面
           }
         }
-
-        if (work[task].wave == waveOutOfLevel || work[task].wave == waveTower)//识别到选卡或魔塔选层界面，直接结束
-          break;
-
-        if (work[task].wave == waveFlip) //识别到翻牌界面，一直翻牌直到回到选卡或魔塔选层界面
+        else //如果关卡未结束
         {
-          ReturnState(task, "运行中");//进度games/MaxGames，第Wave波第CurrentTime秒，平均用时不变，累计时间刷新
-          break;//进入ReturnStart函数：双号翻牌直到回到选卡界面
+          //如果距离一个账号结束超过30秒则报错
+          if (work[task].oneAccountEndTick && GetTickCount() - work[task].oneAccountEndTick > 30000)
+            RecordError0(task, "两号结束不同步", "两号结束时间相差超过30秒");
         }
       }
       else//如果不是识图模式
@@ -8581,7 +10802,7 @@ DWORD __stdcall StartTask(void *VPtask)
       int ColumnsCollected[2] = { 0, 0 };//收集列数：不收集为0，收集物品为9，收集火苗为11
       for (int account = 0; account < 2; account++)
       {
-        if (work[task].isInvolved[account] == 1 && work[task].isQuitted[account] == 0) //仅参与的账号执行收集
+        if (work[task].isInvolved[account] && !work[task].isQuitted[account]) //仅参与的账号执行收集
         {
           if (work[task].isCollect[account] == 2)
             ColumnsCollected[account] = 11; //收集火苗：每秒执行一次，收集1-11列
@@ -8621,7 +10842,7 @@ DWORD __stdcall StartTask(void *VPtask)
         }
       }
       work[task].currentTime++;//计时器+1
-      if (task == taskNum && advance[playingOrder].type == 3)
+      if (IsAdvance(task) && plot[GetList(task)].playingAdvance->type == 3)
       {
         if (work[task].currentTime >= 360) //计时超过6分钟
         {
@@ -8639,17 +10860,17 @@ DWORD __stdcall StartTask(void *VPtask)
       }
 
       //高级任务设置了退出时间时，执行退出
-      if (task == taskNum)
+      if (IsAdvance(task))
         for (int account = 0; account < 2; account++)
-          if (work[task].isInvolved[account] == 1 && work[task].isQuitted[account] == 0)
+          if (work[task].isInvolved[account] && !work[task].isQuitted[account])
             if (work[task].quitTime[account] > 0 && work[task].currentTime >= work[task].quitTime[account])
               QuitLevel(task, account);
 
-      bool isLevelEnded = true;//关卡是否已结束
-      for (int account = 0; account < 2; account++)//参与的账号有一个未退出，则关卡还未结束
-        if (work[task].isInvolved[account] == 1 && work[task].isQuitted[account] == 0)
-          isLevelEnded = false;
-      if (isLevelEnded) //都退出了，则判定关卡结束，进入ReturnStart过程
+      bool isAllAccountQuitted = true;
+      for (int account = 0; account < 2; account++)
+        if (work[task].isInvolved[account] && !work[task].isQuitted[account])
+          isAllAccountQuitted = false;
+      if (isAllAccountQuitted) //都退出了，则进入ReturnStart过程
         break;
     }
     ReturnStart(task);//显示的号返回选卡界面（这样两个号都显示就会零延迟）
@@ -8657,34 +10878,32 @@ DWORD __stdcall StartTask(void *VPtask)
   return 0;
 }
 //删除高级任务
-void DeleteAdvance(int order)
+void DeleteAdvance(int list, int order)
 {
-  for (int i = order; i < advanceNum; i++)
-    advance[i] = advance[i + 1];
-  memset(&advance[advanceNum], 0, sizeof(advance[advanceNum]));
-  advanceNum--;
+  for (int i = order; i < plot[list].advanceNum; i++)
+    plot[list].advance[i] = plot[list].advance[i + 1];
+  memset(&plot[list].advance[plot[list].advanceNum], 0, sizeof(plot[list].advance[plot[list].advanceNum]));
+  plot[list].advanceNum--;
 }
 //将高级任务order复制到最后
-void CopyAdvance(int order)
+void CopyAdvance(int list, int order)
 {
-  advance[advanceNum++] = advance[order];
+  plot[list].advance[plot[list].advanceNum++] = plot[list].advance[order];
 }
 //把任务参数保存到文件
 void SaveParameter()
 {
   FILE *f;
-  char path[100];
-  int task;
+  fopen_s(&f, "用户参数\\执行器参数.txt", "w");//打开文件
 
-  strcpy_s(path, "用户参数\\执行器参数.txt");
-  fopen_s(&f, path, "w");//打开文件
+  //写入公共参数
   fprintf(f, "缩放比例=%d\n", zoom);
   fprintf(f, "放卡延迟=%d\n", plantDelay);
+  fprintf(f, "带卡选择=%d\n", customOption);
   fprintf(f, "翻牌数量=%d\n", flipNum);
   fprintf(f, "背包满时=%d\n", bagFullOperation);
   fprintf(f, "经验满时=%d\n", expFullOperation);
   fprintf(f, "补阵强度=%d\n", repairLevel);
-  //fprintf(fout, "识图帧数=%d\n", recognitionFrame);
   char timerString[10] = "关";
   if (timerMode == 1)
     sprintf_s(timerString, "%d", timer);
@@ -8693,37 +10912,39 @@ void SaveParameter()
   fprintf(f, "定时启动=%s\n", timerString);
   fprintf(f, "自动刷新=%d\n", maxRefreshTimes);
   fprintf(f, "操作速度=%d\n", operationSpeed);
-  fprintf(f, "美食大赛=%d\n", contestOption);
-  fprintf(f, "列表路径=%s\n", advancePath);
-  fclose(f);
 
-  for (task = 0; task <= taskNum; task++)
+  //写入高级任务参数
+  for (int list = 0; list < listNum; list++)
   {
-    sprintf_s(path, "用户参数\\任务%d参数.txt", task);
-    fopen_s(&f, path, "w");//打开文件
-    fprintf(f, "房主轨道=%s\n", project[task].track[0]);
-    fprintf(f, "队友轨道=%s\n", project[task].track[1]);
-    fprintf(f, "执行局数=%d\n", project[task].maxGames);
-    fprintf(f, "每局用时=%d\n", project[task].gameTime);
-    fprintf(f, "房主继续作战=%d\n", project[task].isProceed[0]);
-    fprintf(f, "队友继续作战=%d\n", project[task].isProceed[1]);
-    fprintf(f, "房主自动收集=%d\n", project[task].isCollect[0]);
-    fprintf(f, "队友自动收集=%d\n", project[task].isCollect[1]);
-    fprintf(f, "房主使用卡组=%d\n", project[task].deck[0]);
-    fprintf(f, "队友使用卡组=%d\n", project[task].deck[1]);
-    fprintf(f, "房主标签=%d,%d\n", project[task].tag[0].x, project[task].tag[0].y);
-    fprintf(f, "队友标签=%d,%d\n", project[task].tag[1].x, project[task].tag[1].y);
-    fprintf(f, "房主大厅句柄=%d\n", (int)project[task].hWndHall[0]);
-    fprintf(f, "队友大厅句柄=%d\n", (int)project[task].hWndHall[1]);
-    fprintf(f, "初始大厅句柄=%d\n", (int)project[task].hMainHall);
-    fprintf(f, "房主游戏区域=%d\n", (int)project[task].hWnd[0]);
-    fprintf(f, "队友游戏区域=%d\n", (int)project[task].hWnd[1]);
-    fclose(f);//读取完毕，关闭文档
+    fprintf(f, "--高级任务%d--\n", list);
+    fprintf(f, "1P服务器=%d\n", plot[list].server[0]);
+    fprintf(f, "1P二级密码=%s\n", plot[list].password[0]);
+    fprintf(f, "2P服务器=%d\n", plot[list].server[1]);
+    fprintf(f, "2P二级密码=%s\n", plot[list].password[1]);
   }
+  //写入普通任务参数
+  for (int task = 0; task < maxTaskNum; task++)
+  {
+    fprintf(f, "--普通任务%d--\n", task);
+    fprintf(f, "任务标题=%s\n", param[task].title);
+    fprintf(f, "房主轨道=%s\n", param[task].track[0]);
+    fprintf(f, "队友轨道=%s\n", param[task].track[1]);
+    fprintf(f, "执行局数=%d\n", param[task].maxGames);
+    fprintf(f, "每局用时=%d\n", param[task].gameTime);
+    fprintf(f, "继续作战=%d,%d\n", param[task].isProceed[0], param[task].isProceed[1]);
+    fprintf(f, "自动收集=%d,%d\n", param[task].isCollect[0], param[task].isCollect[1]);
+    fprintf(f, "使用卡组=%d,%d\n", param[task].deck[0], param[task].deck[1]);
+    fprintf(f, "房主标签=%d,%d\n", param[task].tag[0].x, param[task].tag[0].y);
+    fprintf(f, "队友标签=%d,%d\n", param[task].tag[1].x, param[task].tag[1].y);
+    fprintf(f, "大厅句柄=%d,%d\n", (int)param[task].hWndHall[0], (int)param[task].hWndHall[1]);
+    fprintf(f, "初始大厅=%d\n", (int)param[task].hMainHall);
+  }
+  fclose(f);
 }
+
 const int maxBackupNum = 256;
 char backupList[maxBackupNum][maxPath];
-//清理自动备份
+//清理所有自动备份
 void ClearBackup()
 {
   int directNum = GetFileList("自动备份\\任务列表\\*", backupList, maxBackupNum);
@@ -8731,27 +10952,28 @@ void ClearBackup()
   {
     char direct[maxPath];
     sprintf_s(direct, "自动备份\\任务列表\\%s\\", backupList[order]);
-    ClearDirect(direct, ".txt");
-    RemoveDirectory(direct);
+    DeleteFolder(direct);
   }
 }
+//清理本次执行的自动备份
 void ClearThisBackup()
 {
   char direct[maxPath];
-  sprintf_s(direct, "自动备份\\任务列表\\%s\\", runTimeString);
-  ClearDirect(direct, ".txt");
-  RemoveDirectory(direct);
+  for (int list = 0; list < listNum; list++)
+  {
+    sprintf_s(direct, "自动备份\\任务列表\\%s\\", plot[list].backupFolder);
+    DeleteFolder(direct);
+  }
 }
 const int maxLogNum = 256;
 char logList[maxLogNum][maxPath];
 //清理执行记录
 void ClearLog()
 {
-  const int dayOfMonth[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-  int directNum = GetFileList("执行记录\\*", logList, maxLogNum);
+  int logNum = GetFileList("执行记录\\*", logList, maxLogNum);
 
   time_t currentTime = time(nullptr);//当前时间
-  for (int order = 0; order < directNum; order++)
+  for (int order = 0; order < logNum; order++)
   {
     tm tmRecordTime = {};//本条记录时间结构体
     int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
@@ -8765,12 +10987,11 @@ void ClearLog()
     tmRecordTime.tm_isdst = -1;          // 是否夏令时，设为-1让系统自动判断
     time_t recordTime = mktime(&tmRecordTime);//本条记录时间转化为timt_t
 
-    if (currentTime - recordTime >= time_t(3 * 86400)) //相差3天以上则清理
+    if (currentTime - recordTime >= time_t(3 * 86400)) //相差3天以上则删除
     {
-      char direct[maxPath];
-      sprintf_s(direct, "执行记录\\%s\\", logList[order]);
-      ClearDirect(direct, "");
-      RemoveDirectory(direct);
+      char logFolder[maxPath];
+      sprintf_s(logFolder, "执行记录\\%s\\", logList[order]);
+      DeleteFolder(logFolder);
     }
   }
 }
@@ -8781,174 +11002,240 @@ void ClearBackupAndLog()
   ClearLog();
 }
 //载入某一个备份
-void LoadBackup(int offset)
+void LoadBackup(int list, int offset)
 {
   char path[50];
-  currentBackup = currentBackup + offset;
-  sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", runTimeString, currentBackup);
-  LoadAdvanceFrom(path, 0);
-  SaveAdvanceTo(advancePath, 0);
-  int TotalAdvancePage = advanceNum / advanceNumPerPage + 1;
-  if (advancePage > TotalAdvancePage)
-    advancePage = TotalAdvancePage;
+  plot[list].currentBackup = plot[list].currentBackup + offset;
+  sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", plot[list].backupFolder, plot[list].currentBackup);
+  LoadAdvanceFrom(list, path, 0);
+  SaveAdvanceTo(list, plot[list].advancePath, 0);
+  int TotalAdvancePage = plot[list].advanceNum / advanceNumPerPage + 1;
+  if (plot[list].advancePage > TotalAdvancePage)
+    plot[list].advancePage = TotalAdvancePage;
 }
 //保存至某一个备份
-void SaveBackup(int order)
+void SaveBackup(int list, int order)
 {
   char path[50];
-  sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", runTimeString, order);
-  SaveAdvanceTo(path, 0);
+  sprintf_s(path, "自动备份\\任务列表\\%s\\%d.txt", plot[list].backupFolder, order);
+  SaveAdvanceTo(list, path, ADVANCE);
 }
-int IsUndoAllowed()
+int IsUndoAllowed(int list)
 {
-  return currentBackup > 1;
+  return plot[list].currentBackup > 1;
 }
-int IsRepeatAllowed()
+int IsRepeatAllowed(int list)
 {
-  return currentBackup < backupNum;
+  return plot[list].currentBackup < plot[list].backupNum;
 }
 //撤销操作
-void Undo()
+void Undo(int list)
 {
-  LoadBackup(-1);
+  LoadBackup(list, -1);
 }
 //恢复操作
-void Repeat()
+void Repeat(int list)
 {
-  LoadBackup(1);
+  LoadBackup(list, 1);
 }
-//传递高级任务advance的参数(房主、局数、轨道路径、卡组)到Project[5]
-void GetAdvanceProject(AdvanceType &advance)
+//传递高级任务advance的参数(房主、局数、轨道、卡组、钥匙)到param[task]，每局用时填0
+void GetParamFromAdvance(int task, AdvanceType &advance)
 {
-  for (int account = 0; account < 2; account++)
+  if (advance.host < 2) //单线程任务
   {
-    project[taskNum].isProceed[account] = advance.isProceed;
-    project[taskNum].deck[account] = advance.deck[account];
-    if (advance.deck[account] == 0) //如果卡组为0，代表这个账号不启用
-      strcpy_s(project[taskNum].track[account], "");
-    else
-      strcpy_s(project[taskNum].track[account], advance.track[account]);
+    //同步任务2P无需使用，把maxGames设为0阻止任务启动即可
+    if (task % 2 == 0)
+    {
+      param[task].maxGames = 0;
+      return;
+    }
+    param[task].host = advance.host;
+    for (int account = 0; account < 2; account++)
+    {
+      if (advance.deck[account] == 0) //如果卡组为0，代表这个账号不启用
+        strcpy_s(param[task].track[account], "");
+      else
+        strcpy_s(param[task].track[account], advance.track[account]);
+      param[task].deck[account] = advance.deck[account];
+    }
   }
-  project[taskNum].hostAccount = advance.hostAccount;
-  project[taskNum].maxGames = advance.maxGames;
-  project[taskNum].gameTime = 0;
+  else //同步任务中的一支
+  {
+    param[task].host = IsDual2P(task) ? 1 : 0;//同步任务2P房主为2P，同步任务1P房主为1P
+    if (task % 2 == 1) //同步任务1P：1P填写advance的1P轨道和卡组，2P留空
+    {
+      strcpy_s(param[task].track[0], advance.track[0]);
+      param[task].deck[0] = advance.deck[0];
+      strcpy_s(param[task].track[1], "");
+      param[task].deck[1] = 0;
+    }
+    else //同步任务2P：1P留空，2P填写advance的2P轨道和卡组
+    {
+      strcpy_s(param[task].track[0], "");
+      param[task].deck[0] = 0;
+      strcpy_s(param[task].track[1], advance.track[1]);
+      param[task].deck[1] = advance.deck[1];
+    }
+  }
+  //两类任务共同填写的参数
+  for (int account = 0; account < 2; account++)
+    param[task].isProceed[account] = advance.isProceed;
+  //不需要轨道的任务（公会任务、签到施肥）局数为1
+  param[task].maxGames = IsNoTrack(advance) ? 1 : advance.maxGames;
+  param[task].gameTime = 0;
 }
-//检查高级任务advance是否符合规范，将不规范的地方写入CheckInfo。1P参与返回1，2P参与返回2，都参与返回3
-int CheckAdvanceTrack(AdvanceType &advance, char(&checkInfo)[1000], bool *pIsSkillMode = nullptr)
+//检查某条任务advance是否合格，不合格返回0写入checkInfo。
+//1P参与返回1，2P参与返回2，都参与返回3（返回值用于确定高级任务参与人数）
+int CheckQuest(int list, AdvanceType &advance, char(&checkInfo)[1000], bool *pIsSkillMode = nullptr)
 {
+  int task = GetTask(list);
   if (pIsSkillMode)
     *pIsSkillMode = false;
+  ResetWork(task);//重置work[task]
+  ResetWork(task + 1);//重置work[task + 1]（用于同步任务）
 
-  int task = taskNum;
   char info[2][1000] = {};//检查轨道文件时输出的错误信息
-  int roleNumChecked[2] = {};
+  int loadResult[2] = {};//轨道检查结果
   int trackNum = 0;//有效轨道数量
-  int Involved[2] = {};//两个账号是否参与
-  int Performed[2] = {};//两个账号是否放卡
+  int isInvolved[2] = {};//两个账号是否参与
+  int isPerformed[2] = {};//两个账号是否放卡
 
-  GetAdvanceProject(advance);//将高级任务设置填入Project[5]
-  ResetWork(task);//重置Work[task]
-
-  /*读取并检验轨道*/
+  //两类任务共同机制：检查轨道，出错则提示
   for (int account = 0; account < 2; account++)
-    if (strlen(project[task].track[account]) > 0)//若轨道1存在
+    //若轨道存在且卡组不为0
+    if (strlen(advance.track[account]) > 0 && advance.deck[account] > 0)
     {
-      roleNumChecked[account] = LoadTrack(task, account, info[account], true);//载入并检查轨道1
-      Involved[account] = Performed[account] = 1;//账号1参与+放卡
+      //载入并检查轨道
+      LoadTrack(task, account, advance.track[account], info[account], &loadResult[account], true);
+      isInvolved[account] = isPerformed[account] = 1;//该账号参与且放卡
       trackNum++;
     }
-    else
-      roleNumChecked[account] = -1;
+    else //轨道不存在，检查结果记为-1
+      loadResult[account] = -1;
 
   if (trackNum == 0)//两个轨道都没填
     strcpy_s(checkInfo, "请至少填写一个轨道");
-  else if (roleNumChecked[0] == 0)//如果轨道1无法正常载入，弹窗提示
+  else if (loadResult[0] == 0)//如果轨道1无法正常载入，弹窗提示
     strcpy_s(checkInfo, info[0]);
-  else if (roleNumChecked[1] == 0)//如果轨道2无法正常载入，弹窗提示
+  else if (loadResult[1] == 0)//如果轨道2无法正常载入，弹窗提示
     strcpy_s(checkInfo, info[1]);
-  //如果能成功载入，显然人数已经填进Work[task].RoleNum了
-  else //没有错误才执行任务
+  else //如果轨道无误，则根据是否为同步任务分类讨论
   {
-    for (int account = 0; account < 2; account++)
-      if (project[task].deck[account] == 0) //如果某个账号卡组为0，删除该账号人物
-        work[task].roleLocNum[account] = 0;
+    if (advance.host == 2) //同步任务：双轨双卡组，且不为双人魔塔则通过
+    {
+      bool hasTwoTracks = true; //advance是否为双轨双卡组
+      for (int account = 0; account < 2; account++)
+        if (strlen(advance.track[account]) == 0 || advance.deck[account] == 0)
+          hasTwoTracks = false;
 
-    if (GetRoleNum(task) == 2) //若为双人刷图，则记录一下两个号都参与
-      Involved[0] = Involved[1] = 1;//至此参与账号已填写完毕
-    //房主不参与而队友参与是不允许的
-    if (Involved[advance.hostAccount] == 0 && Involved[1 - advance.hostAccount] == 1)
-    {
-      if (advance.deck[advance.hostAccount] == 0) //如果是把房主卡组设为了×
-        strcpy_s(checkInfo, "房主必须参与任务");
-      else //如果没有设×，而是轨道为单人
-        strcpy_s(checkInfo, "单人轨道只能由房主执行");
-    }
-    else if (Involved[1 - advance.hostAccount] == 1 && advance.type == 2)
-      strcpy_s(checkInfo, "魔塔任务仅限单人。");
-    else //轨道合格
-    {
-      if (Involved[1 - advance.hostAccount] == 1) //如果队友参与
-        return 3;//轨道检查合格，为双人参与
+      if (!hasTwoTracks) //不是双轨双卡组
+        strcpy_s(checkInfo, "同步任务1P和2P都要填写轨道。");
+      else if (advance.type == 2 && advance.level / 1000 == 2) //双塔
+        strcpy_s(checkInfo, "同步任务不能用于双人魔塔。");
+      else if (IsMission(advance)) //公会任务
+        strcpy_s(checkInfo, "同步任务不能用于公会任务。");
+      else if (work[task].isSkillMode && !IsSingleTower(task)) //刷技能轨道不在单塔执行
+        strcpy_s(checkInfo, "刷技能轨道只能用于单塔或密室。");
       else
+        return 3;//检验通过，为双人参与
+    }
+    else //非同步任务
+    {
+      //如果某个账号卡组为0，删除该账号人物（即便另一个账号轨道为双人）
+      for (int account = 0; account < 2; account++)
+        if (advance.deck[account] == 0)
+          work[task].roleLocNum[account] = 0;
+
+      //若为双人刷图，则记录两个号都参与。至此参与账号填写完毕。
+      if (GetRoleNum(task) == 2)
+        isInvolved[0] = isInvolved[1] = 1;
+
+      //房主不参与而队友参与是不允许的
+      if (isInvolved[advance.host] == 0 && isInvolved[1 - advance.host] == 1)
       {
-        if (advance.type == 2 && work[task].quitTime[advance.hostAccount] == 1)
-          if (pIsSkillMode) //刷技能模式
-            *pIsSkillMode = true;
-        return advance.hostAccount + 1;//轨道检查合格，仅房主单人参与
+        if (advance.deck[advance.host] == 0) //如果是把房主卡组设为了×
+          strcpy_s(checkInfo, "房主必须参与任务");
+        else //如果没有设×，而是轨道为单人
+          strcpy_s(checkInfo, "队友使用了单人轨道，房主未参与。");
+      }
+      else if (advance.type == 2 && advance.level / 1000 == 1 && isInvolved[1 - advance.host])
+        strcpy_s(checkInfo, "单塔必须单人参与。");
+      else if (advance.type == 2 && advance.level / 1000 == 2 && !isInvolved[1 - advance.host])
+        strcpy_s(checkInfo, "双塔必须双人参与。");
+      else if (advance.type == 2 && advance.level / 1000 == 3 && isInvolved[1 - advance.host])
+        strcpy_s(checkInfo, "密室必须单人参与。");
+      else if (work[task].isSkillMode && !IsSingleTower(task)) //刷技能轨道不在单塔执行
+        strcpy_s(checkInfo, "刷技能轨道只能用于单塔或密室。");
+      else //轨道合格
+      {
+        if (isInvolved[1 - advance.host] == 1) //如果队友参与
+          return 3;//轨道检查合格，为双人参与
+        else //如果仅房主参与
+        {
+          if (work[task].isSkillMode) //记录刷技能模式
+            if (pIsSkillMode)
+              *pIsSkillMode = true;
+          return advance.host + 1;//轨道检查合格，仅房主单人参与
+        }
       }
     }
   }
   return 0;//轨道检查不合格
 }
-//检查所有高级任务轨道，合格返回-1（有刷技能模式返回-2），不合格返回出错的order并填写错误信息
-int CheckAdvanceTrack(char(&checkInfo)[1000], int(&involved)[2], int &missionOrder, int target = 0)
+//检查当前列表或公会任务列表，合格返回-1（有刷技能模式返回-2），不合格返回出错的order并填写错误信息
+int CheckList0(int list, char(&checkInfo)[1000], int(&involved)[2], int &missionOrder, int target = 0)
 {
   bool isSkillExist = false;
-  AdvanceType(&adv)[maxAdvanceNum] = target == 0 ? advance : missionAdvance;
-  int &num = target == 0 ? advanceNum : missionAdvanceNum;
+  AdvanceType *advance = target == ADVANCE ? plot[list].advance : plot[list].missionAdvance;
+  int &num = target == ADVANCE ? plot[list].advanceNum : plot[list].missionAdvanceNum;
 
   missionOrder = -1;
   involved[0] = involved[1] = 0;
   int checkResult[maxAdvanceNum] = {};
   for (int order = 0; order < num; order++)
-    if (adv[order].selected == 1)//遍历所有勾选的高级任务
+    if (advance[order].selected == 1)//遍历所有勾选的高级任务
     {
-      if (isMission(adv[order])) //公会任务
+      if (IsMission(advance[order])) //如果是公会任务识别
       {
         if (target != 0) //遇到公会列表中含有公会任务
         {
-          strcpy_s(checkInfo, "公会任务列表中不允许嵌套公会任务");
+          strcpy_s(checkInfo, "公会任务列表中不允许嵌套公会任务。");
           return order;
         }
-        if (missionOrder >= 0)
+        if (missionOrder >= 0) //如果公会任务已经出线过
         {
-          strcpy_s(checkInfo, "公会任务只允许出现一次");
+          strcpy_s(checkInfo, "公会任务只允许出现一次。");
           return order;
         }
-        if (adv[order].deck[adv[order].hostAccount] == 0) //如果把房主卡组设为了×
+        if (advance[order].host == 2) //如果房主设置为“同步”
         {
-          strcpy_s(checkInfo, "房主必须参与任务");
+          strcpy_s(checkInfo, "同步任务不能用于公会任务。");
+          return order;
+        }
+        if (advance[order].deck[advance[order].host] == 0) //如果把房主卡组设为了×
+        {
+          strcpy_s(checkInfo, "房主必须参与任务。");
           return order;
         }
         for (int account = 0; account < 2; account++) //填写卡组的号参与
-          if (adv[order].deck[account])
+          if (advance[order].deck[account])
             involved[account] = 1;
 
         missionOrder = order;
         continue;
       }
-      else if (isSignOrManure(adv[order]))//签到施肥
+      else if (IsSpecial(advance[order]))//签到施肥
       {
         for (int account = 0; account < 2; account++) //填写卡组的号参与
-          if (adv[order].deck[account])
+          if (advance[order].deck[account])
             involved[account] = 1;
         continue;
       }
-      playingOrder = order;//更新PlayingOrder，检查承载方案时需要使用
-      playingAdvance = &adv[order];//更新PlayingAdvance
+      plot[list].playingOrder = order;//更新plot[list].playingOrder，检查承载方案时需要使用
+      plot[list].playingAdvance = &advance[order];//更新PlayingAdvance
 
       bool isSkillMode = false;
-      checkResult[order] = CheckAdvanceTrack(adv[order], checkInfo, &isSkillMode);//检查任务
+      checkResult[order] = CheckQuest(list, advance[order], checkInfo, &isSkillMode);//检查任务
       if (checkResult[order] == 0)//不合格则返回出错的order
         return order;
       if (checkResult[order] == 1 || checkResult[order] == 3)
@@ -8962,218 +11249,340 @@ int CheckAdvanceTrack(char(&checkInfo)[1000], int(&involved)[2], int &missionOrd
     return -2;
   return -1;
 }
-//执行高级任务order，等到StartTask线程结束才会返回
-int StartSingleAdvance(int order)
+//任务是否完成（未开始算作完成）
+bool IsTaskFinished(int task)
 {
-  playingOrder = order; //记录正在执行的任务编号
-  playingAdvance = &advance[order];//更新PlayingAdvance
-  GetAdvanceProject(advance[order]);//将高级任务参数（局数、房主、轨道路径、卡组）填写到Project[5]
-  if (isNoTrack(advance[order])) //不需要轨道的任务（公会任务、签到施肥定时）
-    project[taskNum].maxGames = 1;//局数为1
-  char levelString[13];
-  char message[100] = {};//输出信息
-  int gamesFinished = 0;//已完成局数
+  if (isTaskStarted_Confirm[task] == 1) //任务正在运行，返回false
+    return false;
+  return strcmp(state[task].tip, "未开始") == 0 || strcmp(state[task].tip, "已完成") == 0;
+}
+//任务是否中断
+bool IsTaskBroken(int task)
+{
+  if (isTaskStarted_Confirm[task] == 1) //任务正在运行，返回false
+    return false;
+  return !IsTaskFinished(task);//任务不在运行，不是完成就是中断
+}
+//执行列表list的任务order，等到StartTask线程结束才会返回
+int StartQuest(int list, int order)
+{
+  int task = GetTask(list);
+  plot[list].playingOrder = order; //记录正在执行的任务编号
+  plot[list].playingAdvance = &plot[list].advance[order];//更新PlayingAdvance
 
-  while (1)//循环执行任务，如果意外中断则继续循环，正常中断/完成则跳出循环
+  //将高级任务参数（局数、房主、轨道、卡组）填写到param[task]
+  for (int iTask = task; iTask <= task + 1; iTask++)
   {
-    if (CheckStartTask(taskNum) == 0)//检查任务5参数，若能启动则传递参数到Work数组
-      return 0;//不能则退出
-    work[taskNum].maxGames -= gamesFinished;//扣除已完成的局数
-    if (work[taskNum].maxGames == 0) //剩余局数为0则结束
+    GetParamFromAdvance(iTask, plot[list].advance[order]);//获取param[task]
+    reserve[iTask].gamesFinished = 0;//已完成局数设为0
+    ResetState(iTask);//任务状态重置为“未开始”
+  }
+
+  char levelString[100] = {};//关卡名
+  char message[100] = {};//输出信息
+  int refreshLevel = 0;//刷新等级
+  char errorString[100] = {};//刷新原因
+
+  while (true)//循环执行任务，如果意外中断则继续循环，正常中断/完成则跳出循环
+  {
+    //检查param，若能启动则传递参数到work，不能则报错退出（实际上不会触发）
+    for (int iTask = task; iTask <= task + 1; iTask++)
+      if (CheckTask(iTask, plot[list].advance[order].host == 2) == 0)
+        StopAdvance(list, "任务检查不通过。");
+
+    //两个任务均已刷满则结束
+    if (work[task].games > work[task].maxGames && work[task + 1].games > work[task + 1].maxGames)
       return 1;
+    //否则视为任务正在进行
 
     //新增输出信息：进行中
-    if (isMission(advance[order]))
-      strcpy_s(message, "公会任务识别 进行中...");//填写输出信息：进行中
+    if (IsMission(plot[list].advance[order]))
+      strcpy_s(message, "公会任务识别 进行中...");
     else
     {
-      GetLevelName(levelString, advance[order].type, advance[order].level);
-      sprintf_s(message, "[%d] %s(%s) 进行中...", order + 1, advanceName[advance[order].type],
-        levelString);//填写输出信息：进行中
+      GetLevelName(levelString, plot[list].advance[order].type, plot[list].advance[order].level);
+      sprintf_s(message, "[%d] %s(%s) 进行中...", order + 1, typeName[plot[list].advance[order].type],
+        levelString);
     }
-    OutputMessage(message);
+    AddOutput(list, message);
 
-    isTaskStarted[taskNum] = 1;//记录任务开始
-    isTaskStarted_Confirm[taskNum] = 1;
-    CreateThread(NULL, 0, StartTask, (void *)taskNum, 0, NULL);//启动任务线程
-    while (isTaskStarted_Confirm[taskNum] == 1)//等待任务5彻底结束（状态可能是中断、停止、完成）
+    //为未刷满的任务创建任务线程
+    for (int iTask = task; iTask <= task + 1; iTask++)
+      if (work[iTask].games <= work[iTask].maxGames)
+      {
+        reserve[iTask].arriveRefresh = false;//任务还未到达刷新判定处
+        reserve[iTask].arriveFinish = false;//任务还未到达FinishTask
+        isTaskStarted[iTask] = 1;//记录任务开始
+        isTaskStarted_Confirm[iTask] = 1;
+        CreateThread(NULL, 0, StartTask, (void *)iTask, 0, NULL);//启动任务线程
+      }
+      else //不运行的任务arrive设为true，另一个任务不用等待
+      {
+        reserve[iTask].arriveRefresh = true;
+        reserve[iTask].arriveFinish = true;
+      }
+
+    //有任务运行时，继续等待（若其中一个任务中断则刹停）
+    while (isTaskStarted_Confirm[task] == 1 || isTaskStarted_Confirm[task + 1] == 1)
+    {
+      int brokenTask = -1;//中断的任务编号（-1表示无中断）
+      for (int iTask = task; iTask <= task + 1; iTask++) //记录中断的任务
+        if (IsTaskBroken(iTask))
+          brokenTask = iTask;
+      if (brokenTask >= 0) //若一个任务中断，刹停另一个任务
+      {
+        int runningTask = brokenTask == task ? task + 1 : task;//另一个正在运行的任务
+        isTaskStarted[runningTask] = 0; //刹停任务
+        while (isTaskStarted_Confirm[runningTask] == 1)//等待任务结束
+          Sleep(50);
+        break;//结束等待
+      }
       Sleep(50);
-    Sleep(50);//延时一会儿
+    }
+    Sleep(50);//退出while后再等50ms
 
-    //手动刹停/正常完成关卡/强制刷新：高级任务终止
-    if (isAdvanceStarted == 0 || strcmp(state[taskNum].tip, "已完成") == 0 || isRefreshAvailable == 0)
-      break;
+    //两个任务是否均已完成
+    bool isQuestFinished = IsTaskFinished(task) && IsTaskFinished(task + 1);
 
-    //否则在下一次StartTask开头刷新
-    isRefreshRequired = 1;
-    //games最少为1，不然会导致判定为刷了-1局
-    if (work[taskNum].games == 0)
-      work[taskNum].games = 1;
-    //修改输出信息：仅完成（任务中断刷新时触发）
-    if (isMission(advance[order]))
-      strcpy_s(output[outputNum - 1], "公会任务识别 未完成");
+    //从刷新等级最高的任务记录刷新等级和刷新原因
+    if (state[task].refreshLevel >= state[task + 1].refreshLevel)
+    {
+      refreshLevel = state[task].refreshLevel;
+      strcpy_s(errorString, state[task].errorString);
+    }
     else
-      sprintf_s(output[outputNum - 1], "[%d] %s(%s) 仅完成 %d/%d", order + 1, advanceName[advance[order].type],
-        levelString, work[taskNum].games - 1, work[taskNum].maxGames); //修改输出信息：仅完成
-    //新增一条刷新信息
-    TruncateString(message, state[taskNum].errorString, titleWidth + parameterWidth - 24);
-    OutputMessage(message);
-    GetLogFinished();//记录已完成的任务日志
+    {
+      refreshLevel = state[task + 1].refreshLevel;
+      strcpy_s(errorString, state[task + 1].errorString);
+    }
 
-    if (timesRefreshed[playingOrder] >= maxRefreshTimes) //非大赛模式刷新次数已满：刷新后做下一条任务
+    //手动刹停/任务完成/END等级中断：结束本条任务且不需要刷新
+    if (plot[list].isAdvanceStarted == 0 || isQuestFinished || refreshLevel == END_TASK)
+      break;
+    //否则属于RETRY或SKIP等级中断，在下一次StartTask开头刷新
+    plot[list].isRefreshRequired = 1;
+    //修改输出信息：仅完成
+    if (IsMission(plot[list].advance[order]))
+      strcpy_s(plot[list].output[plot[list].outputNum - 1], "公会任务识别 未完成");
+    else
+      sprintf_s(plot[list].output[plot[list].outputNum - 1], "[%d] %s(%s) 仅完成 %d/%d", order + 1,
+        typeName[plot[list].advance[order].type], levelString, work[task].games - 1, work[task].maxGames);
+    //新增输出信息：刷新原因
+    Truncate(message, errorString, titleWidth + parameterWidth - 12);
+    AddOutput(list, message);
+    GetLogFinished(list);//记录已完成的任务日志
+
+    //跳过模式（2）或刷新次数已满：刷新后做下一条任务
+    if (refreshLevel == SKIP_TASK || plot[list].timesRefreshed[order] >= maxRefreshTimes)
       break;
 
     //否则继续完成本条任务剩余局数，记录已刷新次数+1
-    gamesFinished += work[taskNum].games - 1;//记录已完成的局数
-    timesRefreshed[order]++;//已刷新次数+1
+    for (int iTask = task; iTask <= task + 1; iTask++)
+      reserve[iTask].gamesFinished = work[iTask].games - 1;//已完成的局数
+    plot[list].timesRefreshed[order]++;//已刷新次数+1
   }
 
-  //不继续本条任务的几种情况：正常完成/手动停止（特征：AdvanceStarted == 0)/强制中断/刷新次数满
-  if (strcmp(state[taskNum].tip, "已完成") == 0)//如果正常完成关卡（签到施肥有可能被标记未完成）
+  //结束本条任务的几种情况：正常完成/手动停止/END/SKIP
+  if (strcmp(state[task].tip, "已完成") == 0) //1. 正常完成（局数打满且不触发中断）
   {
-    if (isAdvanceFailed[order]) //任务失败：仅限签到施肥
+    if (plot[list].advance[order].result == 2) //未完成：仅限签到施肥
+      sprintf_s(plot[list].output[plot[list].outputNum - 1], "[%d] %s(%s) 仅完成 0/1",
+        order + 1, typeName[plot[list].advance[order].type], levelString);
+    else if (plot[list].advance[order].result == 1) //未领奖：仅限悬赏
+      sprintf_s(plot[list].output[plot[list].outputNum - 1], "[%d] %s(%s) 未领奖 %d/%d",
+        order + 1, typeName[plot[list].advance[order].type], levelString,
+        work[task].maxGames, work[task].maxGames);
+    else //已完成
     {
-      sprintf_s(output[outputNum - 1], "[%d] %s(%s) 未完成 0/1", order + 1, advanceName[advance[order].type],
-        levelString);//修改输出信息：未完成
-    }
-    else
-    {
-      //修改输出信息：已完成
-      if (isMission(advance[order]))
-        strcpy_s(output[outputNum - 1], "公会任务识别 已完成");
+      if (IsMission(plot[list].advance[order]))
+        strcpy_s(plot[list].output[plot[list].outputNum - 1], "公会任务识别 已完成");
       else
-        sprintf_s(output[outputNum - 1], "[%d] %s(%s) 已完成 %d/%d", order + 1, advanceName[advance[order].type],
-          levelString, work[taskNum].maxGames, work[taskNum].maxGames);//修改输出信息：已完成
+        sprintf_s(plot[list].output[plot[list].outputNum - 1], "[%d] %s(%s) 已完成 %d/%d",
+          order + 1, typeName[plot[list].advance[order].type], levelString,
+          work[task].maxGames, work[task].maxGames);//修改输出信息：已完成
     }
   }
-  else if (isAdvanceStarted == 0)//如果手动停止
+  else if (plot[list].isAdvanceStarted == 0) //2. 手动停止
   {
     //修改输出信息：已停止
-    if (isMission(advance[order]))
-      strcpy_s(output[outputNum - 1], "公会任务识别 已停止");
+    if (IsMission(plot[list].advance[order]))
+      strcpy_s(plot[list].output[plot[list].outputNum - 1], "公会任务识别 已停止");
     else
-      sprintf_s(output[outputNum - 1], "[%d] %s(%s) 已停止 %d/%d", order + 1, advanceName[advance[order].type],
-        levelString, min(work[taskNum].games, work[taskNum].maxGames), work[taskNum].maxGames);//修改输出信息：任务中断
+      sprintf_s(plot[list].output[plot[list].outputNum - 1], "[%d] %s(%s) 已停止 %d/%d",
+        order + 1, typeName[plot[list].advance[order].type], levelString,
+        min(work[task].games, work[task].maxGames), work[task].maxGames);
   }
-  else if (isRefreshAvailable == 0)//不可刷新，强制中断
+  else if (refreshLevel == END_TASK) //3. END_TASK
   {
     //修改输出信息：已中断
-    if (isMission(advance[order]))
-      strcpy_s(output[outputNum - 1], "公会任务识别 已中断");
+    if (IsMission(plot[list].advance[order]))
+      strcpy_s(plot[list].output[plot[list].outputNum - 1], "公会任务识别 已中断");
     else
-      sprintf_s(output[outputNum - 1], "[%d] %s(%s) 已中断 %d/%d", order + 1, advanceName[advance[order].type],
-        levelString, min(work[taskNum].games, work[taskNum].maxGames), work[taskNum].maxGames);//修改输出信息：任务中断
-    isAdvanceStarted = 0; //主动刹停高级任务
+      sprintf_s(plot[list].output[plot[list].outputNum - 1], "[%d] %s(%s) 已中断 %d/%d",
+        order + 1, typeName[plot[list].advance[order].type], levelString,
+        min(work[task].games, work[task].maxGames), work[task].maxGames);
+    plot[list].isAdvanceStarted = 0; //主动刹停高级任务
   }
-  GetLogFinished();//记录已完成的任务日志
+  //4. SKIP_TASK（上面已经改过输出信息了）
+
+  GetLogFinished(list);//记录已完成的任务日志
   isRepaintRequired = 1;//发送重绘指令
   return 1;//如果没有刹停高级任务，则继续执行下一条任务
 }
-//检查高级任务列表或公会任务列表，有刷技能模式则返回-2
-int CheckAdvance(char(&checkInfo)[1000], int(&involved)[2], int &missionOrder, int target = 0)
+//检查当前列表或公会任务列表，合格返回-1，有刷技能模式返回-2，不合格报错停止
+int CheckList(int list, char(&checkInfo)[1000], int(&involved)[2], int &missionOrder,
+  int target = ADVANCE)
 {
-  AdvanceType(&adv)[maxAdvanceNum] = target == 0 ? advance : missionAdvance;
+  AdvanceType *adv = target == ADVANCE ? plot[list].advance : plot[list].missionAdvance;
 
   char message[1000];
   //检查列表全部任务，返回出错编号
-  int errorOrder = CheckAdvanceTrack(checkInfo, involved, missionOrder, target);
+  int errorOrder = CheckList0(list, checkInfo, involved, missionOrder, target);
   if (errorOrder >= 0)//如果检查出错
   {
-    char LevelString[13];
-    GetLevelName(LevelString, adv[errorOrder].type, adv[errorOrder].level);
+    char levelString[100];
+    GetLevelName(levelString, adv[errorOrder].type, adv[errorOrder].level);
     if (target == 0)
-      sprintf_s(message, "[%d] %s(%s)\n%s", errorOrder + 1, advanceName[adv[errorOrder].type],
-        LevelString, checkInfo);//填写提示信息
+      sprintf_s(message, "[%d] %s(%s)\n%s", errorOrder + 1, typeName[adv[errorOrder].type],
+        levelString, checkInfo);//填写提示信息
     else
-      sprintf_s(message, "公会任务列表 [%d] %s(%s)\n%s", errorOrder + 1, advanceName[adv[errorOrder].type],
-        LevelString, checkInfo);//填写提示信息
-    StopAdvance(message);
+      sprintf_s(message, "公会任务列表 [%d] %s(%s)\n%s", errorOrder + 1, typeName[adv[errorOrder].type],
+        levelString, checkInfo);//填写提示信息
+    StopAdvance(list, message);
   }
   return errorOrder;
 }
 //高级任务结束，报告未完成的任务
-void FinishAdvance()
+void FinishAdvance(int list)
 {
   char failureTip[1000] = "高级任务结束，以下任务未完成：";
+  const char resultString[3][100] = { "已完成", "未领奖", "未完成" };
   char advanceString[100] = {};
-  char levelName[20] = {};
-  bool isAnyAdvanceFailed = false;
-  for (int order = 0; order < advanceNum; order++)
-    if (advance[order].selected && isAdvanceFailed[order])
+  char levelName[100] = {};
+  bool isAnyAdvanceFailed = false;//是否有未完成的任务
+  //逐条检查高级任务
+  for (int order = 0; order < plot[list].advanceNum; order++)
+    if (plot[list].advance[order].selected)
     {
-      GetLevelName(levelName, advance[order].type, advance[order].level);
-      sprintf_s(advanceString, "\n[%d] %s(%s)", order + 1, advanceName[advance[order].type], levelName);
-      strcat_s(failureTip, advanceString);
-      isAnyAdvanceFailed = true;
+      GetLevelName(levelName, plot[list].advance[order].type, plot[list].advance[order].level);
+      //非轨道任务，根据result提示（目前只有result==2 仅完成0/1 这一种情况）
+      if (IsNoTrack(plot[list].advance[order]))
+      {
+        if (plot[list].advance[order].result == 2)
+        {
+          sprintf_s(advanceString, "\n[%d] %s(%s) 仅完成0/1", order + 1,
+            typeName[plot[list].advance[order].type], levelName);
+          strcat_s(failureTip, advanceString);
+          isAnyAdvanceFailed = true;
+        }
+      }
+      //轨道任务，如果局数没打满，提示仅完成；否则只可能result==1，提示未领奖
+      else
+      {
+        if (plot[list].advance[order].gamesFinished < plot[list].advance[order].maxGames)
+        {
+          sprintf_s(advanceString, "\n[%d] %s(%s) 仅完成%d/%d", order + 1,
+            typeName[plot[list].advance[order].type], levelName, plot[list].advance[order].gamesFinished,
+            plot[list].advance[order].maxGames);
+          strcat_s(failureTip, advanceString);
+          isAnyAdvanceFailed = true;
+        }
+        else if (plot[list].advance[order].result == 1)
+        {
+          sprintf_s(advanceString, "\n[%d] %s(%s) 未领奖", order + 1,
+            typeName[plot[list].advance[order].type], levelName);
+          strcat_s(failureTip, advanceString);
+          isAnyAdvanceFailed = true;
+        }
+      }
     }
-  if (isMissionClaimFailed)
+  if (plot[list].isMissionClaimFailed)
   {
-    strcat_s(failureTip, "\n公会任务领奖");
+    strcat_s(failureTip, "\n公会任务 未领奖");
     isAnyAdvanceFailed = true;
   }
   if (isAnyAdvanceFailed)
-    StopAdvance(failureTip);
+    StopAdvance(list, failureTip);
   else
-    StopAdvance("高级任务已全部完成。");
+    StopAdvance(list, "高级任务已全部完成。");
 }
-DWORD __stdcall StartAdvance(void *Param)//【任务线程】开始高级任务序列
+//【任务线程】开始高级任务序列
+DWORD __stdcall StartList(void *vpList)
 {
-  isMissionClaimFailed = false;//领奖失败清零
-  isLevelInsufficient = false;//等级不足预设为false
-  memset(isAdvanceFailed, 0, sizeof(isAdvanceFailed));//未完成任务清零
-  memset(timesRefreshed, 0, sizeof(timesRefreshed));//已刷新次数清零
-  outputNum = 0;//清空输出信息
-  isRefreshRequired = 0;
-  isAdvanceWindowBound = 0;//Project[5].hWnd是否被绑定
-  logFinished[0] = 0;//已完成任务日志清空
-  playedAdvanceNum = 0;//已执行的任务数量设为0
-  ShuffleRandomZone();//生成随机换区顺序
+  int list = (int)vpList;
+  int task = GetTask(list);
+  plot[list].isMissionClaimFailed = false;//领奖失败清零
+  plot[list].isLevelInsufficient = false;//等级不足预设为false
+  for (int order = 0; order < plot[list].advanceNum; order++)
+  {
+    plot[list].advance[order].result = 0;
+    plot[list].advance[order].gamesFinished = 0;
+  }
+  memset(plot[list].timesRefreshed, 0, sizeof(plot[list].timesRefreshed));//已刷新次数清零
+  plot[list].outputNum = 0;//清空输出信息
+  plot[list].isRefreshRequired = 0;
+  plot[list].isAdvanceWindowBound = 0;//Param[5].hWnd是否被绑定
+  memset(plot[list].logFinished, 0, sizeof(plot[list].logFinished));//已完成任务日志清空
+  plot[list].playedAdvanceNum = 0;//已执行的任务数量设为0
+  ShuffleRandomZone(list);//生成随机换区顺序
 
   int missionOrder = -1;//公会任务编号
   char CheckInfo[1000];
   char message[1000];
 
   //检查高级任务列表
-  bool isSkillExist = CheckAdvance(CheckInfo, advanceInvolved, missionOrder, 0) == -2;
+  bool isSkillExist = CheckList(list, CheckInfo, plot[list].advanceInvolved,
+    missionOrder, ADVANCE) == -2;
   int missionHost = 0;//公会任务房主
   int missionDeck[2] = {};//公会任务卡组
   if (missionOrder >= 0) //如果存在公会任务
   {
-    if (advanceNum > maxAdvanceNum - 10)
+    if (plot[list].advanceNum > maxAdvanceNum - 10)
     {
       sprintf_s(message, "识别公会任务前，列表中不能超过%d条任务。", maxAdvanceNum - 10);
-      StopAdvance(message);
+      StopAdvance(list, message);
     }
-    missionHost = advance[missionOrder].hostAccount;
-    missionDeck[0] = advance[missionOrder].deck[0];//记录公会任务卡组
-    missionDeck[1] = advance[missionOrder].deck[1];
+    missionHost = plot[list].advance[missionOrder].host;
+    missionDeck[0] = plot[list].advance[missionOrder].deck[0];//记录公会任务卡组
+    missionDeck[1] = plot[list].advance[missionOrder].deck[1];
     int newAdvanceInvolved[2] = { 0, 0 };
     int newMissionOrder = -1;
     //载入公会任务列表，如果载入失败则中断任务
-    if (LoadAdvanceFrom("预制列表\\公会任务.txt", 1) == 0)
-      StopAdvance("载入公会任务列表失败。");
-    CheckAdvance(CheckInfo, newAdvanceInvolved, newMissionOrder, 1);//检查公会任务列表
+    if (LoadAdvanceFrom(list, "预制列表\\公会任务.txt", 1) == 0)
+      StopAdvance(list, "载入公会任务列表失败。");
+    //检查公会任务列表
+    CheckList(list, CheckInfo, newAdvanceInvolved, newMissionOrder, MISSION);
   }
 
-  int isLabelMissing[2] = { 0, 0 };//是否缺少1P/2P标签
+  bool isLabelMissing[2] = {};//是否缺少1P/2P标签
   for (int account = 0; account < 2; account++)
-    isLabelMissing[account] = advanceInvolved[account] == 1 && project[taskNum].tag[account].x == -1;
+    isLabelMissing[account] = plot[list].advanceInvolved[account] && param[task].tag[account].x == -1;
 
   if (isLabelMissing[0] || isLabelMissing[1]) //如果未抓取标签
   {
     if (isLabelMissing[0] && isLabelMissing[1])
-      StopAdvance("请抓取1P和2P标签。");
+      StopAdvance(list, "请抓取1P和2P标签。");
     else if (isLabelMissing[0])
-      StopAdvance("请抓取1P标签。");
+      StopAdvance(list, "请抓取1P标签。");
     else if (isLabelMissing[1])
-      StopAdvance("请抓取2P标签。");
+      StopAdvance(list, "请抓取2P标签。");
     return 0;//任务结束
   }
 
-  if (advanceInvolved[0] == 1 && advanceInvolved[1] == 1 && project[taskNum].hWndHall[0] == project[taskNum].hWndHall[1])
-    StopAdvance("请分窗口显示两个账号。");
+  if (plot[list].advanceInvolved[0] && plot[list].advanceInvolved[1]
+    && param[task].hWndHall[0] == param[task].hWndHall[1])
+    StopAdvance(list, "请分窗口显示两个账号。");
 
-  if (strstr(advancePath, "美食大赛"))
+  //检验通过，填写param[task + 1]的标签
+  for (int account = 0; account < 2; account++)
+  {
+    param[task + 1].tag[account] = param[task].tag[account];
+    param[task + 1].hWnd[account] = param[task].hWnd[account];
+    param[task + 1].hWndHall[account] = param[task].hWndHall[account];
+  }
+  param[task + 1].hMainHall = param[task].hMainHall;
+
+  if (strstr(plot[list].advancePath, "美食大赛"))
   {
     contestOption = 1;
     bagFullOperation = 1;
@@ -9187,9 +11596,9 @@ DWORD __stdcall StartAdvance(void *Param)//【任务线程】开始高级任务�
       "1. 所有卡片至少1星；\n"
       "2. 操作速度建议调至“快”。\n"
       "点击确认继续执行。";
-    int answer = PopMessageWithOptions(taskNum, tip);
+    int answer = PopMessageOK(task, tip);
     if (answer != IDOK)
-      StopAdvance();
+      StopAdvance(list);
   }
 
   if (contestOption == 1)
@@ -9198,7 +11607,7 @@ DWORD __stdcall StartAdvance(void *Param)//【任务线程】开始高级任务�
       "大赛模式遇到任务未完成将立即终止。\n请确保钥匙、徽章及背包空间充足。\n点击确认继续执行。",
       "提示", MB_OKCANCEL | MB_ICONINFORMATION | MB_SYSTEMMODAL);
     if (answer != IDOK) //如果未确认执行大赛
-      StopAdvance();
+      StopAdvance(list);
   }
 
   //定时程序
@@ -9224,18 +11633,18 @@ DWORD __stdcall StartAdvance(void *Param)//【任务线程】开始高级任务�
     {
       SecondToHms(timerString, countdown);
       sprintf_s(message, "定时中，剩余时间%s", timerString);
-      OutputMessage(message);
+      AddOutput(list, message);
     }
     else
-      OutputMessage("定时完成");
+      AddOutput(list, "定时完成");
     DWORD TimerEndTick = GetTickCount() + timerSecond * 1000;//计算倒计时结束时刻
     while (timerSecond > 0) //当需要等待的时间大于0时
     {
       Sleep(10); //一个循环等待10 ms
-      if (isAdvanceStarted == 0)//如果高级任务被刹停，结束高级任务，定时取消
+      if (plot[list].isAdvanceStarted == 0)//如果高级任务被刹停，结束高级任务，定时取消
       {
-        strcpy_s(output[outputNum - 1], "定时取消");//更新定时消息：定时取消
-        isAdvanceStarted_Confirm = 0;
+        strcpy_s(plot[list].output[plot[list].outputNum - 1], "定时取消");//更新定时消息：定时取消
+        plot[list].isAdvanceStarted_Confirm = 0;
         isRepaintRequired = 1;
         return 0;
       }
@@ -9244,44 +11653,43 @@ DWORD __stdcall StartAdvance(void *Param)//【任务线程】开始高级任务�
       {
         timerSecond = countdown;
         if (countdown <= 0)
-          strcpy_s(output[outputNum - 1], "定时完成");//更新定时消息：定时完成
+          strcpy_s(plot[list].output[plot[list].outputNum - 1], "定时完成");//更新定时消息：定时完成
         else
         {
           SecondToHms(timerString, countdown);
-          sprintf_s(output[outputNum - 1], "定时中，剩余时间%s", timerString);//更新定时消息
+          sprintf_s(plot[list].output[plot[list].outputNum - 1], "定时中，剩余时间%s", timerString);//更新定时消息
         }
         isRepaintRequired = 1;
       }
     }
     //定时结束，新增强制刷新
-    isRefreshRequired = 1;
+    plot[list].isRefreshRequired = 1;
+    strcpy_s(state[task].errorString, "定时启动");//刷新原因是定时启动
   }
 
-  char TaskStartTime[100];//任务启动时间字符串，用于给日志文件夹命名
-  GetTimeStringForFolder(TaskStartTime, time(NULL));//记录本次启动的时间
-  sprintf_s(advanceFolderPath, "执行记录\\%s_高级任务", TaskStartTime);//填写日志文件夹路径
-  CreatePath(advanceFolderPath);//创建日志文件夹
+  char taskStartTime[100];//任务启动时间字符串，用于给日志文件夹命名
+  GetTimeStringForFolder(taskStartTime, time(NULL));//记录本次启动的时间
+  sprintf_s(plot[list].advanceFolderPath, "执行记录\\%s_高级任务%d", taskStartTime, list);//填写日志文件夹路径
+  CreatePath(plot[list].advanceFolderPath);//创建日志文件夹
 
-  isRefreshAvailable = 1;//允许高级任务通过刷新解决中断（遇到必须中断的情形会设为0，并立即结束高级任务）
-
-  for (int order = -1; order < advanceNum; order++)//依次执行各项任务（-1代表公会任务检查任务）
+  for (int order = -1; order < plot[list].advanceNum; order++)//依次执行各项任务（-1代表公会任务检查任务）
   {
     if (order == -1) //公会任务识别
     {
       if (missionOrder == -1)
         continue;
-      StartSingleAdvance(missionOrder);//执行公会任务识别
+      StartQuest(list, missionOrder);//执行公会任务识别
     }
     else
     {
-      if (advance[order].selected == 1)
+      if (plot[list].advance[order].selected == 1)
       {
-        playedAdvanceNum++;//执行的高级任务数量+1
-        StartSingleAdvance(order);//执行单项任务
+        plot[list].playedAdvanceNum++;//执行的高级任务数量+1
+        StartQuest(list, order);//执行单项任务
       }
     }
-    if (isAdvanceStarted == 0)//检测到刹车指令，立即结束线程
-      StopAdvance();
+    if (plot[list].isAdvanceStarted == 0)//检测到刹车指令，立即结束线程
+      StopAdvance(list);
     if (order == -1) //公会任务线程完成后，进行列表替换
     {
       int todayMission[14] = {};//今日任务编号
@@ -9293,64 +11701,69 @@ DWORD __stdcall StartAdvance(void *Param)//【任务线程】开始高级任务�
       if (todayMissionNum >= 1) //如果读取到公会任务
       {
         //missionOrder后面的任务后移todayMissionNum - 1格子
-        for (int i = advanceNum - 1; i > missionOrder; i--)
-          advance[i + todayMissionNum - 1] = advance[i];
+        for (int i = plot[list].advanceNum - 1; i > missionOrder; i--)
+          plot[list].advance[i + todayMissionNum - 1] = plot[list].advance[i];
         //[missionOrder ~ missionOrder + todayMissionNum - 1]用公会任务列表替换
         for (int i = 0; i < todayMissionNum; i++)
         {
-          advance[missionOrder + i] = missionAdvance[todayMission[i]];
-          advance[missionOrder + i].isMission = 1;
-          advance[missionOrder + i].hostAccount = missionHost;
+          plot[list].advance[missionOrder + i] = plot[list].missionAdvance[todayMission[i]];
+          plot[list].advance[missionOrder + i].isMission = 1;
+          plot[list].advance[missionOrder + i].host = missionHost;
           //如果房主为2P，且1P不参与，需要交换1P和2P的卡组和轨道
           if (missionHost == 1 && missionDeck[0] == 0)
           {
-            Swap(&advance[missionOrder + i].deck[0], &advance[missionOrder + i].deck[1]);
+            Swap(&plot[list].advance[missionOrder + i].deck[0], &plot[list].advance[missionOrder + i].deck[1]);
             char temp[maxPath];
-            strcpy_s(temp, advance[missionOrder + i].track[0]);
-            strcpy_s(advance[missionOrder + i].track[0], advance[missionOrder + i].track[1]);
-            strcpy_s(advance[missionOrder + i].track[1], temp);
+            strcpy_s(temp, plot[list].advance[missionOrder + i].track[0]);
+            strcpy_s(plot[list].advance[missionOrder + i].track[0], plot[list].advance[missionOrder + i].track[1]);
+            strcpy_s(plot[list].advance[missionOrder + i].track[1], temp);
           }
           if (missionDeck[0] > 0)
-            advance[missionOrder + i].deck[0] = 1 + (advance[missionOrder + i].deck[0] + missionDeck[0] - 2) % 6;//替换卡组
+            plot[list].advance[missionOrder + i].deck[0] = 1 + (plot[list].advance[missionOrder + i].deck[0] + missionDeck[0] - 2) % 6;//替换卡组
           else
-            advance[missionOrder + i].deck[0] = 0;
+            plot[list].advance[missionOrder + i].deck[0] = 0;
           if (missionDeck[1] > 0)
-            advance[missionOrder + i].deck[1] = 1 + (advance[missionOrder + i].deck[1] + missionDeck[1] - 2) % 6;//替换卡组
+            plot[list].advance[missionOrder + i].deck[1] = 1 + (plot[list].advance[missionOrder + i].deck[1] + missionDeck[1] - 2) % 6;//替换卡组
           else
-            advance[missionOrder + i].deck[1] = 0;
+            plot[list].advance[missionOrder + i].deck[1] = 0;
         }
-        advanceNum += todayMissionNum - 1;
+        plot[list].advanceNum += todayMissionNum - 1;
       }
       else //若没有读取到今日任务，或公会任务列表读取失败，直接删除【公会-任务】
       {
-        for (int i = missionOrder + 1; i < advanceNum; i++)
-          advance[i - 1] = advance[i];
-        advanceNum--;
+        for (int i = missionOrder + 1; i < plot[list].advanceNum; i++)
+          plot[list].advance[i - 1] = plot[list].advance[i];
+        plot[list].advanceNum--;
       }
       missionOrder = -1;//列表中已经没有【公会-任务】了
-      SaveAdvance();//由于列表已改动，需要保存一次并生成备份
+      SaveAdvance(list);//由于列表已改动，需要保存一次并生成备份
       SaveParameter();
       isRepaintRequired = 1;//发送重绘指令
     }
   }
-  FinishAdvance();//高级任务完成
-  StopAdvance("高级任务已全部完成。");
+  FinishAdvance(list);//高级任务完成
+  StopAdvance(list, "高级任务已全部完成。");
   return 0;
 }
-void GetTimeStringMS(char *s, int Time)//从秒数转化为“mm:ss”字符串
+template <size_t size>
+void GetTimeStringMS(char(&s)[size], int Time)//从秒数转化为“mm:ss”字符串
 {
-  sprintf_s(s, 6, "%02d:%02d", Time / 60, Time % 60);
+  sprintf_s(s, "%02d:%02d", Time / 60, Time % 60);
 }
-void GetTimeStringHMS(char *s, int Time)//从秒数转化为“h:mm:ss”字符串
+template <size_t size>
+void GetTimeStringHMS(char(&s)[size], int Time)//从秒数转化为“h:mm:ss”字符串
 {
-  sprintf_s(s, 9, "%d:%02d:%02d", Time / 3600, Time % 3600 / 60, Time % 60);
+  sprintf_s(s, "%d:%02d:%02d", Time / 3600, Time % 3600 / 60, Time % 60);
 }
 /*执行器界面函数*/
 //判断鼠标点击位置(x,y)在哪个区域
-int GetArea(int OriginX, int OriginY)
+int GetArea(int originX, int originY)
 {
-  int x = (int)(OriginX / ratio);
-  int y = (int)(OriginY / ratio);
+  int x = (int)(originX / ratio + 0.5);
+  int y = (int)(originY / ratio + 0.5);
+  if (x < 0 || y < 0 || x >= wndWidth || y >= wndHeight)
+    return 0;
+
   if (x >= modeX && x < modeX + modeWidth && y >= modeY && y < modeY + 2 * modeHeight)//切换模式
   {
     int n = (y - modeY) / modeHeight;
@@ -9366,14 +11779,7 @@ int GetArea(int OriginX, int OriginY)
   }
   if (mode == 1)//普通任务模式
   {
-    if (x == zero)
-    {
-      if (y == zero)
-        return 3;//读取参数，用于拖动轨道文件到执行器图标时填写路径
-      else if (y >= 1 && y <= 2)
-        return 4;//读取参数，用于拖动列表文件到执行器图标时填写路径
-    }
-    for (int task = 0; task < taskNum; task++)
+    for (int task = 0; IsNormal(task); task++)
     {
       if (x >= parameterX + (2 * task + 1) * parameterWidth / 2 - 100 && x <= parameterX + (2 * task + 1) * parameterWidth / 2 - 40 &&
         y >= parameterY + 11 * parameterHeight + 5 && y < parameterY + 12 * parameterHeight - 4)
@@ -9389,13 +11795,7 @@ int GetArea(int OriginX, int OriginY)
   }
   else if (mode == 2)//高级任务模式
   {
-    if (x == zero)
-    {
-      if (y == zero)
-        return 3;//读取参数，用于拖动轨道文件到执行器图标时填写路径
-      else if (y >= 1 && y <= 2)
-        return 4;//读取参数，用于拖动列表文件到执行器图标时填写路径
-    }
+    int list = curList;
     if (x >= parameterX + parameterWidth / 2 - 100 && x <= parameterX + parameterWidth / 2 - 40 &&
       y >= parameterY + 11 * parameterHeight + 5 && y < parameterY + 12 * parameterHeight - 4)
       return 15;//点击启动按钮
@@ -9407,8 +11807,11 @@ int GetArea(int OriginX, int OriginY)
       return 35;//点击隐藏2按钮
 
     int area = ButtonArea[1][x][y];
-    if (isAdvanceStarted == 1 && (area == 212 || area == 213 || area >= 1000))
-      return 99;//任务运行期间，不允许调整参数（包括撤销按钮）
+    //500+特殊编号：500全选格子 501全选框 502锁定框 503列表路径 504-1P服务器二级 505-2P服务器二级
+    //任务运行期间，不允许调整参数（包括撤销、全选），但允许切换任务（2507/3507)
+    if (plot[list].isAdvanceStarted)
+      if (area != 2507 && area != 3507 && (area == 212 || area == 213 || area / 100 == 5 || area >= 1000))
+        return 99;
     if (area / 10000 == 1 && area % 10000 / 100 == 0)
       return 0;
     //10+~30+：隐藏与启动
@@ -9436,7 +11839,7 @@ void RegisterAllButtons()
   buttonState[0] = RegisterButtonsArea(1, 5, 5, parameterX, parameterY + 12 * parameterHeight + 2, parameterWidth, parameterHeight, 1012, 1, 100);
   //普通参数调节按钮：1000+&2000+：右调节；6000+&7000+：左调节；4000+：左点击；5000+：右点击
     //改为：本体1000+，左点击2000+，右点击3000+，左调节4000+&5000+：右调节6000+&7000+
-  for (int task = 0; task < taskNum; task++)
+  for (int task = 0; IsNormal(task); task++)
   {
     RegisterRightButton(1, FindButton(buttonParameter[0], 0, task), 36, 3000 + task * 100);
     for (int row = 5; row <= 7; row++)//注册调节按钮
@@ -9458,18 +11861,28 @@ void RegisterAllButtons()
       RegisterRightButton(1, FindButton(buttonState[0], row, task), 18, 3012 + task * 100 + row);
   }
   //高级任务参数
-  buttonParameterTitle[1] = RegisterButtonsArea(2, 5, 1, titleX, titleY + 7 * titleHeight, titleWidth, titleHeight, 100, 1, 0);
-  buttonStateTitle[1] = RegisterButtonsArea(2, 5, 1, titleX, titleY + 12 * titleHeight + 2, titleWidth, titleHeight, 105, 1, 0);
-  buttonParameter[1] = RegisterButtonsArea(2, 5, 1, parameterX, parameterY + 7 * parameterHeight, parameterWidth, parameterHeight, 1500, 1, 0);
-  buttonState[1] = RegisterButtonsArea(2, 5, 1, parameterX, parameterY + 12 * parameterHeight + 2, parameterWidth, parameterHeight, 1505, 1, 0);
-  for (int row = 1; row <= 2; row++)//注册参数左边的抓取按钮和右边的“×”
+
+  //参数标题
+  buttonParameterTitle[1] = RegisterButtonsArea(2, 5, 1, titleX, titleY + 7 * titleHeight,
+    titleWidth, titleHeight, 107, 1, 0);
+  //状态标题
+  buttonStateTitle[1] = RegisterButtonsArea(2, 5, 1, titleX, titleY + 12 * titleHeight + 2,
+    titleWidth, titleHeight, 112, 1, 0);
+  //参数内容
+  buttonParameter[1] = RegisterButtonsArea(2, 5, 1, parameterX, parameterY + 7 * parameterHeight,
+    parameterWidth, parameterHeight, 1507, 1, 0);
+  //状态内容
+  buttonState[1] = RegisterButtonsArea(2, 5, 1, parameterX, parameterY + 12 * parameterHeight + 2,
+    parameterWidth, parameterHeight, 1512, 1, 0);
+  //高级任务切换按钮
+  RegisterHorizontalAdjust(2, FindButton(buttonParameter[1], 0, 0), 2507, 3507);
+  for (int row = 1; row <= 2; row++)//1P/2P标签左边的抓取按钮和右边的“×”
   {
-    RegisterLeftButton(2, FindButton(buttonParameter[1], row, 0), 22, 2500 + row);
-    RegisterRightButton(2, FindButton(buttonParameter[1], row, 0), 18, 3500 + row);
+    RegisterLeftButton(2, FindButton(buttonParameter[1], row, 0), 22, 2507 + row);
+    RegisterRightButton(2, FindButton(buttonParameter[1], row, 0), 18, 3507 + row);
   }
-  RegisterRightButton(2, FindButton(buttonState[1], 0, 0), 18, 3505);
-  RegisterLeftAdjust(2, FindButton(buttonParameter[1], 0, 0), 4500, 5500);
-  RegisterRightAdjust(2, FindButton(buttonParameter[1], 0, 0), 6500, 7500);
+  //删除状态按钮
+  RegisterRightButton(2, FindButton(buttonState[1], 0, 0), 18, 3512);
 
   //高级任务输出信息
   buttonOutputPage = RegisterButtonsArea(2, 1, 1, titleX + (titleWidth + parameterWidth) / 2 - 55, titleY + 6 * titleHeight,
@@ -9503,10 +11916,11 @@ void RegisterAllButtons()
   RegisterCenterButton(2, FindButton(buttonAdvance, 0, 0), 0, 0, advanceWidth[0], advanceHeight[0], 500);//"ID"
   RegisterLeftButton(2, FindButton(buttonAdvance, 0, 0), 30, 501);//"ID"左侧的全选框
   buttonLock = RegisterButtonArea(2, lockX, lockY, lockWidth, lockHeight, 502);//锁定框
+  RegisterButtonArea(2, titleX, 0, playerX - titleX, titleY, 503);//列表路径
+  RegisterButtonArea(2, playerX, 0, playerDistance, titleY, 504);//1P服务器二级
+  RegisterButtonArea(2, playerX + playerDistance, 0, playerDistance, titleY, 505);//2P服务器二级
 
   //右侧按钮：上方是三大按钮，下方是各类选项
-  char lowerSettingsName[2][15] = { "lowerSettings1", "lowerSettings2" };
-
   for (int Mode = 1; Mode <= 2; Mode++)
     buttonUpperSettings[Mode - 1] = RegisterButtonsArea(Mode, 3, 1,
       settingsX, settingsY - settingsHeight * 7 / 2, settingsWidth, settingsHeight, 200, 1, 0);
@@ -9514,16 +11928,14 @@ void RegisterAllButtons()
   const int SettingsNum[2] = { 11, 9 };//两种模式需要注册的设置按钮个数
   //第i项是否需要调节按钮
   const bool isAdjustRequired[2][11] = { { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1 }, { 0, 0, 0, 1, 0, 1, 0, 0, 1 } };
-  for (int Mode = 1; Mode <= 2; Mode++)
+  for (int iMode = 1; iMode <= 2; iMode++)
   {
-    buttonLowerSettings[Mode - 1] = RegisterButtonsArea(Mode, SettingsNum[Mode - 1], 1,
+    buttonLowerSettings[iMode - 1] = RegisterButtonsArea(iMode, SettingsNum[iMode - 1], 1,
       settingsX, settingsY, settingsWidth, settingsHeight, 203, 1, 0);
     for (int i = 0; i < 11; i++)
-      if (isAdjustRequired[Mode - 1][i])
-        RegisterHorizontalAdjust(Mode, FindButton(buttonLowerSettings[Mode - 1], i, 0), 303 + i, 403 + i);
+      if (isAdjustRequired[iMode - 1][i])
+        RegisterHorizontalAdjust(iMode, FindButton(buttonLowerSettings[iMode - 1], i, 0), 303 + i, 403 + i);
   }
-  RegisterLeftButton(2, FindButton(buttonLowerSettings[1], 6, 0), 30, 509);//签到勾选框
-  RegisterLeftButton(2, FindButton(buttonLowerSettings[1], 7, 0), 30, 510);//施肥勾选框
   int buttonUndo = RegisterButtonsArea(2, 2, 1, settingsX, settingsY + 9 * settingsHeight + 2, settingsWidth, settingsHeight, 212, 1, 0);
 }
 //判断释放文件时鼠标位置在哪个区域
@@ -9557,34 +11969,172 @@ int TaskArea(int OriginX, int OriginY)
   }
   return -1;
 }
-void ViewDebugInfo()
+//显示底部信息
+void ViewBottomInfo()
+{
+  settextcolor(grayWhite);
+  //outtextxy(titleX, wndHeight - tipHeight, tracePrint);
+#ifdef _DEBUG
+  int list = curList;
+  char message[200];
+  POINT point;
+  GetCursorPos(&point);
+  ScreenToClient(hWndActuator, &point);
+  sprintf_s(message, "区域%d", area);
+  outtextxy(1100, wndHeight - tipHeight, message);//显示当前点击区域（调试用）
+  sprintf_s(message, "备份%d/%d", plot[list].currentBackup, plot[list].backupNum);
+  outtextxy(1200, wndHeight - tipHeight, message);
+#endif
+}
+//显示上一次提示信息
+void ViewLastTip()
+{
+  settextcolor(strstr(lastTip, "识图") == lastTip ? WHITE : RGB(255, 255, 0));
+  outtextxy(titleX, wndHeight - 27, lastTip);
+  ViewBottomInfo();
+}
+//显示提示语句
+void ViewTip(const char *tip)
+{
+  if (strcmp(lastTip, tip) == 0)
+    return;
+
+  strcpy_s(lastTip, tip);
+  BeginBatchDraw();
+  solidrectangle(0, wndHeight - 27, wndWidth, wndHeight);
+  ViewLastTip();
+  EndBatchDraw();
+}
+//获取提示信息内容
+int GetTip(int mode, int area, char(&tip)[200])
+{
+  if (area == 1)
+    return strcpy_s(tip, "普通任务：用于重复执行同一关卡。");
+  if (area == 2)
+    return strcpy_s(tip, "高级任务：可一键完成签到施肥、悬赏、公会、刷技能等多项任务。");
+
+  if (area / 100 >= 2 && area / 100 <= 4)
+  {
+    int option = area % 100;
+    if (option == 0)
+      return strcpy_s(tip, "全部停止：停止所有普通任务和高级任务。");
+    if (option == 1)
+      return strcpy_s(tip, "后台运行：隐藏软件窗口，再次运行“轨道执行器.exe”可恢复显示。");
+    if (option == 2)
+      return strcpy_s(tip, "一键报错：一键打包截图和日志，生成报错信息。在交流群提问/报错必须上传报错信息，否则无法解决问题。");
+  }
+
+  if (mode == 1)
+  {
+    if (area / 1000 >= 1 && area / 1000 <= 7)
+    {
+      int row = area % 100;
+      if (row == 1 || row == 2)
+        return strcpy_s(tip, "拖动轨道文件到此处自动填写。右键打开轨道。Ctrl+右键打开轨道所在文件夹。");
+      if (row == 8 || row == 9)
+        return strcpy_s(tip, "将左侧图标拖动到账号标签或游戏画面内即可绑定。");
+    }
+    if (area / 100 >= 2 && area / 100 <= 4)
+    {
+      int option = area % 100;
+      if (option == 3 || option == 4)
+        return strcpy_s(tip, "带卡选择：背包中有多张同种卡时携带最高星还是最靠前的卡。");
+      if (option == 5 || option == 6)
+        return strcpy_s(tip, "翻牌数量：通关后翻几张牌。");
+      if (option == 7 || option == 8)
+        return strcpy_s(tip, "背包满时：出现背包已满或未带特定卡的提示时是否继续执行。建议选择继续。");
+      if (option == 9 || option == 10)
+        return strcpy_s(tip, "经验满时：出现经验已达上限的提示时是否继续执行。建议选择继续。");
+      if (option == 11 || option == 12)
+        return strcpy_s(tip, "补阵强度：0%为识别空位补阵，100%为暴力遍历补阵。强度增大会导致游戏卡顿，建议选择0%。");
+    }
+    return strcpy_s(tip, tracePrint);
+  }
+  else if (mode == 2)
+  {
+    if (area / 1000 >= 1 && area / 1000 <= 7)
+    {
+      int row = area % 100;
+      if (row == 1 || row == 2)
+        return strcpy_s(tip, "将左侧图标拖动到账号标签或游戏画面内即可绑定。");
+    }
+    if (area / 100 >= 2 && area / 100 <= 4)
+    {
+      int option = area % 100;
+      if (option == 3 || option == 4)
+        return strcpy_s(tip, "定时启动：到达指定时间后启动。");
+      if (option == 5 || option == 6)
+        return strcpy_s(tip, "自动刷新：掉线中断时刷新继续。一条任务刷新满设定次数后将被跳过。");
+      if (option == 7 || option == 8)
+        return strcpy_s(tip, "操作速度：控制建房和刷技能的速度。建议选择快。");
+      if (option == 9)
+        return strcpy_s(tip, "一键配轨：为所有勾选的任务配置通用轨道。");
+      if (option == 10)
+        return strcpy_s(tip, "加速时间：设置全体任务的开局加速时间。");
+    }
+    return strcpy_s(tip, tracePrint);
+  }
+  return strcpy_s(tip, "");
+}
+//显示提示信息
+void RepaintTip()
+{
+  //根据当前鼠标位置决定提示信息
+  POINT point;
+  GetCursorPos(&point);
+  ScreenToClient(hWndActuator, &point);
+  char tip[200];
+  GetTip(mode, GetArea(point.x, point.y), tip);
+  ViewTip(tip);
+}
+//显示顶部信息
+void ViewTopInfo()
 {
   char message[200];
-  settextcolor(grayWhite);
   if (mode == 2)
   {
+    int list = curList;
+
+    //显示列表路径
+    settextcolor(grayWhite);
     char truncatedPath[maxPath];//截短的列表路径
-    TruncateStringWithEllipsis(truncatedPath, advancePath, parameterWidth * 5 - 90);
+    TruncateWithEllipsis(truncatedPath, plot[list].advancePath, parameterWidth * 5 - 90);
     sprintf_s(message, "列表路径：%s", truncatedPath);
     outtextxy(titleX, 5, message);
+
+    //显示锁定框
     PaintButtonGrid(buttonLock);
     outtextxy(lockX + 25, lockY, "锁定");
-    if (isAdvanceLocked)
+    if (plot[list].isAdvanceLocked)
       outtextxy(lockX, lockY + 3, "√");
+
+    //显示服务器和二级密码
+    settextcolor(RGB(255, 255, 0));
+    for (int account = 0; account < 2; account++)
+    {
+      char serverString[100], passwordString[100];
+
+      if (plot[list].server[account] == 0)
+        strcpy_s(serverString, "最近");
+      else
+        sprintf_s(serverString, "%d服", plot[list].server[account]);
+
+      if (strlen(plot[list].password[account]) == 0)
+        strcpy_s(passwordString, "无二级密码");
+      else
+        strcpy_s(passwordString, plot[list].password[account]);
+
+      sprintf_s(message, "[%dP] %s | %s", account + 1, serverString, passwordString);
+      outtextxy(playerDistance * account + playerX, playerY, message);
+    }
+
   }
-  outtextxy(titleX, wndHeight - 25, tracePrint);
-#ifdef _DEBUG
-  sprintf_s(message, "区域%d", area);
-  outtextxy(950, WndHeight - 25, message);//显示当前点击区域（调试用）
-  sprintf_s(message, "备份%d/%d", CurrentBackup, BackupNum);
-  outtextxy(1150, WndHeight - 25, message);
-#endif
 }
 //载入进度条
 void LoadProgress()
 {
   FILE *f;
-  if (fopen_s(&f, "附加程序\\进度条颜色.txt", "r"))//打开文件
+  if (fopen_s(&f, "附加程序\\文本\\进度条颜色.txt", "r"))//打开文件
     return;
   for (int i = 0; i < progressBarLength; i++)
     fscanf_s(f, "%d\n", &progressLeftColor[i]);
@@ -9593,7 +12143,7 @@ void LoadProgress()
     fscanf_s(f, "%d\n", &progressRightColor[i]);
   fclose(f);
 
-  if (fopen_s(&f, "附加程序\\鼠头颜色.txt", "r"))//打开文件
+  if (fopen_s(&f, "附加程序\\文本\\鼠头颜色.txt", "r"))//打开文件
     return;
   for (int i = 0; i < ratColorWidth; i++)
     fscanf_s(f, "%x\n", &ratColor[i]);
@@ -9606,7 +12156,7 @@ void LoadNormalLevel()
   char *info = nullptr, *nextInfo = nullptr;
 
   FILE *f;
-  if (fopen_s(&f, "附加程序\\普通关卡.txt", "r"))//打开文件
+  if (fopen_s(&f, "附加程序\\文本\\普通关卡.txt", "r"))//打开文件
     return;
 
   int Type = -1, Level = -1;
@@ -9620,7 +12170,7 @@ void LoadNormalLevel()
       Type++;
       Level = -1;
       info = strtok_s(s, "\t", &nextInfo);
-      strcpy_s(advanceName[basicTypeNum + Type], info + 2);//岛屿名称
+      strcpy_s(typeName[basicTypeNum + Type], info + 2);//岛屿名称
       strcpy_s(islandPrompt[Type], "");
 
       info = strtok_s(NULL, "\t", &nextInfo);//记录岛屿坐标
@@ -9647,26 +12197,189 @@ void LoadNormalLevel()
   }
   fclose(f);
 }
-//从文件中读取任务参数
-void LoadParameter()
+//初始化普通任务参数
+void InitTaskParam(int task)
 {
-  FILE *f;
-  char path[100], s[1000];
-  POINT init = { -1, -1 };
+  memset(&param[task], 0, sizeof(param[task]));
 
+  const POINT noTag = { -1, -1 };
+  if (IsAdvance(task))
+    sprintf_s(param[task].title, "高级任务%d", GetList(task));
+  else
+    sprintf_s(param[task].title, "普通任务%d", task);
+  strcpy_s(param[task].track[0], "Track.txt");
+  param[task].maxGames = 100;
+  for (int account = 0; account < 2; account++)
+  {
+    param[task].isProceed[account] = 1;
+    param[task].isCollect[account] = 1;
+    param[task].tag[account] = noTag;
+  }
+}
+//初始化高级任务参数
+void InitAdvanceParam(int list)
+{
+  for (int account = 0; account < 2; account++)
+    strcpy_s(plot[list].password[account], "");
+}
+//初始化执行器参数
+void InitParameter()
+{
+  //初始化公用参数
   zoom = 100;//缩放默认为100%
   plantDelay = 50;//放卡延迟默认50ms
-  repairLevel = 0;//补阵强度默认0%
+  noImageOperation = 1;//无图像时操作默认为“提示”
+
+  customOption = 0;//带卡选择默认为“最高星”
+  flipNum = 2;//翻牌数量默认为2
   bagFullOperation = 1;//背包满时操作默认为“继续”
   expFullOperation = 1;//经验满时操作默认为“继续”
-  noImageOperation = 1;//背包满时操作默认为“提示”
-  flipNum = 2;//翻牌数量默认为2
+  repairLevel = 0;//补阵强度默认0%
+
   timerMode = 0;//定时启动默认关闭
   timer = 0;
   maxRefreshTimes = 3;//自动刷新次数默认为3
-  operationSpeed = 0;//操作速度默认为“慢”
-  contestOption = 0;//美食大赛选项默认为“关”
-  strcpy_s(advancePath, "用户参数\\高级任务列表.txt");//默认列表路径
+  operationSpeed = 2;//操作速度默认为“快”
+
+  //初始化普通任务参数
+  for (int task = 0; task < maxTaskNum; task++)
+    InitTaskParam(task);
+
+  //初始化高级任务参数
+  for (int list = 0; list < listNum; list++)
+    InitAdvanceParam(list);
+}
+//读取执行器参数
+void LoadParameter()
+{
+  InitParameter();//初始化执行器参数
+
+  FILE *f;
+  if (fopen_s(&f, "用户参数\\执行器参数.txt", "r"))//打开文件
+    return;
+
+  //文件结构：公用参数→高级任务→普通任务
+  char s[1000];
+  fgets(f, s);
+  //读取公用参数。直到到达下一个标题行或文件结束
+  while (strlen(s) > 0 && strstr(s, "--") != s)
+  {
+    if (strstr(s, "缩放比例=") == s)
+      zoom = atoi(s + 9);
+    else if (strstr(s, "放卡延迟=") == s)
+      plantDelay = atoi(s + 9);
+    else if (strstr(s, "带卡选择=") == s)
+      customOption = atoi(s + 9);
+    else if (strstr(s, "翻牌数量=") == s)
+      flipNum = atoi(s + 9);
+    else if (strstr(s, "背包满时=") == s)
+      bagFullOperation = atoi(s + 9);
+    else if (strstr(s, "经验满时=") == s)
+      expFullOperation = atoi(s + 9);
+    else if (strstr(s, "补阵强度=") == s)
+      repairLevel = atoi(s + 9);
+    else if (strstr(s, "定时启动=") == s)
+    {
+      if (s[9] == "关"[0]) //读取定时模式和定时秒数
+      {
+        timerMode = 0;
+        timer = 0;
+      }
+      else if (s[9] == '~')
+      {
+        timerMode = 2;
+        timer = atoi(s + 10);
+      }
+      else
+      {
+        timerMode = 1;
+        timer = atoi(s + 9);
+      }
+    }
+    else if (strstr(s, "自动刷新=") == s)
+      maxRefreshTimes = atoi(s + 9);
+    else if (strstr(s, "操作速度=") == s)
+      operationSpeed = atoi(s + 9);
+    fgets(f, s);
+  }
+  //读取高级任务参数
+  for (int list = 0; list < listNum; list++)
+  {
+    fgets(f, s);//跳过标题行
+    //读取高级任务参数。直到到达下一个标题行
+    while (strlen(s) > 0 && strstr(s, "--") != s)
+    {
+      if (strstr(s, "1P服务器=") == s)
+        plot[list].server[0] = atoi(s + 9);
+      else if (strstr(s, "1P二级密码=") == s)
+        strcpy_s(plot[list].password[0], s + 11);
+      else if (strstr(s, "2P服务器=") == s)
+        plot[list].server[1] = atoi(s + 9);
+      else if (strstr(s, "2P二级密码=") == s)
+        strcpy_s(plot[list].password[1], s + 11);
+      fgets(f, s);
+    }
+  }
+  //读取普通任务参数
+  for (int task = 0; task < maxTaskNum; task++)
+  {
+    fgets(f, s);//跳过标题行
+    //读取普通任务参数。直到到达下一个标题行
+    while (strlen(s) > 0 && strstr(s, "--") != s)
+    {
+      if (strstr(s, "任务标题=") == s)
+        strcpy_s(param[task].title, s + 9);
+      else if (strstr(s, "房主轨道=") == s)
+        strcpy_s(param[task].track[0], s + 9);
+      else if (strstr(s, "队友轨道=") == s)
+        strcpy_s(param[task].track[1], s + 9);
+      else if (strstr(s, "执行局数=") == s)
+        param[task].maxGames = atoi(s + 9);
+      else if (strstr(s, "每局用时=") == s)
+        param[task].gameTime = atoi(s + 9);
+      else if (strstr(s, "继续作战=") == s)
+        sscanf_s(s + 9, "%d,%d", &param[task].isProceed[0], &param[task].isProceed[1]);
+      else if (strstr(s, "自动收集=") == s)
+        sscanf_s(s + 9, "%d,%d", &param[task].isCollect[0], &param[task].isCollect[1]);
+      else if (strstr(s, "使用卡组=") == s)
+        sscanf_s(s + 9, "%d,%d", &param[task].deck[0], &param[task].deck[1]);
+      else if (strstr(s, "房主标签=") == s)
+        sscanf_s(s + 9, "%d,%d", &param[task].tag[0].x, &param[task].tag[0].y);
+      else if (strstr(s, "队友标签=") == s)
+        sscanf_s(s + 9, "%d,%d", &param[task].tag[1].x, &param[task].tag[1].y);
+      else if (strstr(s, "大厅句柄=") == s)
+        sscanf_s(s + 9, "%d,%d", (int *)&param[task].hWndHall[0], (int *)&param[task].hWndHall[1]);
+      else if (strstr(s, "初始大厅=") == s)
+        param[task].hMainHall = (HWND)atoi(s + 9);
+      fgets(f, s);
+    }
+  }
+  fclose(f);
+}
+
+//用v4.4.2以前的方式读取执行器参数
+void LoadParameter_v4_4_2()
+{
+  InitParameter();//初始化执行器参数
+
+  FILE *f;
+  char path[100], s[1000];
+
+  //读取空间3366登录设置
+  strcpy_s(path, "用户参数\\空间3366登录设置.txt");
+  if (!fopen_s(&f, path, "r"))//打开文件
+  {
+    fgets(f, s);
+    fgets(f, s);
+    fgets(f, s);
+    plot[0].server[0] = atoi(s + 9);
+    fgets(f, s);
+    plot[0].server[1] = atoi(s + 9);
+    fclose(f);
+  }
+
+  //读取执行器参数
+  const POINT noTag = { -1, -1 };
   strcpy_s(path, "用户参数\\执行器参数.txt");
   if (!fopen_s(&f, path, "r"))//打开文件
   {
@@ -9676,17 +12389,19 @@ void LoadParameter()
       if (strlen(s) == 0)
         break;
       if (strstr(s, "缩放比例=") == s)
-        zoom = atoi(s + 9);//读取缩放比例
+        zoom = atoi(s + 9);
       else if (strstr(s, "放卡延迟=") == s)
-        plantDelay = atoi(s + 9);//读取延迟数值
+        plantDelay = atoi(s + 9);
+      else if (strstr(s, "带卡选择=") == s)
+        customOption = atoi(s + 9);
       else if (strstr(s, "翻牌数量=") == s)
         flipNum = atoi(s + 9);
       else if (strstr(s, "背包满时=") == s)
-        bagFullOperation = atoi(s + 9);//读取背包满时操作
+        bagFullOperation = atoi(s + 9);
       else if (strstr(s, "经验满时=") == s)
         expFullOperation = atoi(s + 9);
       else if (strstr(s, "补阵强度=") == s)
-        repairLevel = atoi(s + 9);//读取补阵强度
+        repairLevel = atoi(s + 9);
       else if (strstr(s, "定时启动=") == s)
       {
         if (s[9] == "关"[0]) //读取定时模式和定时秒数
@@ -9708,37 +12423,19 @@ void LoadParameter()
       else if (strstr(s, "自动刷新=") == s)
         maxRefreshTimes = atoi(s + 9);
       else if (strstr(s, "操作速度=") == s)
-        operationSpeed = atoi(s + 9);//读取操作速度
+        operationSpeed = atoi(s + 9);
       else if (strstr(s, "美食大赛=") == s)
-        contestOption = atoi(s + 9);//读取美食大赛
-      else if (strstr(s, "列表路径=") == s) //如果第7行是列表路径
-        sprintf_s(advancePath, s + 9);
+        contestOption = atoi(s + 9);
     }
 
     fclose(f);
   }
-  for (int task = 0; task <= taskNum; task++)
-  {
-    /*初始值设定*/
-    strcpy_s(project[task].track[0], "Track.txt");
-    strcpy_s(project[task].track[1], "");
-    project[task].maxGames = 100;
-    project[task].gameTime = 0;
-    project[task].isProceed[0] = 1;//默认开启继续作战
-    project[task].isProceed[1] = 1;
-    project[task].isCollect[0] = 1;//默认收集选项为“物品”
-    project[task].isCollect[1] = 1;
-    project[task].deck[0] = 0;
-    project[task].deck[1] = 0;
-    project[task].tag[0] = init;
-    project[task].tag[1] = init;
-    project[task].hWndHall[0] = NULL;
-    project[task].hWndHall[1] = NULL;
-    project[task].hMainHall = NULL;
-    project[task].hWnd[0] = NULL;
-    project[task].hWnd[1] = NULL;
-    sprintf_s(path, "用户参数\\任务%d参数.txt", task);
 
+  //读取每个任务的参数
+  const int oldMaxTaskNum = 6;//旧版任务数量
+  for (int task = 0; task < oldMaxTaskNum; task++)
+  {
+    sprintf_s(path, "用户参数\\任务%d参数.txt", task);
     if (fopen_s(&f, path, "r"))
       continue;//如果文件不存在或无法打开，则跳过此任务的读取
     fgets(f, s);
@@ -9747,55 +12444,81 @@ void LoadParameter()
       fclose(f);
       continue;
     }
-    sprintf_s(project[task].track[0], s + 9);//轨道路径
+    sprintf_s(param[task].track[0], s + 9);//轨道路径
     fgets(f, s);
-    sprintf_s(project[task].track[1], s + 9);//轨道路径
+    sprintf_s(param[task].track[1], s + 9);//轨道路径
     fgets(f, s);
-    project[task].maxGames = atoi(s + 9);//执行局数
+    param[task].maxGames = atoi(s + 9);//执行局数
     fgets(f, s);
-    project[task].gameTime = atoi(s + 9);
+    param[task].gameTime = atoi(s + 9);
     fgets(f, s);
-    project[task].isProceed[0] = atoi(s + 13);
+    param[task].isProceed[0] = atoi(s + 13);
     fgets(f, s);
-    project[task].isProceed[1] = atoi(s + 13);
+    param[task].isProceed[1] = atoi(s + 13);
     fgets(f, s);
-    project[task].isCollect[0] = atoi(s + 13);
+    param[task].isCollect[0] = atoi(s + 13);
     fgets(f, s);
-    project[task].isCollect[1] = atoi(s + 13);
+    param[task].isCollect[1] = atoi(s + 13);
     fgets(f, s);
-    project[task].deck[0] = atoi(s + 13);
+    param[task].deck[0] = atoi(s + 13);
     fgets(f, s);
-    project[task].deck[1] = atoi(s + 13);
+    param[task].deck[1] = atoi(s + 13);
     fgets(f, s);
-    sscanf_s(s + 9, "%d,%d", &project[task].tag[0].x, &project[task].tag[0].y);
+    sscanf_s(s + 9, "%d,%d", &param[task].tag[0].x, &param[task].tag[0].y);
     fgets(f, s);
-    sscanf_s(s + 9, "%d,%d", &project[task].tag[1].x, &project[task].tag[1].y);
+    sscanf_s(s + 9, "%d,%d", &param[task].tag[1].x, &param[task].tag[1].y);
     fgets(f, s);
-    project[task].hWndHall[0] = (HWND)atoi(s + 13);
+    param[task].hWndHall[0] = (HWND)atoi(s + 13);
     fgets(f, s);
-    project[task].hWndHall[1] = (HWND)atoi(s + 13);
+    param[task].hWndHall[1] = (HWND)atoi(s + 13);
     fgets(f, s);
-    project[task].hMainHall = (HWND)atoi(s + 13);
+    param[task].hMainHall = (HWND)atoi(s + 13);
     fgets(f, s);
-    project[task].hWnd[0] = (HWND)atoi(s + 13);
+    param[task].hWnd[0] = (HWND)atoi(s + 13);
     fgets(f, s);
-    project[task].hWnd[1] = (HWND)atoi(s + 13);
+    param[task].hWnd[1] = (HWND)atoi(s + 13);
     fclose(f);//读取完毕，关闭文档
   }
 }
-//检查两个账号的大厅窗口有无改变，有则实时修改（用Project.hWnd查找Project.hHall）
+//配置迁移
+void ParameterShifter()
+{
+  //如果没有任务0参数，无需迁移
+  if (!FileExist("用户参数\\任务0参数.txt"))
+    return;
+
+  LoadParameter_v4_4_2();//用旧版方式读取参数
+  SaveParameter();//用新版方式保存参数
+
+  //删除旧版参数文件
+  char path[maxPath];
+  for (int task = 0; task < maxTaskNum; task++)
+  {
+    sprintf_s(path, "用户参数\\任务%d参数.txt", task);
+    remove(path);
+  }
+  remove("用户参数\\空间3366登录设置.txt");
+
+  //如果是更新程序诱发的迁移，迁移完结束程序
+  if (FileExist("用户参数\\shifter.txt"))
+  {
+    remove("用户参数\\shifter.txt");
+    exit(0);
+  }
+}
+//检查两个账号的大厅窗口有无改变，有则实时修改（用Param.hWnd查找Param.hWndHall）
 void CheckHallWindow()
 {
   HWND hHall[2] = {};
-  for (int task = 0; task <= taskNum; task++)
+  for (int task = 0; task < maxTaskNum; task++)
   {
     //检查游戏窗口是否失效
     for (int account = 0; account <= 1; account++)
     {
-      bool isWindow = IsWindow(project[task].hWnd[account]) != 0;
-      if (isWindow != project[task].isWindow[account])
+      bool isWindow = IsWindow(param[task].hWnd[account]) != 0;
+      if (isWindow != param[task].isWindow[account])
       {
-        project[task].isWindow[account] = isWindow;
+        param[task].isWindow[account] = isWindow;
         isRepaintRequired = 1;//发送重绘指令
       }
     }
@@ -9804,17 +12527,17 @@ void CheckHallWindow()
     //检查两个账号的大厅窗口，如果游戏窗口未前端显示或游戏窗口不存在，将得到NULL
     for (int account = 0; account <= 1; account++)
     {
-      HWND hWndGame = project[task].hWnd[account];//采用Project是因为：单刷时也要检查另一个号的大厅变化
+      HWND hWndGame = param[task].hWnd[account];//采用Param是因为：单刷时也要检查另一个号的大厅变化
       if (hWndGame == NULL || !IsWindow(hWndGame)) //如果游戏窗口不存在（可能是刷新期间）或已关闭，不更新大厅句柄
         continue;
       hHall[account] = GetHallWindow(hWndGame);//逐级向上查找大厅窗口
       if (hHall[account] == NULL) //如果是NULL，可能是藏在主大厅未显示，将大厅窗口设为主大厅
-        hHall[account] = project[task].hMainHall;
-      else if (project[task].tag[account].x >= 0)//如果执行器中抓取了这个号的坐标，则更新Project参数
+        hHall[account] = param[task].hMainHall;
+      else if (param[task].tag[account].x >= 0)//如果执行器中抓取了这个号的坐标，则更新Param参数
       {
-        if (project[task].hWndHall[account] != hHall[account])
+        if (param[task].hWndHall[account] != hHall[account])
         {
-          project[task].hWndHall[account] = hHall[account];
+          param[task].hWndHall[account] = hHall[account];
           SaveParameter();//保存到文件
           isRepaintRequired = 1;//发送重绘指令
         }
@@ -9825,50 +12548,49 @@ void CheckHallWindow()
 //显示高级任务输出信息
 void ViewOutput()
 {
-  const int OutputX = titleX + 12, OutputY = titleY + 10, OutputHeight = 40;
-  char AdvanceTip[5][100] = { "操作说明", "1. 删除：右击任务编号", "2. 交换：依次单击两任务编号",
-    "3. 复制：按住Ctrl单击任务编号", "4. 配置完成后在任意岛屿启动" };
+  int list = curList;
+  //输出信息框
+  const int outputX = titleX, outputY = titleY, outputWidth = titleWidth + parameterWidth;
+  const int textX = outputX + 8, textY = outputY + 10, textHeight = 40;//输出文字位置
+  char advanceTip[6][100] = { //高级任务操作提示
+    "操作说明",
+    "1. 删除：右击任务编号",
+    "2. 交换：依次单击两任务编号",
+    "3. 复制：按住Ctrl单击任务编号",
+    "4. 配置完成后在任意岛屿启动",
+    "5. 识别到VIP7以下自动开启收集" };
 
   setlinecolor(grayWhite);
-  PaintGrid(1, 1, titleX, titleY, titleWidth + parameterWidth, titleHeight * 7);
-  if (outputNum == 0)
+  PaintGrid(1, 1, outputX, outputY, outputWidth, titleHeight * 7);
+  if (plot[list].outputNum == 0)
   {
     settextcolor(grayWhite);
-    for (int i = 0; i < 5; i++)
-      outtextxy(OutputX, OutputY + i * OutputHeight, AdvanceTip[i]);
+    for (int i = 0; i < 6; i++)
+      outtextxy(textX, textY + i * textHeight, advanceTip[i]);
   }
   else
   {
     for (int i = 0; i < 6; i++)
     {
-      int order = (outputPage - 1) * 6 + i;
-      if (order < outputNum)
+      int order = (plot[list].outputPage - 1) * 6 + i;
+      if (order < plot[list].outputNum)
       {
-        if (order == outputNum - 1)
-          settextcolor(taskColor[taskNum]);
+        if (order == plot[list].outputNum - 1)
+          settextcolor(taskColor[list]);
         else
           settextcolor(grayWhite);
-        outtextxy(OutputX, OutputY + i * OutputHeight, output[order]);
+        outtextxy(textX, textY + i * textHeight, plot[list].output[order]);
       }
     }
-    char PageString[10];
-    int MaxOutputPage = (outputNum - 1) / 6 + 1;
-    sprintf_s(PageString, "%d/%d", outputPage, MaxOutputPage);
+    char pageString[10];
+    int MaxOutputPage = (plot[list].outputNum - 1) / 6 + 1;
+    sprintf_s(pageString, "%d/%d", plot[list].outputPage, MaxOutputPage);
     settextcolor(grayWhite);
-    if (isAdvanceStarted == 0)
-      CenterView("×", titleX + 10, titleY + 13 * titleHeight / 2 + 1);
-    CenterView(PageString, titleX + (titleWidth + parameterWidth) / 2, OutputY + 6 * OutputHeight + 10);
-
-    PrintHorizontalAdjustButton(titleX + (titleWidth + parameterWidth) / 2, OutputY + 6 * OutputHeight + 10, 50);
+    if (plot[list].isAdvanceStarted == 0)
+      CenterView("×", outputX + 10, outputY + 13 * titleHeight / 2 + 1);
+    CenterView(pageString, outputX + outputWidth / 2, textY + 6 * textHeight + 10);
+    PaintHorizontalAdjust(outputX + outputWidth / 2, textY + 6 * textHeight + 10, 50);
   }
-}
-//绘制靶形光标
-void PaintTargetCursor(int cx, int cy)
-{
-  circle(cx, cy, 8);
-  circle(cx, cy, 4);
-  line(cx - 8, cy, cx + 8, cy);
-  line(cx, cy - 8, cx, cy + 8);
 }
 //显示轨道路径
 void ViewTrack(const char *trackPath, int ButtonClassCode, int row, int column, bool isGray = false)
@@ -9881,8 +12603,8 @@ void ViewTrack(const char *trackPath, int ButtonClassCode, int row, int column, 
   else //如果原字体一行显示不下
   {
     SetFontSize(16);//字体缩小为16px
-    TruncateString(trackPath, Track[1], Track[0], TrackWidth);//分成两行
-    TruncateStringWithEllipsis(Track[2], Track[0], TrackWidth);//第二行如果过长，截尾并添加省略号
+    Truncate(trackPath, Track[1], Track[0], TrackWidth);//分成两行
+    TruncateWithEllipsis(Track[2], Track[0], TrackWidth);//第二行如果过长，截尾并添加省略号
     if ((int)strlen(Track[2]) > zero)//如果一行显示不下
     {
       PrintButton(ButtonClassCode, row, column, Track[1], 0, -9, isGray);
@@ -9896,15 +12618,15 @@ void ViewTrack(const char *trackPath, int ButtonClassCode, int row, int column, 
 //显示普通任务参数
 void ViewParameter()
 {
+  const int trackWidth = parameterWidth - 40;
   char option[17][13] = { "", "房主轨道", "队友轨道", "执行局数", "每局用时", "继续作战", "自动收集", "使用卡组",
     "房主标签", "队友标签", "大厅句柄", "操作", "任务进度", "关卡状态", "本局用时", "平均用时", "累计用时" };
-  char CollectString[3][13] = { "关", "物品", "全部" };
-  char DoubleOption[2][3][13];//两个账号的继续作战、收集、卡组
-  char HallString[2][13];//两个账号的大厅句柄
-  char OptionString[17][maxPath] = {};
-  char StartString[7], HideString[2][7];//启动和隐藏按钮的显示
+  char collectString[3][13] = { "关", "物品", "全部" };
+  char doubleOption[2][3][13];//两个账号的继续作战、收集、卡组
+  char hallString[2][13];//两个账号的大厅句柄
+  char content[17][maxPath] = {};
+  char startString[7], hideString[2][7];//启动和隐藏按钮的显示
   int size;//轨道路径字体大小
-  int TrackWidth = parameterWidth - 40;
 
   settextcolor(grayWhite);
   setlinecolor(grayWhite);
@@ -9913,131 +12635,134 @@ void ViewParameter()
   for (int i = 12; i <= 16; i++)//显示选项名称
     CenterView(option[i], titleX + titleWidth / 2, titleY + (2 * i + 1) * titleHeight / 2 + 2);
 
-  for (int task = 0; task < taskNum; task++)
+  for (int task = 0; IsNormal(task); task++)
   {
     settextcolor(taskColor[task]);
     /*填写每一栏要显示的内容*/
-    sprintf_s(OptionString[0], "任务%d", task);
+    sprintf_s(content[0], param[task].title);
 
     for (int account = 0; account < 2; account++)
-      ViewTrack(project[task].track[account], buttonParameter[0], account + 1, task);
+      ViewTrack(param[task].track[account], buttonParameter[0], account + 1, task);
 
-    sprintf_s(OptionString[3], "%d", project[task].maxGames);
+    sprintf_s(content[3], "%d", param[task].maxGames);
 
-    if (project[task].gameTime == zero)
-      sprintf_s(OptionString[4], "自动检测");
+    if (param[task].gameTime == zero)
+      sprintf_s(content[4], "自动检测");
     else
-      sprintf_s(OptionString[4], "%ds", project[task].gameTime);
+      sprintf_s(content[4], "%ds", param[task].gameTime);
 
     /*继续作战*/
-    sprintf_s(OptionString[5], "|");
+    sprintf_s(content[5], "|");
     for (int i = 0; i <= 1; i++)
-      if (project[task].isProceed[i] == zero)
-        sprintf_s(DoubleOption[i][0], "否");
+      if (param[task].isProceed[i] == zero)
+        sprintf_s(doubleOption[i][0], "否");
       else
-        sprintf_s(DoubleOption[i][0], "是");
+        sprintf_s(doubleOption[i][0], "是");
 
     /*自动收集*/
-    sprintf_s(OptionString[6], "|");
-    sprintf_s(DoubleOption[0][1], CollectString[project[task].isCollect[0]]);
-    sprintf_s(DoubleOption[1][1], CollectString[project[task].isCollect[1]]);
+    sprintf_s(content[6], "|");
+    sprintf_s(doubleOption[0][1], collectString[param[task].isCollect[0]]);
+    sprintf_s(doubleOption[1][1], collectString[param[task].isCollect[1]]);
 
     /*使用卡组*/
-    sprintf_s(OptionString[7], "|");
+    sprintf_s(content[7], "|");
     for (int i = 0; i <= 1; i++)
-      if (project[task].deck[i] == zero)
-        sprintf_s(DoubleOption[i][2], "当前");
+      if (param[task].deck[i] == zero)
+        sprintf_s(doubleOption[i][2], "当前");
       else
-        sprintf_s(DoubleOption[i][2], "卡组%d", project[task].deck[i]);
+        sprintf_s(doubleOption[i][2], "卡组%d", param[task].deck[i]);
 
     //账号标签
     for (int account = 0; account < 2; account++)
-      if (project[task].tag[account].x == -1) //无标签
-        sprintf_s(OptionString[8 + account], "");
-      else if (project[task].tag[account].x == 0 && project[task].tag[account].y == 0) //已绑定游戏窗口
+      if (param[task].tag[account].x == -1) //无标签
+        sprintf_s(content[8 + account], "");
+      else if (param[task].tag[account].x == 0 && param[task].tag[account].y == 0) //已绑定游戏窗口
       {
-        project[task].isWindow[account] = IsWindow(project[task].hWnd[account]) != 0;
-        if (project[task].isWindow[account])
-          sprintf_s(OptionString[8 + account], "%d", (int)project[task].hWnd[account]);
+        param[task].isWindow[account] = IsWindow(param[task].hWnd[account]) != 0;
+        if (param[task].isWindow[account])
+          sprintf_s(content[8 + account], "%d", (int)param[task].hWnd[account]);
         else
-          sprintf_s(OptionString[8 + account], "--");
+          sprintf_s(content[8 + account], "--");
       }
       else
       {
-        project[task].isWindow[account] = IsWindow(project[task].hWnd[account]) != 0;
-        if (project[task].isWindow[account])
-          sprintf_s(OptionString[8 + account], "%d", (int)project[task].hWnd[account]);
+        param[task].isWindow[account] = IsWindow(param[task].hWnd[account]) != 0;
+        if (param[task].isWindow[account])
+          sprintf_s(content[8 + account], "%d", (int)param[task].hWnd[account]);
         else
-          sprintf_s(OptionString[8 + account], "(%d,%d)", project[task].tag[account].x, project[task].tag[account].y);
+          sprintf_s(content[8 + account], "(%d,%d)", param[task].tag[account].x, param[task].tag[account].y);
       }
 
-    sprintf_s(OptionString[10], "|");
-    if (project[task].hWndHall[0] == NULL)
-      sprintf_s(HallString[0], "");
+    sprintf_s(content[10], "|");
+    if (param[task].hWndHall[0] == NULL)
+      sprintf_s(hallString[0], "");
     else
-      sprintf_s(HallString[0], "%d", (int)project[task].hWndHall[0]);
-    if (project[task].hWndHall[1] == NULL)
-      sprintf_s(HallString[1], "");
+      sprintf_s(hallString[0], "%d", (int)param[task].hWndHall[0]);
+    if (param[task].hWndHall[1] == NULL)
+      sprintf_s(hallString[1], "");
     else
-      sprintf_s(HallString[1], "%d", (int)project[task].hWndHall[1]);
+      sprintf_s(hallString[1], "%d", (int)param[task].hWndHall[1]);
 
-    sprintf_s(OptionString[11], "");
+    sprintf_s(content[11], "");
 
     if (isTaskStarted[task] == zero)
-      sprintf_s(StartString, "启动");
+      sprintf_s(startString, "启动");
     else
-      sprintf_s(StartString, "停止");
+      sprintf_s(startString, "停止");
 
     for (int i = 0; i <= 1; i++)
       if (isTaskHided[task][i] == zero)
-        sprintf_s(HideString[i], "隐藏%d", i + 1);
+        sprintf_s(hideString[i], "隐藏%d", i + 1);
       else
-        sprintf_s(HideString[i], "显示%d", i + 1);
+        sprintf_s(hideString[i], "显示%d", i + 1);
 
     /*填写状态信息*/
     if (strcmp(state[task].tip, "未开始") == zero)
       for (int i = 12; i <= 16; i++)
-        strcpy_s(OptionString[i], "");
+        strcpy_s(content[i], "");
     else //已经启动则进行记录
     {
-      GetTimeStringMS(OptionString[14], state[task].currentTime);
-      GetTimeStringMS(OptionString[15], state[task].averageTime / 1000);
-      GetTimeStringHMS(OptionString[16], state[task].totalTime);
+      GetTimeStringMS(content[14], state[task].currentTime);
+      GetTimeStringMS(content[15], state[task].averageTime / 1000);
+      GetTimeStringHMS(content[16], state[task].totalTime);
       if (strcmp(state[task].tip, "运行中") == zero || strcmp(state[task].tip, "已停止") == zero)
       {
-        sprintf_s(OptionString[12], "%d/%d（%s）", state[task].games, state[task].maxGames, state[task].tip);//任务进度
+        sprintf_s(content[12], "%d/%d（%s）", state[task].games, state[task].maxGames, state[task].tip);//任务进度
         switch (state[task].wave)//关卡状态
         {
         case waveOutOfLevel:
-          sprintf_s(OptionString[13], "未进入关卡");
+          sprintf_s(content[13], "未进入关卡");
+          break;
+        case waveLoot:
+          sprintf_s(content[13], "战利品");
           break;
         case waveGrade:
-          sprintf_s(OptionString[13], "结算");
+          sprintf_s(content[13], "结算");
           break;
         case waveFlip:
-          sprintf_s(OptionString[13], "翻牌");
+          sprintf_s(content[13], "翻牌");
           break;
         case waveNoImage:
-          sprintf_s(OptionString[13], "无图像");
+          sprintf_s(content[13], "无图像");
           break;
         case waveTower:
-          sprintf_s(OptionString[13], "魔塔选层");
+          sprintf_s(content[13], "魔塔选层");
           break;
         default:
-          sprintf_s(OptionString[13], "第%d.%d波",
+          sprintf_s(content[13], "第%d.%d波",
             state[task].wave, state[task].smallWave);
           break;
         }
       }
       else if (strcmp(state[task].tip, "已完成") == zero)
       {
-        sprintf_s(OptionString[12], "%d/%d（已完成）", state[task].maxGames, state[task].maxGames);//任务进度
-        sprintf_s(OptionString[13], "未进入关卡");
+        sprintf_s(content[12], "%d/%d（已完成）", state[task].maxGames, state[task].maxGames);//任务进度
+        sprintf_s(content[13], "未进入关卡");
       }
       else //中断的各种情形
       {
-        sprintf_s(OptionString[12], "%d/%d（已中断）", state[task].games, state[task].maxGames);//任务进度
-        sprintf_s(OptionString[13], "%s", state[task].tip);
+        sprintf_s(content[12], "%d/%d（已中断）", state[task].games, state[task].maxGames);//任务进度
+        sprintf_s(content[13], "%s", state[task].tip);
       }
     }
 
@@ -10049,9 +12774,9 @@ void ViewParameter()
     /*隐藏和显示按钮*/
     for (int i = -1; i <= 1; i++)
       CenterRectangle(parameterX + (2 * task + 1) * parameterWidth / 2 + 70 * i, parameterY + 23 * parameterHeight / 2, 30, 15);
-    CenterView(StartString, parameterX + (2 * task + 1) * parameterWidth / 2 - 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
-    CenterView(HideString[0], parameterX + (2 * task + 1) * parameterWidth / 2, parameterY + (2 * 11 + 1) * parameterHeight / 2);
-    CenterView(HideString[1], parameterX + (2 * task + 1) * parameterWidth / 2 + 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
+    CenterView(startString, parameterX + (2 * task + 1) * parameterWidth / 2 - 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
+    CenterView(hideString[0], parameterX + (2 * task + 1) * parameterWidth / 2, parameterY + (2 * 11 + 1) * parameterHeight / 2);
+    CenterView(hideString[1], parameterX + (2 * task + 1) * parameterWidth / 2 + 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
 
     SetFontSize(18);
     if (monitor[task].isExist)
@@ -10069,19 +12794,19 @@ void ViewParameter()
         settextcolor(stateColor[task]);
 
       if (i == zero || (i >= 3 && i <= 10))
-        CenterView(OptionString[i], parameterX + (2 * task + 1) * parameterWidth / 2, parameterY + (2 * i + 1) * parameterHeight / 2);
+        CenterView(content[i], parameterX + (2 * task + 1) * parameterWidth / 2, parameterY + (2 * i + 1) * parameterHeight / 2);
       else if (i >= 12)
-        CenterView(OptionString[i], parameterX + (2 * task + 1) * parameterWidth / 2, parameterY + (2 * i + 1) * parameterHeight / 2 + 2);
+        CenterView(content[i], parameterX + (2 * task + 1) * parameterWidth / 2, parameterY + (2 * i + 1) * parameterHeight / 2 + 2);
 
       if (i >= 5 && i <= 7)
       {
-        CenterView(DoubleOption[0][i - 5], parameterX + (2 * task + 1) * parameterWidth / 2 - 45, parameterY + (2 * i + 1) * parameterHeight / 2);
-        CenterView(DoubleOption[1][i - 5], parameterX + (2 * task + 1) * parameterWidth / 2 + 45, parameterY + (2 * i + 1) * parameterHeight / 2);
+        CenterView(doubleOption[0][i - 5], parameterX + (2 * task + 1) * parameterWidth / 2 - 45, parameterY + (2 * i + 1) * parameterHeight / 2);
+        CenterView(doubleOption[1][i - 5], parameterX + (2 * task + 1) * parameterWidth / 2 + 45, parameterY + (2 * i + 1) * parameterHeight / 2);
       }
       if (i == 10)
       {
-        CenterView(HallString[0], parameterX + (2 * task + 1) * parameterWidth / 2 - 53, parameterY + (2 * i + 1) * parameterHeight / 2);
-        CenterView(HallString[1], parameterX + (2 * task + 1) * parameterWidth / 2 + 53, parameterY + (2 * i + 1) * parameterHeight / 2);
+        CenterView(hallString[0], parameterX + (2 * task + 1) * parameterWidth / 2 - 53, parameterY + (2 * i + 1) * parameterHeight / 2);
+        CenterView(hallString[1], parameterX + (2 * task + 1) * parameterWidth / 2 + 53, parameterY + (2 * i + 1) * parameterHeight / 2);
       }
 
       if (i >= 5 && i <= 7)
@@ -10096,10 +12821,10 @@ void ViewParameter()
       if (i >= 8 && i <= 9)
       {
         PaintTargetCursor(parameterX + task * parameterWidth + 12, parameterY + (2 * i + 1) * parameterHeight / 2);
-        if ((i == 8 && project[task].tag[0].x != -1) || (i == 9 && project[task].tag[1].x != -1))
+        if ((i == 8 && param[task].tag[0].x != -1) || (i == 9 && param[task].tag[1].x != -1))
           CenterView("×", parameterX + (task + 1) * parameterWidth - 10, parameterY + (2 * i + 1) * parameterHeight / 2);
       }
-      if ((i == 1 && strlen(project[task].track[0]) > 0) || (i == 2 && strlen(project[task].track[1]) > 0))
+      if ((i == 1 && strlen(param[task].track[0]) > 0) || (i == 2 && strlen(param[task].track[1]) > 0))
       {
         CenterView("×", parameterX + (task + 1) * parameterWidth - 10, parameterY + (2 * i + 1) * parameterHeight / 2);
         CenterView("↑", parameterX + task * parameterWidth + 7, parameterY + (2 * i + 1) * parameterHeight / 2 + 1);
@@ -10116,110 +12841,113 @@ void ViewParameter()
 //显示高级任务参数
 void ViewAdvanceParameter()
 {
-  const int task = taskNum;
+  int list = curList;
+  int task = GetTask(list);
   const int ParameterNum = 10;
-  char option[ParameterNum][13] = { "自动收集", "1P标签", "2P标签", "大厅句柄", "操作", "任务进度", "关卡状态", "本局用时", "平均用时", "累计用时" };
-  char OptionString[ParameterNum][20];
-  char StartString[7], HideString[2][7];
-
-  char CollectString[3][7] = { "关", "物品", "全部" };
-  char CollectOption[2][13];//两个账号的继续作战、收集、卡组
-  char HallString[2][13];//两个账号的大厅句柄
+  //参数标题
+  char title[ParameterNum][13] = { "", "1P标签", "2P标签", "大厅句柄", "操作", "任务进度",
+    "关卡状态", "本局用时", "平均用时", "累计用时" };
+  char content[ParameterNum][30] = {};//参数显示内容
+  char startString[7], hideString[2][7];//启动 隐藏
+  char hallString[2][13];//两个账号的大厅句柄
 
   /*填写参数信息*/
-  sprintf_s(OptionString[0], "|");//自动收集
-  sprintf_s(CollectOption[0], CollectString[project[task].isCollect[0]]);
-  sprintf_s(CollectOption[1], CollectString[project[task].isCollect[1]]);
+
+  //任务标题
+  sprintf_s(content[0], param[task].title);
 
   //账号标签
   for (int account = 0; account < 2; account++)
-    if (project[task].tag[account].x == -1) //无标签
-      sprintf_s(OptionString[1 + account], "");
-    else if (project[task].tag[account].x == 0 && project[task].tag[account].y == 0) //已绑定游戏窗口
+    if (param[task].tag[account].x == -1) //无标签
+      sprintf_s(content[1 + account], "");
+    else if (param[task].tag[account].x == 0 && param[task].tag[account].y == 0) //已绑定游戏窗口
     {
-      project[task].isWindow[account] = IsWindow(project[task].hWnd[account]) != 0;
-      if (project[task].isWindow[account])
-        sprintf_s(OptionString[1 + account], "%d", (int)project[task].hWnd[account]);
+      param[task].isWindow[account] = IsWindow(param[task].hWnd[account]) != 0;
+      if (param[task].isWindow[account])
+        sprintf_s(content[1 + account], "%d", (int)param[task].hWnd[account]);
       else
-        sprintf_s(OptionString[1 + account], "--");
+        sprintf_s(content[1 + account], "--");
     }
     else
     {
-      project[task].isWindow[account] = IsWindow(project[task].hWnd[account]) != 0;
-      if (project[task].isWindow[account])
-        sprintf_s(OptionString[1 + account], "%d", (int)project[task].hWnd[account]);
+      param[task].isWindow[account] = IsWindow(param[task].hWnd[account]) != 0;
+      if (param[task].isWindow[account])
+        sprintf_s(content[1 + account], "%d", (int)param[task].hWnd[account]);
       else
-        sprintf_s(OptionString[1 + account], "(%d,%d)", project[task].tag[account].x, project[task].tag[account].y);
+        sprintf_s(content[1 + account], "(%d,%d)", param[task].tag[account].x, param[task].tag[account].y);
     }
 
-  sprintf_s(OptionString[3], "|"); //大厅句柄
-  if (project[task].hWndHall[0] == NULL)
-    sprintf_s(HallString[0], "");
+  sprintf_s(content[1 + 2], "|"); //大厅句柄
+  if (param[task].hWndHall[0] == NULL)
+    sprintf_s(hallString[0], "");
   else
-    sprintf_s(HallString[0], "%d", (int)project[task].hWndHall[0]);
-  if (project[task].hWndHall[1] == NULL)
-    sprintf_s(HallString[1], "");
+    sprintf_s(hallString[0], "%d", (int)param[task].hWndHall[0]);
+  if (param[task].hWndHall[1] == NULL)
+    sprintf_s(hallString[1], "");
   else
-    sprintf_s(HallString[1], "%d", (int)project[task].hWndHall[1]);
+    sprintf_s(hallString[1], "%d", (int)param[task].hWndHall[1]);
 
-  sprintf_s(OptionString[4], "");//操作
+  sprintf_s(content[1 + 3], "");//操作
 
   /*填写状态信息*/
   if (strcmp(state[task].tip, "未开始") == zero)
-    for (int i = 5; i <= 9; i++)
-      strcpy_s(OptionString[i], "");
+    for (int i = 4; i <= 8; i++)
+      strcpy_s(content[1 + i], "");
   else //已经启动则进行记录
   {
-    GetTimeStringMS(OptionString[7], state[task].currentTime);
-    GetTimeStringMS(OptionString[8], state[task].averageTime / 1000);
-    GetTimeStringHMS(OptionString[9], state[task].totalTime);
+    GetTimeStringMS(content[1 + 6], state[task].currentTime);
+    GetTimeStringMS(content[1 + 7], state[task].averageTime / 1000);
+    GetTimeStringHMS(content[1 + 8], state[task].totalTime);
     if (strcmp(state[task].tip, "运行中") == zero || strcmp(state[task].tip, "已停止") == zero)
     {
-      sprintf_s(OptionString[5], "%d/%d（%s）", state[task].games, state[task].maxGames, state[task].tip);//任务进度
+      sprintf_s(content[1 + 4], "%d/%d（%s）", state[task].games, state[task].maxGames, state[task].tip);//任务进度
       switch (state[task].wave)//关卡状态
       {
       case waveOutOfLevel:
-        sprintf_s(OptionString[6], "未进入关卡");
+        sprintf_s(content[1 + 5], "未进入关卡");
+        break;
+      case waveLoot:
+        sprintf_s(content[1 + 5], "战利品");
         break;
       case waveGrade:
-        sprintf_s(OptionString[6], "结算");
+        sprintf_s(content[1 + 5], "结算");
         break;
       case waveFlip:
-        sprintf_s(OptionString[6], "翻牌");
+        sprintf_s(content[1 + 5], "翻牌");
         break;
       case waveNoImage:
-        sprintf_s(OptionString[6], "无图像");
+        sprintf_s(content[1 + 5], "无图像");
         break;
       case waveTower:
-        sprintf_s(OptionString[6], "魔塔选层");
+        sprintf_s(content[1 + 5], "魔塔选层");
         break;
       default:
-        sprintf_s(OptionString[6], "第%d.%d波", state[task].wave, state[task].smallWave);
+        sprintf_s(content[1 + 5], "第%d.%d波", state[task].wave, state[task].smallWave);
         break;
       }
     }
     else if (strcmp(state[task].tip, "已完成") == zero)
     {
-      sprintf_s(OptionString[5], "%d/%d（已完成）", state[task].maxGames, state[task].maxGames);//任务进度
-      sprintf_s(OptionString[6], "未进入关卡");
+      sprintf_s(content[1 + 4], "%d/%d（已完成）", state[task].maxGames, state[task].maxGames);//任务进度
+      sprintf_s(content[1 + 5], "未进入关卡");
     }
     else //中断的各种情形
     {
-      sprintf_s(OptionString[5], "%d/%d（已中断）", state[task].games, state[task].maxGames);//任务进度
-      sprintf_s(OptionString[6], "%s", state[task].tip);
+      sprintf_s(content[1 + 4], "%d/%d（已中断）", state[task].games, state[task].maxGames);//任务进度
+      sprintf_s(content[1 + 5], "%s", state[task].tip);
     }
   }
 
-  if (isAdvanceStarted == 0)
-    sprintf_s(StartString, "启动");
+  if (plot[list].isAdvanceStarted == 0)
+    sprintf_s(startString, "启动");
   else
-    sprintf_s(StartString, "停止");
+    sprintf_s(startString, "停止");
 
   for (int i = 0; i <= 1; i++)
     if (isTaskHided[task][i] == zero)
-      sprintf_s(HideString[i], "隐藏%d", i + 1);
+      sprintf_s(hideString[i], "隐藏%d", i + 1);
     else
-      sprintf_s(HideString[i], "显示%d", i + 1);
+      sprintf_s(hideString[i], "显示%d", i + 1);
 
   setlinecolor(grayWhite);
   PaintButtonGroupGrid(buttonParameterTitle[1]);
@@ -10229,67 +12957,64 @@ void ViewAdvanceParameter()
   settextcolor(grayWhite);
 
   int size = GetFontSize();
-  setlinecolor(taskColor[taskNum]);
-  settextcolor(taskColor[taskNum]);
+  setlinecolor(taskColor[list]);
+  settextcolor(taskColor[list]);
   /*隐藏和显示按钮*/
   for (int i = -1; i <= 1; i = i++)
     CenterRectangle(parameterX + parameterWidth / 2 + 70 * i, parameterY + 23 * parameterHeight / 2, 30, 15);
-  CenterView(StartString, parameterX + parameterWidth / 2 - 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
-  CenterView(HideString[0], parameterX + parameterWidth / 2, parameterY + (2 * 11 + 1) * parameterHeight / 2);
-  CenterView(HideString[1], parameterX + parameterWidth / 2 + 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
+  CenterView(startString, parameterX + parameterWidth / 2 - 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
+  CenterView(hideString[0], parameterX + parameterWidth / 2, parameterY + (2 * 11 + 1) * parameterHeight / 2);
+  CenterView(hideString[1], parameterX + parameterWidth / 2 + 70, parameterY + (2 * 11 + 1) * parameterHeight / 2);
 
   SetFontSize(18);
   if (monitor[task].isExist)
-    settextcolor(taskColor[task]);
+    settextcolor(taskColor[list]);
   else
     settextcolor(RGB(128, 128, 128));
-  CenterView("info", parameterX + parameterWidth - 19, parameterY + (2 * 6 + 1) * parameterHeight / 2);
+  CenterView("info", parameterX + parameterWidth - 19, parameterY + 13 * parameterHeight / 2);
   SetFontSize(size);
 
+  //显示参数和状态内容
   for (int i = 0; i < ParameterNum; i++)
   {
-    if (i <= 4)
+    if (i < 5) //参数部分
     {
       settextcolor(grayWhite);
-      PrintButton(buttonParameterTitle[1], 0, i, option[i]);
-      settextcolor(taskColor[taskNum]);
-      PrintButton(buttonParameter[1], 0, i, OptionString[i]);
+      PrintButton(buttonParameterTitle[1], 0, i, title[i]); //参数标题
+      settextcolor(taskColor[list]);
+      PrintButton(buttonParameter[1], 0, i, content[i]); //参数内容
     }
-    else
+    else //状态部分
     {
       settextcolor(grayWhite);
-      PrintButton(buttonStateTitle[1], 0, i - 5, option[i]);
-      settextcolor(stateColor[taskNum]);
-      PrintButton(buttonState[1], 0, i - 5, OptionString[i]);
+      PrintButton(buttonStateTitle[1], 0, i - 5, title[i]); //状态标题
+      settextcolor(stateColor[list]);
+      PrintButton(buttonState[1], 0, i - 5, content[i]); //状态内容
     }
 
-    if (i == 0)
-    {
-      SetFontSize(16);
-      CenterView("▲", parameterX + parameterWidth - 10, parameterY + (2 * i + 15) * parameterHeight / 2 - 7);
-      CenterView("▼", parameterX + parameterWidth - 10, parameterY + (2 * i + 15) * parameterHeight / 2 + 10);
-      CenterView("▲", parameterX + 10, parameterY + (2 * i + 15) * parameterHeight / 2 - 7);
-      CenterView("▼", parameterX + 10, parameterY + (2 * i + 15) * parameterHeight / 2 + 10);
-      SetFontSize(size);
-      CenterView(CollectOption[0], parameterX + parameterWidth / 2 - 45, parameterY + (2 * i + 15) * parameterHeight / 2);
-      CenterView(CollectOption[1], parameterX + parameterWidth / 2 + 45, parameterY + (2 * i + 15) * parameterHeight / 2);
-    }
-    if (i == 3)
-    {
-      CenterView(HallString[0], parameterX + parameterWidth / 2 - 53, parameterY + (2 * i + 15) * parameterHeight / 2);
-      CenterView(HallString[1], parameterX + parameterWidth / 2 + 53, parameterY + (2 * i + 15) * parameterHeight / 2);
-    }
-
-    if (i >= 1 && i <= 2)
+    if (i == 0) //高级任务切换按钮
+      PaintHorizontalAdjust(FindButton(buttonParameter[1], 0, 0));
+    else if (i == 1 || i == 2) //1P/2P标签左侧的图标和右侧的×
     {
       PaintTargetCursor(parameterX + 12, parameterY + (2 * i + 15) * parameterHeight / 2);
-      if ((i == 1 && project[task].tag[0].x != -1) || (i == 2 && project[task].tag[1].x != -1))
-        CenterView("×", parameterX + parameterWidth - 10, parameterY + (2 * i + 15) * parameterHeight / 2);
+      if ((i == 1 && param[task].tag[0].x != -1) || (i == 2 && param[task].tag[1].x != -1))
+        CenterView("×", parameterX + parameterWidth - 10,
+          parameterY + (2 * i + 15) * parameterHeight / 2);
     }
-    if (i == 5)
-      if (isTaskStarted[taskNum] == zero)//任务未运行时显示×，运行时不可删除
-        if (strcmp(state[taskNum].tip, "未开始") != zero)
-          CenterView("×", parameterX + parameterWidth - 10, parameterY + (2 * i + 15) * parameterHeight / 2 + 2);
+    else if (i == 3) //大厅句柄
+    {
+      CenterView(hallString[0], parameterX + parameterWidth / 2 - 53,
+        parameterY + (2 * i + 15) * parameterHeight / 2);
+      CenterView(hallString[1], parameterX + parameterWidth / 2 + 53,
+        parameterY + (2 * i + 15) * parameterHeight / 2);
+    }
+    else if (i == 5) //任务进度右侧的×
+    {
+      if (isTaskStarted[task] == zero)//任务未运行时显示×，运行时不可删除
+        if (strcmp(state[task].tip, "未开始") != zero)
+          CenterView("×", parameterX + parameterWidth - 10,
+            parameterY + (2 * i + 15) * parameterHeight / 2 + 2);
+    }
 
   }
   setlinecolor(grayWhite);
@@ -10298,7 +13023,7 @@ void ViewAdvanceParameter()
 void ViewZoom()
 {
   settextcolor(grayWhite);
-  PrintHorizontalAdjustButton(zoomX, zoomY, zoomWidth, zoomHeight); //显示缩放比例
+  PaintHorizontalAdjust(zoomX, zoomY, zoomWidth, zoomHeight); //显示缩放比例
   char zoomString[10];
   sprintf_s(zoomString, "%d %%", zoom);
   CenterView(zoomString, zoomX + zoomWidth / 2, zoomY + zoomHeight / 2);
@@ -10306,23 +13031,26 @@ void ViewZoom()
 //画勾选框
 void PaintCheckBox(int buttonClassCode, int row, int column, int offsetX)
 {
-  int Code0 = FindButton(buttonClassCode, row, column);
-  PaintGrid(1, 1, Button[Code0].x + Button[Code0].width / 2 + offsetX - 10,
-    Button[Code0].y + Button[Code0].height / 2 - 10, 20, 20);//画勾选框
+  int code0 = FindButton(buttonClassCode, row, column);
+  PaintCheckBox(buttons[code0].x, buttons[code0].y, buttons[code0].width,
+    buttons[code0].height, offsetX);
 }
 //画勾选框的√
 void PaintCheck(int buttonClassCode, int row, int column, int offsetX)
 {
-  PrintButton(buttonClassCode, row, column, "√", offsetX + 1, 3);
+  int buttonCode = buttonGroup[buttonClassCode].firstButton
+    + row * buttonGroup[buttonClassCode].column + column;
+  RectType button = buttons[buttonCode];
+  PaintCheck(button.x, button.y, button.width, button.height, offsetX);
 }
 //显示右侧设置按钮
-void ViewSettings()
+void ViewSetting()
 {
   const int MaxSettingsNum = 5; //设置按钮个数
-  char upperSettings[3][13] = { "全部停止", "后台运行", "一键报错" };
-  char SettingsString[2][2 * MaxSettingsNum][13] = {
-    { "放卡延迟", "", "翻牌数量", "", "背包满时", "", "经验满时", "", "补阵强度", "" },
-    { "定时启动", "", "自动刷新", "", "操作速度", "", "", "" } };
+  char upperSettings[3][20] = { "全部停止", "后台运行", "一键报错" };
+  char SettingsString[2][2 * MaxSettingsNum][20] = {
+    { "带卡选择", "", "翻牌数量", "", "背包满时", "", "经验满时", "", "补阵强度", "" },
+    { "定时启动", "", "自动刷新", "", "操作速度", "", "一键配轨", "" } };
 
   setlinecolor(grayWhite);
   settextcolor(grayWhite);
@@ -10336,7 +13064,11 @@ void ViewSettings()
   {
     SettingsNum = 5;
 
-    sprintf_s(SettingsString[0][1], "%dms", plantDelay); //放卡延迟
+    if (customOption == 0) //带卡选择
+      sprintf_s(SettingsString[0][1], "最高星");
+    else if (customOption == 1)
+      sprintf_s(SettingsString[0][1], "最靠前");
+
     sprintf_s(SettingsString[0][3], "%d", flipNum);//翻牌数量
 
     if (bagFullOperation == 1) //背包满时
@@ -10344,7 +13076,7 @@ void ViewSettings()
     else
       sprintf_s(SettingsString[0][5], "停止");
 
-    if (expFullOperation == 1)
+    if (expFullOperation == 1) //经验满时
       sprintf_s(SettingsString[0][7], "继续");
     else
       sprintf_s(SettingsString[0][7], "停止");
@@ -10359,13 +13091,14 @@ void ViewSettings()
       CenterView(SettingsString[0][i], settingsX + settingsWidth / 2, settingsY + (2 * i + 1) * settingsHeight / 2);
     for (int i = 1; i < SettingsNum * 2; i++) //显示箭头
       if (i % 2 == 1 || i == 10)
-        PrintHorizontalAdjustButton(settingsX, settingsY + i * settingsHeight, settingsWidth, settingsHeight);
+        PaintHorizontalAdjust(settingsX, settingsY + i * settingsHeight, settingsWidth, settingsHeight);
   }
   else if (mode == 2)
   {
-    SettingsNum = 3;
+    int list = curList;
+    SettingsNum = 4;
 
-    if (timerMode == 0) //定时
+    if (timerMode == 0) //定时启动
       sprintf_s(SettingsString[1][1], "关");
     else
     {
@@ -10391,26 +13124,30 @@ void ViewSettings()
     else
       sprintf_s(SettingsString[1][5], "慢");
 
+    if (globalAccelarationTime == 0)
+      sprintf_s(SettingsString[1][7], "加速：关");
+    else
+      sprintf_s(SettingsString[1][7], "加速：%d", globalAccelarationTime);
+
     PaintGrid(SettingsNum * 2, 1, settingsX, settingsY, settingsWidth, settingsHeight);//按钮
     for (int i = 0; i < SettingsNum * 2; i++) //显示文字
-      CenterView(SettingsString[1][i], settingsX + settingsWidth / 2, settingsY + (2 * i + 1) * settingsHeight / 2);
-    for (int i = 3; i < SettingsNum * 2; i = i + 2) //显示箭头
-      PrintHorizontalAdjustButton(settingsX, settingsY + i * settingsHeight, settingsWidth, settingsHeight);
-    /*
-    int code = FindButtonClass("lowerSettings2");
-    PaintCheckBox(code, 6, 0, -28);
-    PaintCheckBox(code, 7, 0, -28);
-    if (isSignChecked)
-      PaintCheck(code, 6, 0, -28);
-    if (isManureChecked)
-      PaintCheck(code, 7, 0, -28);
-      */
-      //翻页按钮
+    {
+      if (i == 3)
+        LongCenterView(SettingsString[1][i], settingsX + settingsWidth / 2,
+          settingsY + (2 * i + 1) * settingsHeight / 2, settingsWidth - 5);
+      else
+        CenterView(SettingsString[1][i], settingsX + settingsWidth / 2,
+          settingsY + (2 * i + 1) * settingsHeight / 2);
+    }
+    for (int i = 3; i < (SettingsNum - 1) * 2; i = i + 2) //显示箭头
+      PaintHorizontalAdjust(settingsX, settingsY + i * settingsHeight, settingsWidth, settingsHeight);
+
+    //翻页按钮
     char PageString[10];
-    int TotalAdvancePage = min(advanceNum / advanceNumPerPage + 1, maxAdvancePage);
-    sprintf_s(PageString, "%d/%d", advancePage, TotalAdvancePage);
+    int TotalAdvancePage = min(plot[list].advanceNum / advanceNumPerPage + 1, maxAdvancePage);
+    sprintf_s(PageString, "%d/%d", plot[list].advancePage, TotalAdvancePage);
     CenterView(PageString, settingsX + settingsWidth / 2, settingsY + 17 * settingsHeight / 2 + 2);
-    PrintHorizontalAdjustButton(settingsX + settingsWidth / 2, settingsY + 17 * settingsHeight / 2 + 2, settingsWidth / 2);
+    PaintHorizontalAdjust(settingsX + settingsWidth / 2, settingsY + 17 * settingsHeight / 2 + 2, settingsWidth / 2);
 
     //撤销按钮
     PaintGrid(2, 1, settingsX, settingsY + 9 * settingsHeight + 2, settingsWidth, settingsHeight);
@@ -10433,12 +13170,12 @@ void ViewMode()
   }
 }
 //判断高级任务选中状态：0=无选中，1=部分选中，2=全部选中
-int AdvanceSelectionState()
+int AdvanceSelectionStates(int list)
 {
   int oneSelected = 0, allSelected = 1;
-  for (int order = 0; order < advanceNum; order++)
+  for (int order = 0; order < plot[list].advanceNum; order++)
   {
-    if (advance[order].selected == 1)
+    if (plot[list].advance[order].selected == 1)
       oneSelected = 1;
     else
       allSelected = 0;
@@ -10452,24 +13189,25 @@ int AdvanceSelectionState()
 //显示高级任务列表
 void ViewAdvance()
 {
+  int list = curList;
   const int tickBoxOffsetX = -16, idOffsetX = 14;
-  const int TrackWidth = parameterWidth - 40;
-  char Content[advanceTitleNum][100] = {};
-  char Title[advanceTitleNum][13] = { "", "类型", "关卡", "局数", "钥匙", "房主", "1P轨道", "卡组", "2P轨道", "卡组" };
-  char *isMissionList = strstr(advancePath, "公会任务.txt");//当前打开的是否为公会任务列表
+  const int trackWidth = parameterWidth - 40;
+  char content[advanceTitleNum][100] = {};
+  char title[advanceTitleNum][13] = { "", "类型", "关卡", "局数", "钥匙", "房主", "1P轨道", "卡组", "2P轨道", "卡组" };
+  char *isMissionList = strstr(plot[list].advancePath, "公会任务.txt");//当前打开的是否为公会任务列表
 
   //公会任务涂色
   setfillcolor(RGB(30, 72, 30));
-  ButtonType &rightButton = Button[FindButton(buttonAdvance, 0, 0)];
+  RectType &rightButton = buttons[FindButton(buttonAdvance, 0, 0)];
   int advanceRight = rightButton.x + rightButton.width;
   for (int pageOrder = 0; pageOrder < advanceNumPerPage; pageOrder++)
   {
-    int order = (advancePage - 1) * advanceNumPerPage + pageOrder;
-    if (order >= advanceNum)
+    int order = (plot[list].advancePage - 1) * advanceNumPerPage + pageOrder;
+    if (order >= plot[list].advanceNum)
       break;
-    if (advance[order].isMission == 1)
+    if (plot[list].advance[order].isMission == 1)
     {
-      ButtonType &button = Button[FindButton(buttonAdvance, pageOrder + 1, 0)];
+      RectType &button = buttons[FindButton(buttonAdvance, pageOrder + 1, 0)];
       solidrectangle(advanceX, button.y, advanceRight, button.y + button.height);
     }
   }
@@ -10480,30 +13218,30 @@ void ViewAdvance()
 
   settextcolor(grayWhite);
   for (int i = 0; i < advanceTitleNum; i++)//显示标题
-    PrintButton(buttonAdvance, 0, i, Title[i]);
+    PrintButton(buttonAdvance, 0, i, title[i]);
 
   int Code0 = FindButton(buttonAdvance, 0, 0);
   PaintCheckBox(buttonAdvance, 0, 0, tickBoxOffsetX);//画全选框
 
-  switch (AdvanceSelectionState()) //全选框状态
+  switch (AdvanceSelectionStates(list)) //全选框状态
   {
   case 2://全部选中
     PaintCheck(buttonAdvance, 0, 0, tickBoxOffsetX);//画全选框
     break;
   case 1://部分选中
     setfillcolor(grayWhite);
-    fillrectangle(Button[Code0].x + advanceWidth[0] / 2 + tickBoxOffsetX - 5, Button[Code0].y + 15,
-      Button[Code0].x + advanceWidth[0] / 2 + tickBoxOffsetX + 5, Button[Code0].y + 25);
+    fillrectangle(buttons[Code0].x + advanceWidth[0] / 2 + tickBoxOffsetX - 5, buttons[Code0].y + 15,
+      buttons[Code0].x + advanceWidth[0] / 2 + tickBoxOffsetX + 5, buttons[Code0].y + 25);
     setfillcolor(defaultFillColor);
   }
 
   PrintButton(buttonAdvance, 0, 0, "ID", idOffsetX, 0);
-  if (advanceNum < maxAdvanceNum)
+  if (plot[list].advanceNum < maxAdvanceNum)
   {
-    int newButtonPageOrder = advanceNum - (advancePage - 1) * advanceNumPerPage;
+    int newButtonPageOrder = plot[list].advanceNum - (plot[list].advancePage - 1) * advanceNumPerPage;
     if (newButtonPageOrder >= 0 && newButtonPageOrder < advanceNumPerPage)
     {
-      if (advanceSelected == 0)
+      if (plot[list].advanceSelected == 0)
         PrintButton(buttonAdvance, newButtonPageOrder + 1, 0, "【新增】");
       else
         PrintButton(buttonAdvance, newButtonPageOrder + 1, 0, "【复制】");
@@ -10512,18 +13250,18 @@ void ViewAdvance()
   //显示高级任务文字
   for (int pageOrder = 0; pageOrder < advanceNumPerPage; pageOrder++)
   {
-    int order = (advancePage - 1) * advanceNumPerPage + pageOrder;
-    if (order >= advanceNum)
+    int order = (plot[list].advancePage - 1) * advanceNumPerPage + pageOrder;
+    if (order >= plot[list].advanceNum)
       break;
-    if (advanceSelected - 100 == order)
+    if (plot[list].advanceSelected - 100 == order)
       settextcolor(RGB(255, 0, 0));
-    else if (advance[order].selected == 1)
+    else if (plot[list].advance[order].selected == 1)
     {
-      if (advance[order].type < basicTypeNum)
-        settextcolor(taskColor[advance[order].type / 2]);
-      else if (advance[order].type < basicTypeNum + 6) //主线：BasicTypeNum ~ BasicTypeNum + 5
+      if (plot[list].advance[order].type < basicTypeNum)
+        settextcolor(taskColor[plot[list].advance[order].type / 2]);
+      else if (plot[list].advance[order].type < basicTypeNum + 6) //主线：BasicTypeNum ~ BasicTypeNum + 5
         settextcolor(taskColor[3]);
-      else if (advance[order].type < basicTypeNum + 11) //副本：BasicTypeNum + 6 ~ BasicTypeNum + 10
+      else if (plot[list].advance[order].type < basicTypeNum + 11) //副本：BasicTypeNum + 6 ~ BasicTypeNum + 10
         settextcolor(taskColor[4]);
       else
         settextcolor(taskColor[5]);
@@ -10532,62 +13270,69 @@ void ViewAdvance()
       settextcolor(RGB(144, 144, 144));
 
     //是否使用灰色显示轨道和卡组（卡组为0时以灰色显示）
-    bool isGray[2] = { advance[order].deck[0] == 0, advance[order].deck[1] == 0 };
+    bool isGray[2] = { plot[list].advance[order].deck[0] == 0, plot[list].advance[order].deck[1] == 0 };
 
     //战斗任务：填写并显示轨道路径
     for (int account = 0; account < 2; account++)
     {
       int contentOrder = TRACK_0 + 2 * account;
-      if (!isNoTrack(advance[order]))
-        ViewTrack(advance[order].track[account], buttonAdvance, pageOrder + 1, contentOrder, isGray[account]);
+      if (!IsNoTrack(plot[list].advance[order]))
+        ViewTrack(plot[list].advance[order].track[account], buttonAdvance, pageOrder + 1, contentOrder, isGray[account]);
       else
         PrintButton(buttonAdvance, pageOrder + 1, contentOrder, "-", 0, 0, isGray[account]);
     }
 
     for (int i = 0; i < advanceTitleNum; i++)//清空显示内容
-      sprintf_s(Content[i], "");
-    sprintf_s(Content[ID], "%d", order + 1);//ID
-    sprintf_s(Content[TYPE], "%s", advanceName[advance[order].type]);//类型
-    GetLevelName(Content[LEVEL], advance[order].type, advance[order].level);//关卡
+      sprintf_s(content[i], "");
+    sprintf_s(content[ID], "%d", order + 1);//ID
+    sprintf_s(content[TYPE], "%s", typeName[plot[list].advance[order].type]);//类型
+    GetLevelName(content[LEVEL], plot[list].advance[order].type, plot[list].advance[order].level);//关卡
 
     //局数和钥匙
-    if (isNoTrack(advance[order]))
+    if (IsNoTrack(plot[list].advance[order]))
     {
-      sprintf_s(Content[GAMES], "-");
-      sprintf_s(Content[KEY], "-");
+      sprintf_s(content[GAMES], "-");
+      sprintf_s(content[KEY], "-");
     }
     else
     {
-      sprintf_s(Content[GAMES], "%d", advance[order].maxGames);
-      sprintf_s(Content[KEY], "%s", advance[order].isProceed ? "√" : "");//钥匙
+      sprintf_s(content[GAMES], "%d", plot[list].advance[order].maxGames);
+      sprintf_s(content[KEY], "%s", plot[list].advance[order].isProceed ? "√" : "");//钥匙
     }
 
-    if (isSignOrManure(advance[order]))
-      sprintf_s(Content[HOST], "-");//房主
+    //房主
+    if (IsSpecial(plot[list].advance[order]))
+      strcpy_s(content[HOST], "-");
+    else if (plot[list].advance[order].host == 2)
+      strcpy_s(content[HOST], "同步");
     else
-      sprintf_s(Content[HOST], "%dP", advance[order].hostAccount + 1);//房主
+      sprintf_s(content[HOST], "%dP", plot[list].advance[order].host + 1);
 
+    //显示卡组
     for (int account = 0; account < 2; account++)
     {
       int contentOrder = TRACK_0 + 2 * account;
-      sprintf_s(Content[contentOrder], "");
-      if (advance[order].deck[account] == 0)
-        sprintf_s(Content[contentOrder + 1], "×");
+      sprintf_s(content[contentOrder], "");
+
+      if (plot[list].advance[order].deck[account] == 0)
+        sprintf_s(content[contentOrder + 1], "×");
       else
       {
-        if (isMissionList)
-          sprintf_s(Content[contentOrder + 1], "+%d", advance[order].deck[account] - 1);
+        if (isMissionList) //公会任务列表显示为+n
+          sprintf_s(content[contentOrder + 1], "+%d", plot[list].advance[order].deck[account] - 1);
+        else if (IsSpecial(plot[list].advance[order])) //特殊任务只显示√
+          strcpy_s(content[contentOrder + 1], "√");
         else
-          sprintf_s(Content[contentOrder + 1], "%d", advance[order].deck[account]);
+          sprintf_s(content[contentOrder + 1], "%d", plot[list].advance[order].deck[account]);
       }
     }
 
     PaintCheckBox(buttonAdvance, pageOrder + 1, 0, tickBoxOffsetX);
 
     //显示序号和勾选框
-    if (advance[order].selected == 1)
+    if (plot[list].advance[order].selected == 1)
       PaintCheck(buttonAdvance, pageOrder + 1, 0, tickBoxOffsetX);
-    PrintButton(buttonAdvance, pageOrder + 1, 0, Content[0], idOffsetX, 0);
+    PrintButton(buttonAdvance, pageOrder + 1, 0, content[0], idOffsetX, 0);
 
     //显示第1-8项文字：1类型 2关卡 3局数 4钥匙 5房主 6轨道1 7卡组1 8轨道2 9卡组2
     for (int i = 1; i < advanceTitleNum; i++)
@@ -10599,7 +13344,7 @@ void ViewAdvance()
         dx = -7;
       if (i == TRACK_0 || i == TRACK_1 || i == DECK_0 || i == DECK_1)//未使用的轨道和卡组变灰
         gray = isGray[account];
-      PrintButton(buttonAdvance, pageOrder + 1, i, Content[i], dx, dy, gray);
+      PrintButton(buttonAdvance, pageOrder + 1, i, content[i], dx, dy, gray);
     }
 
     //显示调节、删除轨道、交换轨道符号
@@ -10607,7 +13352,7 @@ void ViewAdvance()
     for (int i = 1; i < advanceTitleNum; i++)
     {
       int account = (i - TRACK_0) / 2; //i = 6, 7对应account = 0，i = 8, 9对应account = 1
-      if (!(isNoTrack(advance[order]) && (i == TRACK_0 || i == TRACK_1)))//公会任务不显示轨道删除交换符号
+      if (!(IsNoTrack(plot[list].advance[order]) && (i == TRACK_0 || i == TRACK_1)))//公会任务不显示轨道删除交换符号
       {
         if (i == 1)
         {
@@ -10623,7 +13368,7 @@ void ViewAdvance()
           PrintButton(buttonAdvance, pageOrder + 1, i, "▼", advanceWidth[i] / 2 - 10, 10, isGray[account]);
           SetFontSize(size);
         }
-        if ((i == TRACK_0 && strlen(advance[order].track[0])) || (i == TRACK_1 && strlen(advance[order].track[1])))
+        if ((i == TRACK_0 && strlen(plot[list].advance[order].track[0])) || (i == TRACK_1 && strlen(plot[list].advance[order].track[1])))
         {
           PrintButton(buttonAdvance, pageOrder + 1, i, "×", advanceWidth[i] / 2 - 10, 0, isGray[account]);
           PrintButton(buttonAdvance, pageOrder + 1, i, "↑", -advanceWidth[i] / 2 + 7, 1, isGray[account]);
@@ -10633,13 +13378,13 @@ void ViewAdvance()
     }
     SetFontSize(16);
     //绘制第2项“关卡”的调节按钮（与任务类型有关）
-    if (advance[order].type == 0 || advance[order].type == 1 || advance[order].type == 3 ||
-      advance[order].type == 5 || advance[order].type == 17)//右侧调节按钮
+    if (plot[list].advance[order].type == 0 || plot[list].advance[order].type == 1 || plot[list].advance[order].type == 3 ||
+      plot[list].advance[order].type == 5 || plot[list].advance[order].type == 17)//右侧调节按钮
     {
       PrintButton(buttonAdvance, pageOrder + 1, 2, "▲", advanceWidth[2] / 2 - 10, -7);
       PrintButton(buttonAdvance, pageOrder + 1, 2, "▼", advanceWidth[2] / 2 - 10, 10);
     }
-    if (advance[order].type == 3)//左侧调节按钮
+    if (plot[list].advance[order].type == 3)//左侧调节按钮
     {
       PrintButton(buttonAdvance, pageOrder + 1, 2, "▲", -advanceWidth[2] / 2 + 10, -7);
       PrintButton(buttonAdvance, pageOrder + 1, 2, "▼", -advanceWidth[2] / 2 + 10, 10);
@@ -10657,8 +13402,9 @@ void RepaintAdvance()
   ViewOutput();
   ViewAdvanceParameter();
   ViewAdvance();
-  ViewSettings();
-  ViewDebugInfo();//显示调试信息
+  ViewSetting();
+  ViewTopInfo();//显示顶部信息
+  ViewLastTip();//显示最近提示信息
   EndBatchDraw();
   /*备份图像，减少重绘占用*/
   setaspectratio(1, 1);
@@ -10678,8 +13424,9 @@ void RepaintParameter()//绘制参数界面
   PaintGrid(5, 5, parameterX, parameterY + 12 * parameterHeight + 2, parameterWidth, parameterHeight);//参数内容
   ViewParameter();
 
-  ViewSettings();
-  ViewDebugInfo();//显示调试信息
+  ViewSetting();
+  ViewTopInfo();//显示顶部信息
+  ViewLastTip();//显示最近提示信息
   EndBatchDraw();
   /*备份图像，减少重绘占用*/
   setaspectratio(1, 1);
@@ -10689,9 +13436,9 @@ void RepaintParameter()//绘制参数界面
 void RepaintOld()
 {
   BeginBatchDraw();
-  solidrectangle(0, 0, wndWidth, wndHeight);
+  solidrectangle(0, 0, wndWidth, wndHeight - tipHeight - 1);
   setaspectratio(1, 1);
-  putimage(0, 0, &imageBackup);
+  putimage(0, 0, (int)(wndWidth * ratio), (int)((wndHeight - tipHeight - 1) * ratio), &imageBackup, 0, 0);
   setaspectratio(ratio, ratio);
   EndBatchDraw();
 }
@@ -10714,12 +13461,20 @@ void DeleteTag(int task, int account)
     MessageBox(hWndActuator, "请先显示原来的游戏窗口", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     return;
   }
-  project[task].tag[account].x = -1;
-  project[task].tag[account].y = -1;
-  project[task].hWndHall[account] = NULL;
-  project[task].hWnd[account] = NULL;
-  isHallModified[task] = 1;//手动抓取后，不再自动获取大厅句柄
+  param[task].tag[account].x = -1;
+  param[task].tag[account].y = -1;
+  param[task].hWnd[account] = nullptr;
+  param[task].hWndHall[account] = nullptr;
   isTaskHided[task][account] = 0;//隐藏状态设为0
+  isHallModified[task] = 1;//手动删除后，不再自动获取大厅句柄
+  if (IsDual1P(task)) //高级任务连带删除2P任务的句柄
+  {
+    param[task + 1].tag[account] = param[task].tag[account];
+    param[task + 1].hWnd[account] = param[task].hWnd[account];
+    param[task + 1].hWndHall[account] = param[task].hWndHall[account];
+    isTaskHided[task + 1][account] = 0;//隐藏状态设为0
+    isHallModified[task + 1] = 1;//手动删除后，不再自动获取大厅句柄
+  }
 }
 //抓取账号account的标签
 void GrabTag(int task, int account)
@@ -10750,161 +13505,208 @@ void GrabTag(int task, int account)
     int x = locPointed.x - HallRect.left;
     int y = locPointed.y - HallRect.top;
     //记录相对坐标，但最少是1（点击大厅(1,1)位置不会有反应）
-    project[task].tag[account].x = x >= 1 ? x : 1;
-    project[task].tag[account].y = y >= 1 ? y : 1;
+    param[task].tag[account].x = x >= 1 ? x : 1;
+    param[task].tag[account].y = y >= 1 ? y : 1;
 
     int tagNum = GetTagNum(hWndPointed);//获取大厅标签数量
     if (tagNum == 1) //只有1个标签
-      project[task].hWnd[account] = GetActiveGameWindow(hWndPointed);//绑定唯一游戏窗口
+      param[task].hWnd[account] = GetActiveGameWindow(hWndPointed);//绑定唯一游戏窗口
     else
-      project[task].hWnd[account] = NULL; //游戏窗口无法确定，填写为NULL
-    project[task].hWndHall[account] = hWndPointed; //大厅窗口就是抓取的窗口
+      param[task].hWnd[account] = NULL; //游戏窗口无法确定，填写为NULL
+    param[task].hWndHall[account] = hWndPointed; //大厅窗口就是抓取的窗口
   }
   //游戏窗口
   else if (strcmp(ClassName, "NativeWindowClass") == 0 || strcmp(ClassName, "WebPluginView") == 0)
   {
-    project[task].tag[account].x = 0;
-    project[task].tag[account].y = 0;
-    project[task].hWnd[account] = hWndPointed; //游戏窗口就是抓取的窗口
-    project[task].hWndHall[account] = GetHallWindow(hWndPointed); //寻找大厅窗口
+    param[task].tag[account].x = 0;
+    param[task].tag[account].y = 0;
+    param[task].hWnd[account] = hWndPointed; //游戏窗口就是抓取的窗口
+    param[task].hWndHall[account] = GetHallWindow(hWndPointed); //寻找大厅窗口
   }
   //选服窗口
   else if (strcmp(ClassName, "Chrome_RenderWidgetHostHWND") == 0)
   {
-    project[task].tag[account].x = 0;
-    project[task].tag[account].y = 0;
-    project[task].hWnd[account] = GetGameWindowFromServer(hWndPointed); //寻找游戏窗口
-    project[task].hWndHall[account] = GetHallWindow(hWndPointed); //寻找大厅窗口
+    param[task].tag[account].x = 0;
+    param[task].tag[account].y = 0;
+    param[task].hWnd[account] = GetGameWindowFromServer(hWndPointed); //寻找游戏窗口
+    param[task].hWndHall[account] = GetHallWindow(hWndPointed); //寻找大厅窗口
   }
   else //都不是
   {
     MessageBox(hWndActuator, "请抓取大厅账号标签、微端标题栏或游戏画面。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     return;
   }
-  project[task].hMainHall = GetMainHallWindow(project[task].hWndHall[account]);//记录大厅主窗口
-  isHallModified[task] = 1;//手动抓取后，不再自动获取大厅句柄
+  param[task].hMainHall = GetMainHallWindow(param[task].hWndHall[account]);//记录大厅主窗口
   isTaskHided[task][account] = 0;//隐藏状态设为0
+  isHallModified[task] = 1;//手动抓取后，不再自动获取大厅句柄
+  if (IsDual1P(task)) //高级任务把抓得的句柄同步到2P任务
+  {
+    param[task + 1].tag[account] = param[task].tag[account];
+    param[task + 1].hWnd[account] = param[task].hWnd[account];
+    param[task + 1].hWndHall[account] = param[task].hWndHall[account];
+    param[task + 1].hMainHall = param[task].hMainHall;
+    isTaskHided[task + 1][account] = 0;//隐藏状态设为0
+    isHallModified[task + 1] = 1;//手动抓取后，不再自动获取大厅句柄
+  }
 }
 //隐藏或显示窗口
 void HideOrShow(int task, int account)
 {
   if (isTaskHided[task][account] == zero) //隐藏1P大厅
   {
-    if (project[task].hWndHall[account] == NULL)
+    if (param[task].hWndHall[account] == NULL)
       MessageBox(hWndActuator, "请先抓取要隐藏的窗口句柄，\n将靶形光标拖动到窗口标题栏即可。", "", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     else
     {
-      int HideResult = HideWindow((HWND)project[task].hWndHall[account]);
-      if (HideResult == 2)
-        MessageBox(hWndActuator, "权限不足，请以管理员身份运行。", taskName[task], MB_ICONINFORMATION | MB_SYSTEMMODAL);
-      else if (HideResult == 1)
-        MessageBox(hWndActuator, "未找到窗口。", taskName[task], MB_ICONINFORMATION | MB_SYSTEMMODAL);
-      else if ((HWND)project[task].hWndHall[account] != hWndActuator)//隐藏的不是本窗口才需要修改隐藏状态
+      int hideResult = HideWindow((HWND)param[task].hWndHall[account]);
+      if (hideResult == 2)
+        PopMessage(task, "权限不足，请以管理员身份运行。");
+      else if (hideResult == 1)
+        PopMessage(task, "未找到窗口。");
+      else if ((HWND)param[task].hWndHall[account] != hWndActuator)//隐藏的不是本窗口才需要修改隐藏状态
       {
         for (int acc = 0; acc <= 1; acc++)//检查两个账号的所有窗口，句柄相同的都设为隐藏
-          for (int i = 0; i <= taskNum; i++)
-            if (project[i].hWndHall[acc] == project[task].hWndHall[account])
+          for (int i = 0; i < maxTaskNum; i++)
+            if (param[i].hWndHall[acc] == param[task].hWndHall[account])
               isTaskHided[i][acc] = 1;
       }
     }
   }
   else //显示1P大厅
   {
-    RecoverWindow(project[task].hWndHall[account]);
-    InvalidateRect(GetActiveGameWindow(project[task].hWnd[account]), NULL, false);//重画游戏窗口
+    RecoverWindow(param[task].hWndHall[account]);
+    InvalidateRect(GetActiveGameWindow(param[task].hWnd[account]), NULL, false);//重画游戏窗口
     isTaskHided[task][account] = 0;
     for (int acc = 0; acc <= 1; acc++)//检查两个账号的所有窗口，句柄相同的都设为显示
-      for (int i = 0; i <= taskNum; i++)
-        if (project[i].hWndHall[acc] == project[task].hWndHall[account])
+      for (int i = 0; i < maxTaskNum; i++)
+        if (param[i].hWndHall[acc] == param[task].hWndHall[account])
           isTaskHided[i][acc] = 0;
   }
 }
-void ExchangeAdvance(int order1, int order2)
+void ExchangeAdvance(int list, int order1, int order2)
 {
   if (order1 == order2)
     return;
-  AdvanceType Temp = advance[order1];
-  advance[order1] = advance[order2];
-  advance[order2] = Temp;
+  AdvanceType Temp = plot[list].advance[order1];
+  plot[list].advance[order1] = plot[list].advance[order2];
+  plot[list].advance[order2] = Temp;
 }
 //将高级任务order1插入到order2位置，其他任务顺序保持
-void InsertAdvance(int order1, int order2)
+void InsertAdvance(int list, int order1, int order2)
 {
   if (order1 == order2)
     return;
-  AdvanceType Temp = advance[order1];
+  AdvanceType Temp = plot[list].advance[order1];
   if (order1 > order2) //向前插入
     for (int i = order1; i >= order2 + 1; i--)
-      advance[i] = advance[i - 1];
+      plot[list].advance[i] = plot[list].advance[i - 1];
   else if (order1 < order2) //向后插入
     for (int i = order1; i <= order2 - 1; i++)
-      advance[i] = advance[i + 1];
-  advance[order2] = Temp;
+      plot[list].advance[i] = plot[list].advance[i + 1];
+  plot[list].advance[order2] = Temp;
 }
-//将具体公会任务还原为【公会-任务】
-void MissionReturn()
+//识别还原：将公会任务还原为识别前的状态（公会-任务）
+void MissionReturn(int list)
 {
   bool isMissionExist = false;//公会-任务一项是否存在
   int firstMission = -1;
   int missionDeck[2] = { 0, 0 };
-  for (int order = advanceNum - 1; order >= 0; order--)
+  for (int order = plot[list].advanceNum - 1; order >= 0; order--)
   {
-    if (isMission(advance[order]))
+    if (IsMission(plot[list].advance[order]))
       isMissionExist = true;
-    if (advance[order].isMission == 1)
+    if (plot[list].advance[order].isMission == 1)
     {
       firstMission = order;
-      missionDeck[0] = advance[order].deck[0];
-      missionDeck[1] = advance[order].deck[1];
-      DeleteAdvance(order);
+      missionDeck[0] = plot[list].advance[order].deck[0];
+      missionDeck[1] = plot[list].advance[order].deck[1];
+      DeleteAdvance(list, order);
     }
   }
   if (isMissionExist == false && firstMission >= 0)
   {
-    AddAdvance(5, 0, 1, missionDeck[0], missionDeck[1]);
-    InsertAdvance(advanceNum - 1, firstMission);
+    AddAdvance(list, 5, 0, 1, missionDeck[0], missionDeck[1]);
+    InsertAdvance(list, plot[list].advanceNum - 1, firstMission);
   }
 }
-//根据轨道路径打开轨道
-void OpenTrack(char *TrackPath)
+//从完整路径提取纯轨道路径
+const char *GetPureTrack(const char *extendedPath)
 {
+  const char *bannedPath = extendedPath;
+  const char *bar = strchr(extendedPath, '|');
+  if (bar)
+    bannedPath = bar + 1;
+  const char *path = bannedPath;
+  const char *braket = strchr(bannedPath, '>');
+  if (braket)
+    path = braket + 1;
+  return path;
+}
+//根据轨道路径打开轨道
+void OpenTrack(char *extendedPath)
+{
+  const char *path = GetPureTrack(extendedPath);
+
   char cmd[1000];
-  char *head = strchr(TrackPath, '>');//可能有前缀<>，找>的位置
-  if (head)
-    TrackPath = head + 1;//如果前缀存在，去掉前缀
-  if (strlen(TrackPath) == 0)
+  if (strlen(path) == 0)
     return;
-  if (_access(TrackPath, 0)) //如果轨道文件不存在，进行提示
+  if (!FileExist(path)) //如果轨道文件不存在，进行提示
   {
     MessageBox(hWndActuator, "轨道文件不存在。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     return;
   }
-  if (strchr(TrackPath, ':')) //如果有冒号，说明是绝对路径
-    sprintf_s(cmd, "\"%s\\轨道编辑器.exe\" \"%s\"", workDirect, TrackPath);
+  if (strchr(path, ':')) //如果有冒号，说明是绝对路径
+    sprintf_s(cmd, "\"%s\\轨道编辑器.exe\" \"%s\"", workDirect, path);
   else //否则是相对路径
-    sprintf_s(cmd, "\"%s\\轨道编辑器.exe\" \"%s\\%s\"", workDirect, workDirect, TrackPath);
+    sprintf_s(cmd, "\"%s\\轨道编辑器.exe\" \"%s\\%s\"", workDirect, workDirect, path);
   Execute(cmd);
 }
 //打开轨道路径所在文件夹
-void OpenTrackFolder(char *TrackPath)
+void OpenTrackFolder(const char *extendedPath)
 {
+  const char *path = GetPureTrack(extendedPath);
+
   char cmd[1000];
-  char *head = strchr(TrackPath, '>');//可能有前缀<>，找>的位置
-  if (head)
-    TrackPath = head + 1;//如果前缀存在，去掉前缀
-  if (strlen(TrackPath) == 0)
+  if (strlen(path) == 0)
     return;
-  if (_access(TrackPath, 0)) //如果轨道文件不存在，进行提示
+  if (!FileExist(path)) //如果轨道文件不存在，进行提示
   {
     MessageBox(hWndActuator, "轨道文件不存在。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
     return;
   }
-  if (strchr(TrackPath, ':')) //如果有冒号，说明是绝对路径
-    sprintf_s(cmd, "explorer.exe /select,\"%s\"", TrackPath);
+  if (strchr(path, ':')) //如果有冒号，说明是绝对路径
+    sprintf_s(cmd, "explorer.exe /select,\"%s\"", path);
   else //否则是相对路径
-    sprintf_s(cmd, "explorer.exe /select,\"%s\\%s\"", workDirect, TrackPath);
+    sprintf_s(cmd, "explorer.exe /select,\"%s\\%s\"", workDirect, path);
   Execute(cmd);
 }
+//调节自动刷新次数
+void AdjustRefreshTimes()
+{
+  if (area == 306) //刷新次数下调
+  {
+    if (maxRefreshTimes > 10)
+      maxRefreshTimes = 10;
+    else if (maxRefreshTimes > 5)
+      maxRefreshTimes = 5;
+    else if (maxRefreshTimes > 3)
+      maxRefreshTimes = 3;
+    else
+      maxRefreshTimes = 0;
+  }
+  if (area == 406) //刷新次数上调
+  {
+    if (maxRefreshTimes < 3)
+      maxRefreshTimes = 3;
+    else if (maxRefreshTimes < 5)
+      maxRefreshTimes = 5;
+    else if (maxRefreshTimes < 10)
+      maxRefreshTimes = 10;
+    else
+      maxRefreshTimes = unlimitedRefreshTimes;
+  }
+}
+//调节缩放
 void AdjustZoom()
 {
   if (Adjust(zoom, 50, 100, 10, 314, 414))//缩放比例
@@ -10924,33 +13726,37 @@ void AdjustZoom()
   }
 }
 //批量调节：房主，1P卡组，2P卡组
-void BatchAdjust(int item, int origin, int target)
+void BatchAdjust(int list, int item, int origin, int target)
 {
-  for (int order = 0; order < advanceNum; order++)
+  for (int order = 0; order < plot[list].advanceNum; order++)
   {
+    if (IsSpecial(plot[list].advance[order])) //批量调节不影响特殊任务
+      continue;
     int *value = nullptr;
     if (item == HOST)
-      value = &advance[order].hostAccount;
+      value = &plot[list].advance[order].host;
     else if (item == DECK_0)
-      value = &advance[order].deck[0];
+      value = &plot[list].advance[order].deck[0];
     else if (item == DECK_1)
-      value = &advance[order].deck[1];
+      value = &plot[list].advance[order].deck[1];
     if (*value == origin)
       *value = target;
   }
 }
 //批量交换：房主，1P卡组，2P卡组
-void BatchExchange(int item, int origin, int target)
+void BatchExchange(int list, int item, int origin, int target)
 {
-  for (int order = 0; order < advanceNum; order++)
+  for (int order = 0; order < plot[list].advanceNum; order++)
   {
+    if (IsSpecial(plot[list].advance[order])) //批量交换不影响特殊任务
+      continue;
     int *value = nullptr;
-    if (item == 4)
-      value = &advance[order].hostAccount;
-    else if (item == 6)
-      value = &advance[order].deck[0];
-    else if (item == 8)
-      value = &advance[order].deck[1];
+    if (item == HOST)
+      value = &plot[list].advance[order].host;
+    else if (item == DECK_0)
+      value = &plot[list].advance[order].deck[0];
+    else if (item == DECK_1)
+      value = &plot[list].advance[order].deck[1];
     if (*value == origin)
       *value = target;
     else if (*value == target)
@@ -11026,12 +13832,11 @@ void ShotActuator()
 void MakeErrorFile()
 {
   //删除原来的报错信息.zip，创建或清空报错信息文件夹
-  if (_access("报错信息.zip", 0) == 0)
+  if (FileExist("报错信息.zip"))
     remove("报错信息.zip");
-  if (_access("报错信息", 0) == 0)
-    ClearDirect("报错信息", "");
-  else
-    CreatePath("报错信息");
+  if (FileExist("报错信息"))
+    DeleteFolder("报错信息");
+  CreatePath("报错信息");
   //1. 截图编辑器
   EnumWindows(EnumEditor, 0);
   //2. 截图执行器
@@ -11048,7 +13853,15 @@ void MakeErrorFile()
     sprintf_s(destRecord, "报错信息\\%s", lastRecordName);
     CopyDirect(sourceRecord, destRecord);
   }
-  //5. 打包成zip
+  //5. 版本号和DPI
+  FILE *f;
+  if (fopen_s(&f, "报错信息\\记录信息.txt", "w") == 0)
+  {
+    fprintf(f, "版本号=%s\n", version);
+    fprintf(f, "DPI=%d\n", DPI);
+    fclose(f);
+  }
+  //6. 打包成zip
   char command[1024];  // PowerShell命令
   sprintf_s(command, "powershell Compress-Archive -Path '%s\\报错信息\\*' -DestinationPath '%s\\报错信息.zip'",
     workDirect, workDirect);
@@ -11057,14 +13870,7 @@ void MakeErrorFile()
   char tip[1000] = {};
   if (result == 0) //压缩成功
   {
-    //删除报错信息中的执行记录文件夹
-    if (strlen(destRecord) > 0 && _access(destRecord, 0) == 0)
-    {
-      ClearDirect(destRecord, "");
-      RemoveDirectory(destRecord);
-    }
-    ClearDirect("报错信息", "");
-    RemoveDirectory("报错信息");
+    DeleteFolder("报错信息");
     strcpy_s(tip, "已生成压缩文件[报错信息.zip]，\n请上传至交流群并@管理员或群主。");
   }
   else
@@ -11072,20 +13878,17 @@ void MakeErrorFile()
   MessageBox(hWndActuator, tip, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
 }
 //响应上方三个按钮的点击：全部停止、后台运行、一键报错
-void ResponseUpperSettings()
+void ResponseUpperSetting()
 {
   if (area == 200) //全部停止
   {
-    for (int task = 0; task < taskNum; task++)//停止任务0-4
-    {
-      if (isTaskStarted[task] == 1)
+    for (int list = 0; list < listNum; list++)//停止高级任务0-4
+      if (plot[list].isAdvanceStarted)
+        plot[list].isAdvanceStarted = 0;
+
+    for (int task = 0; task < maxTaskNum; task++)//停止所有普通任务
+      if (isTaskStarted[task])
         isTaskStarted[task] = 0;
-    }
-    if (isAdvanceStarted == 1)//停止高级任务
-    {
-      isTaskStarted[taskNum] = 0;//任务启动状态设为“未启动”
-      isAdvanceStarted = 0;//刹停高级任务
-    }
   }
   else if (area == 201) //后台运行
     HideWindow(hWndActuator);
@@ -11093,24 +13896,25 @@ void ResponseUpperSettings()
     MakeErrorFile();
 }
 //切换放卡账号
-void ExchangePerformer(int order)
+void ExchangePerformer(int list, int order)
 {
   //交换轨道
-  char Track[maxPath];
-  strcpy_s(Track, advance[order].track[0]);
-  strcpy_s(advance[order].track[0], advance[order].track[1]);
-  strcpy_s(advance[order].track[1], Track);
+  char track[maxPath];
+  strcpy_s(track, plot[list].advance[order].track[0]);
+  strcpy_s(plot[list].advance[order].track[0], plot[list].advance[order].track[1]);
+  strcpy_s(plot[list].advance[order].track[1], track);
   //交换卡组
-  int tempDeck = advance[order].deck[0];
-  advance[order].deck[0] = advance[order].deck[1];
-  advance[order].deck[1] = tempDeck;
-  //交换房主
-  advance[order].hostAccount = 1 - advance[order].hostAccount;
+  int tempDeck = plot[list].advance[order].deck[0];
+  plot[list].advance[order].deck[0] = plot[list].advance[order].deck[1];
+  plot[list].advance[order].deck[1] = tempDeck;
+  //交换房主（如果是同步则不交换）
+  if (plot[list].advance[order].host < 2)
+    plot[list].advance[order].host = 1 - plot[list].advance[order].host;
 }
 //是否有监视窗口启动
 bool isAnyMonitorExist()
 {
-  for (int task = 0; task <= taskNum; task++)
+  for (int task = 0; task < maxTaskNum; task++)
     if (monitor[task].isExist)
       return true;
   return false;
@@ -11156,7 +13960,7 @@ void EditAdvance()
 {
   int xPos, yPos, buttons;//鼠标按下
   RepaintAdvance();//绘制高级参数界面
-  while (1)//循环检测鼠标事件
+  while (true)//循环检测鼠标事件
   {
     if (lastClickMessage > zero) //检测到鼠标按下
     {
@@ -11172,195 +13976,154 @@ void EditAdvance()
           mode = 1;
           return;
         }
-        if (area == 3)
-        {
-          LoadParameter();
-          mode = 1;
-          return;
-        }
-        if (area == 4) //更换任务列表路径
-        {
-          if (isAdvanceStarted == 1) //任务运行时：不允许修改，把文件中的路径改回去
-          {
-            SaveParameter();
-            MessageBox(hWndActuator, "任务运行时不允许修改参数", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
-          }
-          else
-          {
-            advanceSelected = 0;
-            LoadParameter();
-            LoadAdvance();
-            advancePage = 1;
-            backupNum = currentBackup = 0;
-          }
-        }
         if (area == 15) //启动或停止高级任务
         {
-          if (isAdvanceStarted == 0) //高级任务未启动：可以启动
+          if (plot[curList].isAdvanceStarted == 0) //高级任务未启动：可以启动
           {
-            if (isAdvanceStarted_Confirm == 1 || isTaskStarted_Confirm[taskNum] == 1)
+            if (plot[curList].isAdvanceStarted_Confirm == 1 || isTaskStarted_Confirm[GetTask(curList)] == 1
+              || isTaskStarted_Confirm[GetTask(curList) + 1] == 1)
               MessageBox(hWndActuator, "请勿频繁启动", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
             else
             {
-              isAdvanceStarted = 1;
-              isAdvanceStarted_Confirm = 1;
-              CreateThread(NULL, 0, StartAdvance, (void *)0, 0, NULL);//启动任务线程
+              LoadCustom(GetTask(curList));//读取自定卡槽
+              LoadCustom(GetTask(curList) + 1);
+              plot[curList].isAdvanceStarted = 1;
+              plot[curList].isAdvanceStarted_Confirm = 1;
+              CreateThread(NULL, 0, StartList, (void *)curList, 0, NULL);//启动高级任务线程
             }
           }
           else
           {
-            isTaskStarted[taskNum] = 0;//任务启动状态设为“未启动”
-            isAdvanceStarted = 0;//刹停高级任务
+            isTaskStarted[GetTask(curList)] = 0;//任务启动状态设为“未启动”
+            plot[curList].isAdvanceStarted = 0;//刹停高级任务
           }
         }
         if (area == 25 || area == 35) //1P或2P大厅的隐藏和显示
-          HideOrShow(5, area / 10 - 2);//隐藏/显示的大厅账号
-        if (area == 55)
+          HideOrShow(GetTask(curList), area / 10 - 2);//隐藏/显示的大厅账号
+        if (area == 55) //输出信息向左翻页
         {
-          if (outputPage > 1)
-            outputPage--;
+          if (plot[curList].outputPage > 1)
+            plot[curList].outputPage--;
         }
-        if (area == 65)
+        if (area == 65) //输出信息向右翻页
         {
-          if (outputPage < (outputNum - 1) / 6 + 1)
-            outputPage++;
+          if (plot[curList].outputPage < (plot[curList].outputNum - 1) / 6 + 1)
+            plot[curList].outputPage++;
         }
-        if (area == 75)
+        if (area == 75) //清空输出信息
         {
-          if (isAdvanceStarted == 0)
-            outputNum = 0;
+          if (plot[curList].isAdvanceStarted == 0)
+            plot[curList].outputNum = 0;
         }
-        if (area == 85)
+        if (area == 85) //info按钮
         {
-          SwitchMonitor(taskNum);
+          SwitchMonitor(GetTask(curList));
           Sleep(100);
         }
         if (area == 99)
           MessageBox(hWndActuator, "任务运行时不允许修改参数", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
-        ResponseUpperSettings();
+        ResponseUpperSetting();
 
-        if (area == 204)
-          InputTimer(&timer, &timerMode); //设置定时器
+        if (area == 204) //设置定时启动
+          InputTimer(&timer, &timerMode);
 
-        if (area == 306) //刷新次数下调
-        {
-          if (maxRefreshTimes > 10)
-            maxRefreshTimes = 10;
-          else if (maxRefreshTimes > 5)
-            maxRefreshTimes = 5;
-          else if (maxRefreshTimes > 3)
-            maxRefreshTimes = 3;
-          else
-            maxRefreshTimes = 0;
-        }
-        if (area == 406) //刷新次数上调
-        {
-          if (maxRefreshTimes < 3)
-            maxRefreshTimes = 3;
-          else if (maxRefreshTimes < 5)
-            maxRefreshTimes = 5;
-          else if (maxRefreshTimes < 10)
-            maxRefreshTimes = 10;
-          else
-            maxRefreshTimes = unlimitedRefreshTimes;
-        }
-
-        AdjustZoom();
+        AdjustZoom();//缩放
+        AdjustRefreshTimes();//自动刷新
         Adjust(operationSpeed, 0, 2, 1, 308, 408, 0);//操作速度
+
+        if (area == 209) //一键配轨
+          MatchCommonTrackWithChoice(curList);
+        if (area == 210) //调整全局加速时间
+          InputNum(&globalAccelarationTime, 0, 999,
+            "设置全体任务的开局加速时间（0~999），单位毫秒。\n如需单独设置某些任务的加速时间，请见使用手册。",
+            "加速时间");
+
         if (area == 311)//高级任务列表左翻页
         {
-          if (advancePage > 1)
-            advancePage--;
-          isAdvanceSelectionRetained = 1;
+          if (plot[curList].advancePage > 1)
+            plot[curList].advancePage--;
+          plot[curList].isAdvanceSelectionRetained = 1;
         }
         if (area == 411)//高级任务列表右翻页
         {
-          int TotalAdvancePage = min(advanceNum / advanceNumPerPage + 1, maxAdvancePage);
-          if (advancePage < TotalAdvancePage)
-            advancePage++;
-          isAdvanceSelectionRetained = 1;
+          int TotalAdvancePage = min(plot[curList].advanceNum / advanceNumPerPage + 1, maxAdvancePage);
+          if (plot[curList].advancePage < TotalAdvancePage)
+            plot[curList].advancePage++;
+          plot[curList].isAdvanceSelectionRetained = 1;
         }
 
         if (area == 212)//撤销按钮
-          if (IsUndoAllowed())
-            Undo();
+          if (IsUndoAllowed(curList))
+            Undo(curList);
         if (area == 213)//恢复按钮
-          if (IsRepeatAllowed())
-            Repeat();
+          if (IsRepeatAllowed(curList))
+            Repeat(curList);
 
         if (area == 501)//全选按钮
         {
-          if (AdvanceSelectionState() == 2)//如果已经全选了，全部取消选中
+          if (AdvanceSelectionStates(curList) == 2)//如果已经全选了，全部取消选中
           {
-            for (int order = 0; order < advanceNum; order++)
-              advance[order].selected = 0;
+            for (int order = 0; order < plot[curList].advanceNum; order++)
+              plot[curList].advance[order].selected = 0;
           }
           else //否则全部选中
           {
-            for (int order = 0; order < advanceNum; order++)
-              advance[order].selected = 1;
+            for (int order = 0; order < plot[curList].advanceNum; order++)
+              plot[curList].advance[order].selected = 1;
           }
         }
 
         if (area == 502) //锁定按钮
-          isAdvanceLocked = !isAdvanceLocked;
+          plot[curList].isAdvanceLocked = !plot[curList].isAdvanceLocked;
+
+        if (area == 503)//修改列表路径
+        {
+        }
+
+        if (area == 504)
+          EditServerAndPassword(0);//编辑1P服务器和二级
+        if (area == 505)
+          EditServerAndPassword(1);//编辑2P服务器和二级
 
         //改为：本体1000+，左点击2000+，右点击3000+，左调节4000+&5000+：右调节6000+&7000+
 
-        if (area == 2501)//抓取标签
-          GrabTag(taskNum, 0);
-        if (area == 2502)
-          GrabTag(taskNum, 1);
+        if (area == 1507)
+          InputAdvanceTitle(curList);
 
-        if (area / 100 == 35)//删除房主/队友标签
+        Adjust(curList, 0, listNum - 1, 1, 2507, 3507);//切换高级任务
+
+        if (area == 2508) //抓取1P标签
+          GrabTag(GetTask(curList), 0);
+        if (area == 2509) //抓取2P标签
+          GrabTag(GetTask(curList), 1);
+
+
+        if (area / 100 == 35) //参数右侧的×
         {
           switch (area)
           {
-          case 3501:
-            DeleteTag(taskNum, 0);
+          case 3508: //删除1P标签
+            DeleteTag(GetTask(curList), 0);
             break;
-          case 3502:
-            DeleteTag(taskNum, 1);
+          case 3509: //删除2P标签
+            DeleteTag(GetTask(curList), 1);
             break;
-          case 3505:
-            if (isTaskStarted[taskNum] == zero)
-              ResetState(taskNum);
+          case 3512: //删除状态信息
+            if (isTaskStarted[GetTask(curList)] == zero)
+              ResetState(GetTask(curList));
             break;
-          }
-        }
-
-        if (area == 4500 || area == 5500 || area == 6500 || area == 7500)//自动收集调节
-        {
-          int account;
-          if (area == 4500 || area == 5500)
-            account = 0;
-          else
-            account = 1;
-          if (area == 4500 || area == 6500) //上调
-          {
-            if (project[taskNum].isCollect[account] == 2)
-              project[taskNum].isCollect[account] = 0;
-            else
-              project[taskNum].isCollect[account]++;
-          }
-          else //下调
-          {
-            if (project[taskNum].isCollect[account] == zero)
-              project[taskNum].isCollect[account] = 2;
-            else
-              project[taskNum].isCollect[account]--;
           }
         }
 
         if (area / 10000 >= 1 && area / 10000 <= 7)//单击高级任务格子（或两侧的箭头）
         {
-          int order = (advancePage - 1) * advanceNumPerPage + area % 10000 / 100 - 1;//任务序号
+          int order = (plot[curList].advancePage - 1) * advanceNumPerPage + area % 10000 / 100 - 1;//任务序号
           int item = area % 100;//项数
-          if (order < advanceNum && item == CHECK) //勾选或取消勾选
-            advance[order].selected = 1 - advance[order].selected;
-          else if (isAdvanceLocked == false) //未锁定才能修改任务
+          if (order < plot[curList].advanceNum && item == CHECK) //勾选或取消勾选
+            plot[curList].advance[order].selected = 1 - plot[curList].advance[order].selected;
+          else if (plot[curList].isAdvanceLocked == false) //未锁定才能修改任务
           {
-            if (order < advanceNum)
+            if (order < plot[curList].advanceNum)
             {
               switch (item)
               {
@@ -11368,179 +14131,191 @@ void EditAdvance()
                 GetAsyncKeyState(VK_CONTROL);
                 if (GetAsyncKeyState(VK_CONTROL)) //按住Ctrl点击编号：复制
                 {
-                  if (advanceNum < maxAdvanceNum)
+                  if (plot[curList].advanceNum < maxAdvanceNum)
                   {
-                    if (advanceSelected == 0) //无选中轨道：复制本轨道到后面
+                    if (plot[curList].advanceSelected == 0) //无选中轨道：复制本轨道到后面
                     {
-                      CopyAdvance(order);
-                      InsertAdvance(advanceNum - 1, order + 1);
+                      CopyAdvance(curList, order);
+                      InsertAdvance(curList, plot[curList].advanceNum - 1, order + 1);
                     }
                     else //已选中轨道：将选中轨道复制到所点轨道之前
                     {
-                      CopyAdvance(advanceSelected - 100);
-                      InsertAdvance(advanceNum - 1, order);
+                      CopyAdvance(curList, plot[curList].advanceSelected - 100);
+                      InsertAdvance(curList, plot[curList].advanceNum - 1, order);
                     }
                   }
                 }
                 else //直接点击编号：选中轨道或交换
                 {
-                  if (advanceSelected == 0)
+                  if (plot[curList].advanceSelected == 0)
                   {
-                    advanceSelected = 100 + order;
-                    isAdvanceSelectionRetained = 1;
+                    plot[curList].advanceSelected = 100 + order;
+                    plot[curList].isAdvanceSelectionRetained = 1;
                   }
-                  else if (advanceSelected != 100 + order)
-                    ExchangeAdvance(advanceSelected - 100, order);
+                  else if (plot[curList].advanceSelected != 100 + order)
+                    ExchangeAdvance(curList, plot[curList].advanceSelected - 100, order);
                 }
                 break;
               case TYPE: //任务类型
                 if (area / 10000 == 2) //上调
                 {
-                  if (advance[order].type < advanceTypeNum - 1)
+                  if (plot[curList].advance[order].type < typeNum - 1)
                   {
-                    advance[order].type++;
-                    advance[order].level = defaultLevel[advance[order].type];
-                    advance[order].isMission = 0;//取消公会任务标记
+                    plot[curList].advance[order].type++;
+                    plot[curList].advance[order].level = defaultLevel[plot[curList].advance[order].type];
+                    plot[curList].advance[order].isMission = 0;//取消公会任务标记
                   }
                 }
                 else if (area / 10000 == 3) //下调
                 {
-                  if (advance[order].type > zero)
+                  if (plot[curList].advance[order].type > zero)
                   {
-                    advance[order].type--;
-                    advance[order].level = defaultLevel[advance[order].type];
-                    advance[order].isMission = 0;//取消公会任务标记
+                    plot[curList].advance[order].type--;
+                    plot[curList].advance[order].level = defaultLevel[plot[curList].advance[order].type];
+                    plot[curList].advance[order].isMission = 0;//取消公会任务标记
                   }
                 }
                 break;
               case LEVEL: //关卡
-                if (advance[order].type == 2) //魔塔：输入层数
-                  InputNum(&advance[order].level, 1, 165, "输入要刷的魔塔层数（1~165）。\n此处优先级高于轨道中填写的层数。", "魔塔层数");
-                else if (advance[order].type == 0 || advance[order].type == 1 || advance[order].type == 4 ||
-                  advance[order].type == 5 || advance[order].type == 17)
+                if (plot[curList].advance[order].type == 2) //魔塔：输入魔塔关卡
+                  InputTower(&plot[curList].advance[order].level);
+                else if (plot[curList].advance[order].type == 0 || plot[curList].advance[order].type == 1 || plot[curList].advance[order].type == 4 ||
+                  plot[curList].advance[order].type == 5 || plot[curList].advance[order].type == 17)
                 {
                   if (area / 10000 == 2)//右侧上调
                   {
-                    if (advance[order].level < levelNum[advance[order].type] - 1)
-                      advance[order].level++;
+                    if (plot[curList].advance[order].level < levelNum[plot[curList].advance[order].type] - 1)
+                      plot[curList].advance[order].level++;
                   }
                   else if (area / 10000 == 3)//右侧下调
                   {
-                    if (advance[order].level > zero)
-                      advance[order].level--;
+                    if (plot[curList].advance[order].level > zero)
+                      plot[curList].advance[order].level--;
                   }
                 }
-                else if (advance[order].type == 3)
+                else if (plot[curList].advance[order].type == 3) //跨服：左右都有调节
                 {
                   if (area / 10000 == 2)//右侧上调
                   {
-                    if (advance[order].level % 8 < 7)
-                      advance[order].level++;
+                    if (plot[curList].advance[order].level % 8 < 7)
+                      plot[curList].advance[order].level++;
                   }
                   else if (area / 10000 == 3)//右侧下调
                   {
-                    if (advance[order].level % 8 > zero)
-                      advance[order].level--;
+                    if (plot[curList].advance[order].level % 8 > zero)
+                      plot[curList].advance[order].level--;
                   }
                   else if (area / 10000 == 4)//左侧上调
                   {
-                    if (advance[order].level / 8 < 5)
-                      advance[order].level += 8;
+                    if (plot[curList].advance[order].level / 8 < 5)
+                      plot[curList].advance[order].level += 8;
                   }
                   else if (area / 10000 == 5)//左侧下调
                   {
-                    if (advance[order].level / 8 > zero)
-                      advance[order].level -= 8;
+                    if (plot[curList].advance[order].level / 8 > zero)
+                      plot[curList].advance[order].level -= 8;
                   }
                 }
                 else
-                  InputNum(&advance[order].level, 0, levelNum[advance[order].type] - 1,
-                    islandPrompt[advance[order].type - basicTypeNum], "选择关卡");
+                  InputNum(&plot[curList].advance[order].level, 0, levelNum[plot[curList].advance[order].type] - 1,
+                    islandPrompt[plot[curList].advance[order].type - basicTypeNum], "选择关卡");
                 break;
               case GAMES: //局数
-                if (isNoTrack(advance[order]))
+                if (IsNoTrack(plot[curList].advance[order]))
                   MessageBox(hWndActuator, "此任务无需填写局数。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
                 else
-                  InputNum(&advance[order].maxGames, 1, 9999, "输入执行刷图的局数（1~9999）。", "执行局数");
+                  InputNum(&plot[curList].advance[order].maxGames, 1, 9999, "输入执行刷图的局数（1~9999）。", "执行局数");
                 break;
               case KEY: //钥匙
-                if (isNoTrack(advance[order]))
+                if (IsNoTrack(plot[curList].advance[order]))
                   MessageBox(hWndActuator, "此任务无需填写钥匙。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
                 else
-                  advance[order].isProceed = 1 - advance[order].isProceed;
+                  plot[curList].advance[order].isProceed = 1 - plot[curList].advance[order].isProceed;
                 break;
               case HOST:case DECK_0:case DECK_1: //房主，1P、2P卡组
               {
-                if (item == HOST && isSignOrManure(advance[order]))
+                if (item == HOST && IsSpecial(plot[curList].advance[order]))
                 {
                   MessageBox(hWndActuator, "此任务无需填写房主。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
                   break;
                 }
                 int account = (item - TRACK_0) / 2;
-                int &oldValue = item == HOST ? advance[order].hostAccount : advance[order].deck[account];
-                if (advanceSelected == 0) //无任务选中：调节数值
+                int &oldValue = item == HOST ? plot[curList].advance[order].host : plot[curList].advance[order].deck[account];
+                //特殊任务：必然是调节卡组。只能0调到1, 1调到0
+                if (IsSpecial(plot[curList].advance[order]))
                 {
-                  int newValue = -1;//要调至的数值，-1表示无需调节
-                  int maxValue = item == HOST ? 2 : 7;
-                  if (item == HOST || area / 10000 == 2)//上调
-                    newValue = (oldValue + 1) % maxValue;
-                  else if (area / 10000 == 3)//下调
-                    newValue = (oldValue + maxValue - 1) % maxValue;
-                  if (newValue >= 0) //如果需要调节
-                  {
-                    GetAsyncKeyState(VK_SHIFT);
-                    if (GetAsyncKeyState(VK_SHIFT)) //按住VK_SHIFT：批量调节数值
-                      BatchAdjust(item, oldValue, newValue);
-                    else //否则只调本项任务的卡组
-                      oldValue = newValue;
-                  }
+                  if (area / 10000 == 2 || area / 10000 == 3)
+                    oldValue = oldValue == 0 ? 1 : 0;
                 }
-                else //选中了任务：交换数值
+                else //其他任务：卡组0-6范围，房主0-2范围，支持批量调节和交换
                 {
-                  int &target = item == HOST ? advance[advanceSelected - 100].hostAccount
-                    : advance[advanceSelected - 100].deck[account];
-                  GetAsyncKeyState(VK_SHIFT);
-                  if (GetAsyncKeyState(VK_SHIFT)) //按住VK_SHIFT：批量交换数值
-                    BatchExchange(item, oldValue, target);
-                  else //否则交换两任务数值
-                    Swap(&oldValue, &target);
+                  if (plot[curList].advanceSelected == 0) //无任务选中：调节数值
+                  {
+                    int newValue = -1;//要调至的数值，-1表示无需调节
+                    int maxValue = item == HOST ? 3 : 7;//允许调节的最大值+1
+                    if (item == HOST || area / 10000 == 2)//上调
+                      newValue = (oldValue + 1) % maxValue;
+                    else if (area / 10000 == 3)//下调
+                      newValue = (oldValue + maxValue - 1) % maxValue;
+                    if (newValue >= 0) //如果需要调节
+                    {
+                      GetAsyncKeyState(VK_SHIFT);
+                      if (GetAsyncKeyState(VK_SHIFT)) //按住VK_SHIFT：批量调节数值
+                        BatchAdjust(curList, item, oldValue, newValue);
+                      else //否则只调本项任务的卡组
+                        oldValue = newValue;
+                    }
+                  }
+                  else //选中了任务：交换数值。不能和特殊任务交换
+                  {
+                    if (!IsSpecial(plot[curList].advance[plot[curList].advanceSelected - 100]))
+                    {
+                      int &target = item == HOST ? plot[curList].advance[plot[curList].advanceSelected - 100].host
+                        : plot[curList].advance[plot[curList].advanceSelected - 100].deck[account];
+                      GetAsyncKeyState(VK_SHIFT);
+                      if (GetAsyncKeyState(VK_SHIFT)) //按住VK_SHIFT：批量交换数值
+                        BatchExchange(curList, item, oldValue, target);
+                      else //否则交换两任务数值
+                        Swap(&oldValue, &target);
+                    }
+                  }
                 }
               }
               break;
               case TRACK_0:case TRACK_1: //房主、队友轨道
               {
                 int account = (item - TRACK_0) / 2;
-                if (isNoTrack(advance[order]))
+                if (IsNoTrack(plot[curList].advance[order]))
                   MessageBox(hWndActuator, "此任务无需填写轨道。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
                 else
                 {
                   if (area / 10000 == 6)//交换1P和2P的轨道、卡组
                   {
-                    if (strlen(advance[order].track[account]) > 0)
-                      ExchangePerformer(order);//切换放卡账号
+                    if (strlen(plot[curList].advance[order].track[account]) > 0)
+                      ExchangePerformer(curList, order);//切换放卡账号
                   }
                   else if (area / 10000 == 7)//删除轨道
-                    strcpy_s(advance[order].track[account], "");
+                    strcpy_s(plot[curList].advance[order].track[account], "");
                   else
-                    InputTrack(advance[order].track[account]);
+                    InputTrack(plot[curList].advance[order].track[account]);
                 }
               }
               break;
               }
             }
-            else if (order == advanceNum && (item == ID || item == CHECK)) //新增和复制
+            else if (order == plot[curList].advanceNum && (item == ID || item == CHECK)) //新增和复制
             {
-              if (advanceSelected == 0)
-                AddAdvance(0, 0, 1, 1, 1);
+              if (plot[curList].advanceSelected == 0)
+                AddAdvance(curList, 0, 0, 1, 1, 1);
               else
-                CopyAdvance(advanceSelected - 100);
+                CopyAdvance(curList, plot[curList].advanceSelected - 100);
             }
           }
         }
 
-        if (isAdvanceSelectionRetained == 0)
-          advanceSelected = 0;
-        isAdvanceSelectionRetained = 0;
+        if (plot[curList].isAdvanceSelectionRetained == 0)
+          plot[curList].advanceSelected = 0;
+        plot[curList].isAdvanceSelectionRetained = 0;
       }
       else if (buttons == 2)//鼠标右击
       {
@@ -11553,31 +14328,31 @@ void EditAdvance()
         }
         if (area == 500)
         {
-          if (isAdvanceLocked == false) //未锁定才能修改任务
+          if (plot[curList].isAdvanceLocked == false) //未锁定才能修改任务
           {
             int answer = MessageBox(hWndActuator, "确定要清空任务列表？", "提示", MB_OKCANCEL | MB_ICONINFORMATION | MB_SYSTEMMODAL);
             if (answer == IDOK)
-              advanceNum = 0;
+              plot[curList].advanceNum = 0;
           }
         }
         if (area / 10000 == 1)//右击高级任务格子
         {
-          int order = (advancePage - 1) * advanceNumPerPage + area % 10000 / 100 - 1;//任务序号
+          int order = (plot[curList].advancePage - 1) * advanceNumPerPage + area % 10000 / 100 - 1;//任务序号
           int item = area % 100;//项数
-          if (order < advanceNum)
+          if (order < plot[curList].advanceNum)
           {
             //不是公会任务才能修改局数、房主、轨道、卡组
-            if (!(isMission(advance[order]) && item >= 3 && item <= 8))
+            if (!(IsMission(plot[curList].advance[order]) && item >= 3 && item <= 8))
               switch (item)
               {
               case ID:case CHECK: //序号或勾选框：删除任务
-                if (isAdvanceLocked == false) //未锁定才能修改任务
+                if (plot[curList].isAdvanceLocked == false) //未锁定才能修改任务
                 {
-                  if (advanceSelected == 0)
-                    DeleteAdvance(order);
-                  else if (advanceSelected != 100 + order)
-                    InsertAdvance(advanceSelected - 100, order);
-                  advanceSelected = 0;
+                  if (plot[curList].advanceSelected == 0)
+                    DeleteAdvance(curList, order);
+                  else if (plot[curList].advanceSelected != 100 + order)
+                    InsertAdvance(curList, plot[curList].advanceSelected - 100, order);
+                  plot[curList].advanceSelected = 0;
                 }
                 break;
               case TRACK_0:case TRACK_1: //房主、队友轨道：打开轨道
@@ -11587,9 +14362,9 @@ void EditAdvance()
                 {
                   GetAsyncKeyState(VK_CONTROL);
                   if (GetAsyncKeyState(VK_CONTROL)) //按住VK_CONTROL：打开轨道所在文件夹
-                    OpenTrackFolder(advance[order].track[account]);
+                    OpenTrackFolder(plot[curList].advance[order].track[account]);
                   else
-                    OpenTrack(advance[order].track[account]);
+                    OpenTrack(plot[curList].advance[order].track[account]);
                 }
               }
               break;
@@ -11597,10 +14372,12 @@ void EditAdvance()
           }
         }
       }
-      SaveAdvance();
+      SaveAdvance(curList);
       SaveParameter();
       RepaintAdvance();
     }
+    else //没有鼠标按下，就重绘提示
+      RepaintTip();
 
     sleepTime++;
     if (sleepTime % 10 == zero)
@@ -11624,12 +14401,12 @@ int GetFilledTrack(int task)
 {
   int TrackNum = 0;
   int account = 0;
-  if (strlen(project[task].track[0]) > 0)
+  if (strlen(param[task].track[0]) > 0)
   {
     TrackNum++;
     account = 0;
   }
-  if (strlen(project[task].track[1]) > 0)
+  if (strlen(param[task].track[1]) > 0)
   {
     TrackNum++;
     account = 1;
@@ -11639,14 +14416,14 @@ int GetFilledTrack(int task)
   else
     return account;
 }
-//编辑执行参数
+//编辑普通任务参数
 void EditParameter()
 {
   int xPos, yPos, buttons;//鼠标按下
   int task, account, i;
 
   RepaintParameter();//绘制参数界面
-  while (1)//循环检测鼠标事件
+  while (true)//循环检测鼠标事件
   {
     if (lastClickMessage > zero) //检测到鼠标按下
     {
@@ -11662,26 +14439,6 @@ void EditParameter()
           mode = 2;
           return;
         }
-        if (area == 3)//点击(0,0)位置，读取参数
-          LoadParameter();
-        if (area == 4) //更换任务列表路径
-        {
-          if (isAdvanceStarted == 1) //任务运行时：不允许修改，把文件中的路径改回去
-          {
-            SaveParameter();
-            MessageBox(hWndActuator, "任务运行时不允许修改参数", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
-          }
-          else
-          {
-            advanceSelected = 0;
-            LoadParameter();
-            LoadAdvance();
-            advancePage = 1;
-            backupNum = currentBackup = 0;
-          }
-          mode = 2;
-          return;
-        }
         if (area / 10 == 1) //启动和停止
         {
           task = area - 10;
@@ -11689,8 +14446,9 @@ void EditParameter()
           {
             if (isTaskStarted_Confirm[task] == 1)
               MessageBox(hWndActuator, "请勿频繁启动", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
-            else if (CheckStartTask(task) == 1)
+            else if (CheckTask(task) == 1)
             {
+              LoadCustom(task);//读取自定卡槽
               isTaskStarted[task] = 1;//记录任务开始
               isTaskStarted_Confirm[task] = 1;
               CreateThread(NULL, 0, StartTask, (void *)task, 0, NULL);//启动任务线程
@@ -11706,9 +14464,9 @@ void EditParameter()
           HideOrShow(task, account);
         }
 
-        ResponseUpperSettings();//响应上方三个按钮：全部停止、后台运行、一键报错
+        ResponseUpperSetting();//响应上方三个按钮：全部停止、后台运行、一键报错
         AdjustZoom();
-        Adjust(plantDelay, 0, 200, 10, 304, 404);//放卡延迟
+        Adjust(customOption, 0, 1, 1, 304, 404, 1);//带卡选择
         Adjust(flipNum, 1, 5, 1, 306, 406);//翻牌数量
         Adjust(bagFullOperation, 0, 1, 1, 308, 408, 1);//背包满时操作
         Adjust(expFullOperation, 0, 1, 1, 310, 410, 1);//经验满时操作
@@ -11722,17 +14480,20 @@ void EditParameter()
           i = area % 100;
           switch (i)
           {
+          case 0:
+            InputTaskTitle(task);
+            break;
           case 1:
-            InputTrack(project[task].track[0]);
+            InputTrack(param[task].track[0]);
             break;
           case 2:
-            InputTrack(project[task].track[1]);
+            InputTrack(param[task].track[1]);
             break;
           case 3:
-            InputNum(&project[task].maxGames, 1, 9999, "输入执行刷图的局数（1~9999）。", "执行局数");
+            InputNum(&param[task].maxGames, 1, 9999, "输入执行刷图的局数（1~9999）。", "执行局数");
             break;
           case 4:
-            InputNum(&project[task].gameTime, 0, 960,
+            InputNum(&param[task].gameTime, 0, 960,
               "输入每局刷图的时间（0~960），单位秒。\n输入0自动检测，否则到设定时间后执行下一局。", "每局用时");
             break;
           }
@@ -11745,21 +14506,21 @@ void EditParameter()
           switch (i)
           {
           case 1:
-            if (strlen(project[task].track[0]) > 0)
+            if (strlen(param[task].track[0]) > 0)
             {
               char Track[maxPath];
-              strcpy_s(Track, project[task].track[0]);
-              strcpy_s(project[task].track[0], project[task].track[1]);
-              strcpy_s(project[task].track[1], Track);
+              strcpy_s(Track, param[task].track[0]);
+              strcpy_s(param[task].track[0], param[task].track[1]);
+              strcpy_s(param[task].track[1], Track);
             }
             break;
           case 2:
-            if (strlen(project[task].track[1]) > 0)
+            if (strlen(param[task].track[1]) > 0)
             {
               char Track[maxPath];
-              strcpy_s(Track, project[task].track[0]);
-              strcpy_s(project[task].track[0], project[task].track[1]);
-              strcpy_s(project[task].track[1], Track);
+              strcpy_s(Track, param[task].track[0]);
+              strcpy_s(param[task].track[0], param[task].track[1]);
+              strcpy_s(param[task].track[1], Track);
             }
             break;
           case 8://抓取房主标签
@@ -11782,10 +14543,10 @@ void EditParameter()
             Sleep(100);
             break;
           case 1:
-            strcpy_s(project[task].track[0], "");
+            strcpy_s(param[task].track[0], "");
             break;
           case 2:
-            strcpy_s(project[task].track[1], "");
+            strcpy_s(param[task].track[1], "");
             break;
           case 8:
             DeleteTag(task, 0);//删除抓取的标签
@@ -11811,19 +14572,19 @@ void EditParameter()
           switch (i)
           {
           case 5://继续作战上调
-            project[task].isProceed[account] = 1 - project[task].isProceed[account];
+            param[task].isProceed[account] = 1 - param[task].isProceed[account];
             break;
           case 6://自动收集上调
-            if (project[task].isCollect[account] == 2)
-              project[task].isCollect[account] = 0;
+            if (param[task].isCollect[account] == 2)
+              param[task].isCollect[account] = 0;
             else
-              project[task].isCollect[account]++;
+              param[task].isCollect[account]++;
             break;
           case 7://使用卡组上调
-            if (project[task].deck[account] == 6)
-              project[task].deck[account] = 0;
+            if (param[task].deck[account] == 6)
+              param[task].deck[account] = 0;
             else
-              project[task].deck[account]++;
+              param[task].deck[account]++;
             break;
           }
         }
@@ -11839,19 +14600,19 @@ void EditParameter()
           switch (i)
           {
           case 5:
-            project[task].isProceed[account] = 1 - project[task].isProceed[account];
+            param[task].isProceed[account] = 1 - param[task].isProceed[account];
             break;
           case 6:
-            if (project[task].isCollect[account] == zero)
-              project[task].isCollect[account] = 2;
+            if (param[task].isCollect[account] == zero)
+              param[task].isCollect[account] = 2;
             else
-              project[task].isCollect[account]--;
+              param[task].isCollect[account]--;
             break;
           case 7:
-            if (project[task].deck[account] == zero)
-              project[task].deck[account] = 6;
+            if (param[task].deck[account] == zero)
+              param[task].deck[account] = 6;
             else
-              project[task].deck[account]--;
+              param[task].deck[account]--;
             break;
           }
         }
@@ -11867,9 +14628,9 @@ void EditParameter()
           case 1:case 2:
             GetAsyncKeyState(VK_CONTROL);
             if (GetAsyncKeyState(VK_CONTROL)) //按住VK_CONTROL：打开轨道所在文件夹
-              OpenTrackFolder(project[task].track[i - 1]);
+              OpenTrackFolder(param[task].track[i - 1]);
             else
-              OpenTrack(project[task].track[i - 1]);
+              OpenTrack(param[task].track[i - 1]);
             break;
           }
         }
@@ -11877,6 +14638,8 @@ void EditParameter()
       SaveParameter();
       RepaintParameter();
     }
+    else //没有鼠标按下，就重绘提示
+      RepaintTip();
     sleepTime++;
     if (sleepTime % 10 == zero)
       Sleep(1);
@@ -11900,11 +14663,15 @@ LRESULT CALLBACK MyWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
   {
   case WM_CLOSE:
   {
-    int task;
-    for (task = 0; task < taskNum; task++)//检查正在启动的普通任务
-      if (isTaskStarted[task] == 1)
-        break;
-    if (task < taskNum || isAdvanceStarted == 1) //如果有普通任务或高级任务正在启动，确认了才能退出
+    bool isAnyTaskRunning = false;
+    for (int task = 0; task < maxTaskNum; task++)//检查普通任务线程
+      if (isTaskStarted[task])
+        isAnyTaskRunning = true;
+    for (int list = 0; list < listNum; list++)//检查高级任务线程
+      if (plot[list].isAdvanceStarted)
+        isAnyTaskRunning = true;
+
+    if (isAnyTaskRunning) //如果有任务正在启动，确认了才能退出
     {
       int CloseMessage = MessageBox(hWndActuator, "还有任务正在运行，\n确定要退出吗？", "提示",
         MB_ICONINFORMATION | MB_OKCANCEL | MB_SYSTEMMODAL);
@@ -11949,12 +14716,12 @@ LRESULT CALLBACK MyWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
         break;
       }
       int task = area / 10;
-      if (task >= zero && task < taskNum && account >= 0 && account <= 1)
+      if (IsNormal(task) && account >= 0 && account <= 1)
       {
         if (account == 0)
-          strcpy_s(project[task].track[0], shortPath);
+          strcpy_s(param[task].track[0], shortPath);
         else
-          strcpy_s(project[task].track[1], shortPath);
+          strcpy_s(param[task].track[1], shortPath);
         int xPos = 10;
         int yPos = 0;
         lastClickMessage = 100000000 + xPos * 10000 + yPos;
@@ -11962,6 +14729,7 @@ LRESULT CALLBACK MyWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
     }
     else if (mode == 2)
     {
+      int list = curList;
       if (fileType == 0) //如果是无效文件
       {
         PopMessage(hWndActuator, "只能打开轨道或列表文件。");
@@ -11970,26 +14738,26 @@ LRESULT CALLBACK MyWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
       if (fileType == 1) //如果是轨道文件
       {
         int pageOrder = area / 10;
-        int order = (advancePage - 1) * advanceNumPerPage + pageOrder;
-        if (order >= zero && order < advanceNum && account >= 0 && account <= 1)
+        int order = (plot[list].advancePage - 1) * advanceNumPerPage + pageOrder;
+        if (order >= zero && order < plot[list].advanceNum && account >= 0 && account <= 1)
         {
           if (account == 0)
-            strcpy_s(advance[order].track[0], shortPath);
+            strcpy_s(plot[list].advance[order].track[0], shortPath);
           else
-            strcpy_s(advance[order].track[1], shortPath);
+            strcpy_s(plot[list].advance[order].track[1], shortPath);
         }
       }
       else if (fileType == 2) //如果是列表文件
       {
-        if (isAdvanceStarted == 1) //任务运行时：不允许修改，把文件中的路径改回去
+        if (plot[list].isAdvanceStarted == 1) //任务运行时：不允许修改，把文件中的路径改回去
           MessageBox(hWndActuator, "任务运行时不允许修改参数", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
         else
         {
-          advanceSelected = 0;
-          strcpy_s(advancePath, shortPath);
-          LoadAdvance();
-          advancePage = 1;
-          backupNum = currentBackup = 0;
+          plot[list].advanceSelected = 0;
+          strcpy_s(plot[list].advancePath, shortPath);
+          LoadAdvance(list);
+          plot[list].advancePage = 1;
+          plot[list].backupNum = plot[list].currentBackup = 0;
         }
       }
       int xPos = 10;
@@ -12023,8 +14791,8 @@ LRESULT CALLBACK MyWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
   // 调用默认窗口过程
   return 0;
 }
-//公会列表轨道用任务名命名
-int RenameWithMission()
+//公会任务列表轨道用任务名命名
+int RenameWithMission(int list)
 {
   //读取公会任务名称
   FILE *f;
@@ -12036,46 +14804,45 @@ int RenameWithMission()
   fclose(f);
 
   char trackPath[2][maxPath] = {};
-  for (int order = 0; order < advanceNum; order++)
+  for (int order = 0; order < plot[list].advanceNum; order++)
   {
     sprintf_s(trackPath[0], "预制轨道\\公会任务\\%d_%s.txt", order + 1, missionName[order]);
     sprintf_s(trackPath[1], "预制轨道\\公会任务\\%d_%s+.txt", order + 1, missionName[order]);
     if (order >= 2 && order <= 59)
       for (int account = 0; account < 2; account++)
-        if (strlen(advance[order].track[account]) > 0)
+        if (strlen(plot[list].advance[order].track[account]) > 0)
         {
-          Copy(advance[order].track[account], trackPath[account]);
-          strcpy_s(advance[order].track[account], trackPath[account]);
+          Copy(plot[list].advance[order].track[account], trackPath[account]);
+          strcpy_s(plot[list].advance[order].track[account], trackPath[account]);
         }
   }
-  SaveAdvance();
+  SaveAdvance(list);
   return 0;
 }
-//匹配通用轨道
-void MatchCommonTrack()
-{
-  char levelName[20];
-  for (int order = 0; order < advanceNum; order++)
-  {
-    int &type = advance[order].type;
-    if (type == 3 || type >= 6)
-    {
-      int &level = advance[order].level;
-      GetLevelName(levelName, type, level);
-      sprintf_s(advance[order].track[0], "预制轨道\\通用轨道\\%s\\%d%s.txt", advanceName[type], level, levelName);
-    }
-  }
-}
 //列表中是否存在具体公会任务
-bool isMissionExist()
+bool isMissionExisted(int list)
 {
-  for (int order = 0; order < advanceNum; order++)
-    if (advance[order].isMission == 1)
+  for (int order = 0; order < plot[list].advanceNum; order++)
+    if (plot[list].advance[order].isMission == 1)
       return true;
   return false;
 }
 const int maxAppendixNum = 256;
 char appendix[maxAppendixNum][maxPath];
+//生成依赖文件.txt
+void MakeAppendixList()
+{
+  int appendixNum = GetFileList("附加程序\\*", appendix, maxAppendixNum);
+  FILE *f;
+  if (fopen_s(&f, "附加程序\\依赖文件.txt", "w"))
+  {
+    MessageBox(NULL, "无法写入依赖文件。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+    exit(0);
+  }
+  for (int i = 0; i < appendixNum; i++)
+    fprintf(f, "附加程序\\%s\n", appendix[i]);
+  fclose(f);
+}
 //检查依赖文件是否完整，不完整则提示并退出程序
 void CheckAppendix()
 {
@@ -12091,11 +14858,11 @@ void CheckAppendix()
     fgets(f, appendix[++appendixNum]);
   fclose(f);
   for (int i = 0; i < appendixNum; i++)
-    if (_access(appendix[i], 0))
+    if (!FileExist(appendix[i]))
     {
-      char Message[100];
-      sprintf_s(Message, "缺少依赖文件（夹）：\n%s\n请确保更新完整，且不要把软件移出文件夹。", appendix[i]);
-      MessageBox(NULL, Message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+      char message[maxPath + 100];
+      sprintf_s(message, "缺少依赖文件（夹）：\n%s\n请确保更新完整，且不要把软件移出文件夹。", appendix[i]);
+      MessageBox(NULL, message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
       exit(0);
     }
 }
@@ -12104,24 +14871,28 @@ void CreateBackupFolder()
 {
   time_t currentTime;
   char backupPath[maxPath] = {};
-  while (true)
+  char runningTick[maxPath] = {};//本次运行时刻
+  for (int list = 0; list < listNum; list++)
   {
-    time(&currentTime);
-    GetTimeStringForFolder(runTimeString, currentTime);//记录本次启动的时间
-    sprintf_s(backupPath, "自动备份\\任务列表\\%s", runTimeString);
-    if (_access(backupPath, 0))//如果文件夹不存在，则退出循环
-      break;
-    Sleep(100);
-  };
-  CreatePath(backupPath);//创建本次自动备份文件夹
-  sprintf_s(tempListForSave, "自动备份\\任务列表\\%s\\temp.txt", runTimeString);
+    while (true)
+    {
+      time(&currentTime);
+      GetTimeStringForFolder(runningTick, currentTime);//获取本次启动时刻
+      sprintf_s(plot[list].backupFolder, "%s-%d", runningTick, list);//填写备份文件夹
+      sprintf_s(backupPath, "自动备份\\任务列表\\%s", plot[list].backupFolder);
+      if (!FileExist(backupPath))//如果文件夹不存在，则退出循环
+        break;
+      Sleep(100);
+    };
+    CreatePath(backupPath);//创建本次自动备份文件夹
+  }
 }
-char CrossName[6][8][9];//跨服6种环境8个关卡的全称
+char crossName[6][8][9];//跨服6种环境8个关卡的全称
 //读取跨服关卡列表
 void LoadCrossLevel()
 {
   FILE *f;
-  if (fopen_s(&f, "附加程序\\跨服关卡.txt", "r"))//打开文件
+  if (fopen_s(&f, "附加程序\\文本\\跨服关卡.txt", "r"))//打开文件
   {
     PopMessage(nullptr, "打不开[跨服关卡.txt]");
     return;
@@ -12131,9 +14902,9 @@ void LoadCrossLevel()
   for (int i = 0; i < 6; i++)
   {
     fgets(f, s);//读取一行文字
-    strcpy_s(CrossName[i][0], strtok_s(s, "\t", &nextInfo));
+    strcpy_s(crossName[i][0], strtok_s(s, "\t", &nextInfo));
     for (int j = 1; j < 4; j++)
-      strcpy_s(CrossName[i][j], strtok_s(NULL, "\t", &nextInfo));
+      strcpy_s(crossName[i][j], strtok_s(NULL, "\t", &nextInfo));
   }
   fclose(f);
 }
@@ -12152,8 +14923,8 @@ struct ContestType
   char banInfo[20];//ban卡要求
   char plantInfo[20];//放卡要求
   int requiredSlotNum;
-  char ban[10];
-  char plant[10];
+  char ban[20];
+  char plant[20];
 };
 const int maxContestNum = maxAdvanceNum;
 ContestType contest[maxContestNum];
@@ -12205,8 +14976,8 @@ void ExtractRequirement(ContestType &contest, char *requirement)
       contest.requiredSlotNum = i;
   }
   //放置xxx，不使用xxx，禁xxx
-  const char banString[3][20] = { "放置", "不使用", "禁" };
-  for (int i = 0; i < 3; i++)
+  const char banString[4][20] = { "放置", "不使用", "禁", "禁用" };
+  for (int i = 0; i < 4; i++)
   {
     char *infoLoc = strstr(requirement, banString[i]);
     if (infoLoc)
@@ -12216,12 +14987,12 @@ void ExtractRequirement(ContestType &contest, char *requirement)
       char *comma = strstr(info, "、");
       if (comma) //如果有顿号，从顿号位置截断
         comma[0] = 0;
-      if (i == 0)
+      if (i == 0) //要放置的卡
       {
         strcpy_s(contest.plantInfo, info);
         strcpy_s(contest.plant, info + strlen(banString[i]));
       }
-      else
+      else //禁用的卡
       {
         strcpy_s(contest.banInfo, info);
         strcpy_s(contest.ban, info + strlen(banString[i]));
@@ -12266,7 +15037,7 @@ void ReadContestInfo(const char *contestPath)
       for (int level = 0; level < levelNum[type]; level++) //遍历关卡
       {
         const char surroudingName[4][4] = { "日", "夜", "陆", "水" };//环境名称
-        char levelName[10] = {}, site[10] = {}, surrounding[10] = {};//关卡全称、地点（色拉）、环境（陆）
+        char levelName[100] = {}, site[100] = {}, surrounding[100] = {};//关卡全称、地点（色拉）、环境（陆）
         GetLevelName(levelName, type, level);//获取关卡全称
         GetLevelName(site, type, level);//地点预设为全称
         char *endOfLevelName = site + strlen(site) - 2;//关卡尾字
@@ -12284,8 +15055,8 @@ void ReadContestInfo(const char *contestPath)
           {
             contest[code].type = type; //记录匹配结果
             contest[code].level = level;
-            sprintf_s(contest[code].track, "预制轨道\\通用轨道\\%s\\%d%s.txt",
-              advanceName[type], level, levelName);
+            sprintf_s(contest[code].track, "预制轨道\\通用轨道\\%d%s\\%d%s.txt",
+              type, typeName[type], level, levelName);
             break;
           }
       }
@@ -12295,11 +15066,11 @@ void ReadContestInfo(const char *contestPath)
     {
       for (int stage = 0; stage < 6; stage++) //匹配跨服关卡
         for (int level = 0; level < 4; level++)
-          if (strstr(info, CrossName[stage][level]))
+          if (strstr(info, crossName[stage][level]))
           {
             contest[code].type = 3; //记录匹配结果
             contest[code].level = stage * 8 + level;
-            sprintf_s(contest[code].track, "预制轨道\\通用轨道\\跨服\\%d%s%d.txt",
+            sprintf_s(contest[code].track, "预制轨道\\通用轨道\\3跨服\\%d%s%d.txt",
               contest[code].level, crossMapName[stage], level + 8);
             break;
           }
@@ -12374,14 +15145,16 @@ void ReadContestInfo(const char *contestPath)
           }
         }
       }
-      if (contest[code].requiredSlotNum)//如果存在卡槽数限制，把所有不用的卡都ban了
+      //如果存在卡槽数限制，把所有不用的卡都ban了，但不能ban咖啡粉
+      if (contest[code].requiredSlotNum)
       {
         isBanEnabled = true;//记录ban卡已启用
         int remainingSlotNum = work[task].slotNum[0];
         for (int order = 1; order <= work[task].slotNum[0]; order++)
         {
           SlotType &slot = work[task].slot[0][order];
-          if (slot.moment[1] == 0 && !slot.limit) //ban掉所有无轨卡
+          //ban掉所有非咖啡粉的无轨卡
+          if (strcmp(slot.name, "咖啡粉") != 0 && slot.moment[1] == 0 && !slot.limit)
             isSlotBanned[order] = true;
           if (isSlotBanned[order])
             remainingSlotNum--;
@@ -12425,6 +15198,32 @@ void ReadContestInfo(const char *contestPath)
   }
   fclose(f);
 }
+//生成含有全部通用轨道的列表
+void MakeGeneralList(int list)
+{
+  char folder[maxPath] = {};
+  char track[2][maxPath] = {};
+  char levelName[100] = {};
+  plot[list].advanceNum = 0;
+  for (int type = 0; type < 16; type++)
+  {
+    sprintf_s(folder, "预制轨道\\通用轨道\\%d%s", type, typeName[type]);
+    if (!FileExist(folder))
+      continue;
+    for (int level = 0; level < levelNum[type]; level++)
+    {
+      GetLevelName(levelName, type, level);
+      sprintf_s(track[0], "%s\\%d%s.txt", folder, level, levelName);
+      sprintf_s(track[1], "%s\\%d%s+.txt", folder, level, levelName);
+      if (!FileExist(track[0]))
+        continue;
+      AddAdvance(list, type, level, 1, 1, 1);
+      strcpy_s(plot[list].advance[plot[list].advanceNum - 1].track[0], track[0]);//填写2P轨道
+      if (FileExist(track[1]))
+        strcpy_s(plot[list].advance[plot[list].advanceNum - 1].track[1], track[1]);//填写2P轨道
+    }
+  }
+}
 //由大赛顺序表生成预制列表
 void MakeContestList(const char *contestPath, const char *listPath)
 {
@@ -12451,15 +15250,15 @@ void MakeContestList(const char *contestPath, const char *listPath)
   fclose(fout);
 }
 //由单人列表生成双人列表
-void Make2PContestList()
+void Make2PContestList(int list)
 {
-  for (int order = advanceNum - 1; order >= 0; order--)
+  for (int order = plot[list].advanceNum - 1; order >= 0; order--)
   {
-    if (advance[order].deck[1] == 0) //2P卡组为×，则复制一份，房主轨道卡组交换
+    if (plot[list].advance[order].deck[1] == 0) //2P卡组为×，则复制一份，房主轨道卡组交换
     {
-      CopyAdvance(order);
-      InsertAdvance(advanceNum - 1, order + 1);
-      ExchangePerformer(order + 1);
+      CopyAdvance(list, order);
+      InsertAdvance(list, plot[list].advanceNum - 1, order + 1);
+      ExchangePerformer(list, order + 1);
     }
   }
 }
@@ -12491,13 +15290,13 @@ LRESULT CALLBACK MonitorProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
   }
 }
 //初始化监视器设置
-void InitMonitorSettings()
+void InitMonitorSetting()
 {
   InitClass("MonitorWindow", MonitorProc);
   for (int task = 0; task < maxTaskNum; task++)
   {
     strcpy_s(monitor[task].className, "MonitorWindow");
-    sprintf_s(monitor[task].windowText, "%s监视", taskName[task]);
+    sprintf_s(monitor[task].windowText, "任务%d监视", task);
     monitor[task].cx = gameWidth * DPI / 96;
     monitor[task].cy = gameHeight * DPI / 96;
     monitor[task].ratio = (float)DPI / 96;
@@ -12508,18 +15307,32 @@ void InitMonitorSettings()
   hMonitorPen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
   hBrushBlack = CreateSolidBrush(RGB(0, 0, 0));
 }
+//截取VIP图像
+void CatchVIP()
+{
+  char path0[maxPath], path1[maxPath];
+  for (int vip = 0; vip <= 14; vip++)
+  {
+    sprintf_s(path0, "VIP大图\\%d.png", vip);
+    sprintf_s(path1, "VIP\\%d.png", vip);
+    BitmapToColor(path0, work[0].map);
+    ColorToBitmap(work[0].map, path1, vipX, vipY, vipWidth, vipHeight);
+  }
+}
 int main(int argc, char *argv[])
 {
   DPI = SetDPIAware();//设置DPI感知并获取DPI
+  ParameterShifter();//进行配置迁移
 
   //获取程序所在目录CurrentDirect
   strcpy_s(programDirect, argv[0]);//拷贝程序目录
-  char *SlashLoc = strrchr(programDirect, '\\');//找到最右边的反斜杠
-  SlashLoc[0] = 0;
+  char *slash = strrchr(programDirect, '\\');//找到最右边的反斜杠
+  slash[0] = 0;
 
   //至此程序所在目录获取完毕
-  POINT PointPosted = { 0, 0 };//发送给已启动的执行器的点击位置
-  if (argc > 1)//被其他程序启动时，要把工作目录改回来，且自动填写到任务0
+  POINT pointPosted = { 0, 0 };//发送给已启动的执行器的点击位置
+  char openedListPath[maxPath] = {};//打开的列表路径
+  if (argc > 1)//用执行器打开文件时，要把工作目录改回来，并填写任务0轨道或载入任务列表
   {
     _chdir(programDirect);//修改工作目录到程序所在目录
     char shortPath[maxPath];//参数1中的文件相对路径
@@ -12532,69 +15345,69 @@ int main(int argc, char *argv[])
       exit(0);
     }
     if (fileType == 1) //如果文件类型是轨道
-      strcpy_s(project[0].track[0], shortPath);//填入任务0轨道
+      strcpy_s(param[0].track[0], shortPath);//填入任务0轨道
     else //如果文件类型是列表
     {
       mode = 2;
-      PointPosted.y = 2;//点击位置为(0,2)
-      strcpy_s(advancePath, shortPath);//填入列表路径
+      pointPosted.y = 2;//点击位置为(0,2)
+      strcpy_s(openedListPath, shortPath);//记录列表路径
     }
     SaveParameter();
   }
   _getcwd(workDirect, sizeof(workDirect));//获取工作目录
 
   /*检查依赖文件完整性：附加程序和执行记录*/
-  if (_access("..\\开发者文件.txt", 0) == 0)//如果上级目录有开发者文件
+  if (FileExist("..\\开发者文件.txt"))//如果上级目录有开发者文件
+  {
     MakeBitmapList();//生成图片目录
-  if (_access("执行记录", 0))
+    MakeAppendixList();//生成依赖文件目录
+  }
+  if (!FileExist("执行记录"))
     CreatePath("执行记录");
-  if (_access("附加程序", 0))
+  if (!FileExist("附加程序"))
     CreatePath("附加程序");
-  if (_access("用户参数", 0))
+  if (!FileExist("用户参数"))
     CreatePath("用户参数");
-  if (_access("附加程序\\依赖文件.txt", 0))
+  if (!FileExist("附加程序\\依赖文件.txt"))
     OutputRes("依赖文件", "TEXT", "附加程序\\依赖文件.txt");
   CheckAppendix();//检查依赖文件
 
   /*获取所在文件夹名称：CurrentDirect的最后一级*/
   char folderName[maxPath];//所在文件夹名称
-  SlashLoc = strrchr(programDirect, '\\');//找到最右边的斜杠
-  if (SlashLoc == NULL)
-    SlashLoc = strrchr(programDirect, '/');//没有反斜杠就找正斜杠
-  if (SlashLoc == NULL)//如果没有斜杠，说明只有一级目录
+  slash = strrchr(programDirect, '\\');//找到最右边的斜杠
+  if (slash == NULL)
+    slash = strrchr(programDirect, '/');//没有反斜杠就找正斜杠
+  if (slash == NULL)//如果没有斜杠，说明只有一级目录
     strcpy_s(folderName, programDirect);//CurrentDirect就是文件夹名称
   else
-    strcpy_s(folderName, SlashLoc + 1);//斜杠右边的就是程序名
+    strcpy_s(folderName, slash + 1);//斜杠右边的就是程序名
 
-  InitMonitorSettings();
+  InitMonitorSetting();
 
-  /*
-  char shortFolderName[newMaxPath + 10] = {};
-  CutStringBelowLength(shortFolderName, folderName, 20);
-  sprintf_s(taskName[taskNum], "%s\\高级任务", folderName);
-  */
+  //创建本程序的互斥量
+  char wndTitle[100];//窗口标题
+  sprintf_s(wndTitle, versionString, version, folderName);//设置窗口标题
+  char mutexName[maxPath];
+  sprintf_s(mutexName, "ACTUATOR_%s", folderName);//用文件夹名称命名互斥量
 
-  //创建本程序的互斥锁
-  char WndTitle[100];//窗口标题
-  HANDLE hmutex = CreateMutex(NULL, FALSE, "FORBID_REPEAT_ACTUATOR");//创建互斥量
-  sprintf_s(WndTitle, versionString, version, folderName);//设置窗口标题
-  if (hmutex != NULL && GetLastError() == ERROR_ALREADY_EXISTS) //如果互斥量已存在，说明已有执行器打开
+  HANDLE hmutex = CreateMutexA(NULL, FALSE, mutexName);//创建互斥量
+  //如果互斥量已存在，说明同一目录下的执行器已打开，不允许重复启动
+  if (hmutex && GetLastError() == ERROR_ALREADY_EXISTS)
   {
-    hWndActuator = FindWindow("EasyXWnd", WndTitle);//查找窗口标题
-    if (hWndActuator != NULL) //如果找到了，恢复窗口
+    hWndActuator = FindWindow("EasyXWnd", wndTitle);//查找窗口标题
+    if (hWndActuator) //如果找到了，恢复窗口
     {
       if (argc > 1) //拖动文件到执行器上
       {
-        LeftClick(hWndActuator, PointPosted.x, PointPosted.y);//发送点击指令
+        LeftClick(hWndActuator, pointPosted.x, pointPosted.y);//发送点击指令
         RecoverWindow_NoMove(hWndActuator);//恢复隐藏的窗口，若窗口未被隐藏则不改变位置
       }
       else //直接启动执行器
         RecoverWindow(hWndActuator);//恢复隐藏的窗口并居中
       SetForegroundWindow(hWndActuator);
-      return 0;//程序结束
     }
-    else //如果没找到，说明启动的是另一个文件夹的执行器，允许双开
-      ClearBackupAndLog();//清理之前的自动备份
+    //如果没找到，说明已开执行器还没加载窗口，不做任何操作
+    return 0;//不允许多开
   }
   else //如果执行器没打开
     ClearBackupAndLog();//清理之前的自动备份
@@ -12602,10 +15415,20 @@ int main(int argc, char *argv[])
   //能运行到这里，说明启动的是执行器主程序而不是唤出程序
   CreateBackupFolder();
 
+  //FindBase();//求解一类物品的底色
+  //AutoClassification();
+  //return 100;
+
+  LoadVip();//载入VIP图片
   LoadRoleName();//载入已记录的角色名
   LoadStar();//载入星级图像
-  LoadCustom();//载入自定卡槽
   LoadItem();//载入自定图像
+  LoadBanner();//载入关卡旗帜
+  LoadBase();//载入物品底色
+  WriteCycleArea();//填写“加载中”圆环区域
+  LoadLoot();//载入战利品
+  LoadLootDigit();//载入物品数字
+  LoadLootScroll();//载入战利品标准滚动条
   LoadCard();//载入自定卡片
   LoadMission();//载入公会任务名图像
   LoadDigit();//载入数字图像
@@ -12616,32 +15439,47 @@ int main(int argc, char *argv[])
   LoadMaltoseCoverage();//载入麦芽糖覆盖区域
   LoadMusicInnateGrid();//载入音乐节夜初始地图
   LoadDragon();//载入龙图
+  hMutexLoot = CreateMutexA(NULL, FALSE, NULL);//创建战利品读写互斥锁
+  hMutexProp = CreateMutexA(NULL, FALSE, NULL);//创建道具读写互斥锁
+  for (int list = 0; list < listNum; list++) //创建刷新记录互斥锁
+    plot[list].hMutexRefreshLog = CreateMutexA(NULL, FALSE, NULL);
 
-  //MakeContestList("原始列表_沙漠5期.txt", "美食大赛_沙漠5期.txt");
+  //MakeContestList("原始列表_奇境1期.txt", "美食大赛_奇境1期.txt");
   //return 114514;
 
   RegisterAllButtons();//注册按钮区域值
   crossCursor = LoadCursor(NULL, IDC_CROSS);//加载十字光标资源
 
-  for (int task = 0; task <= taskNum; task++)
+  for (int task = 0; task < maxTaskNum; task++)
     ResetState(task);
 
+  //载入普通任务参数（里面没有列表路径，放心食用）
   LoadParameter();
-  if (argc == 1)
-    strcpy_s(advancePath, "用户参数\\高级任务列表.txt");
   SaveParameter();
-  LoadAdvance();
-  if (isMissionExist()) //如果列表中存在公会任务
+
+  //填写高级任务0-4的列表路径
+  for (int list = 0; list < listNum; list++)
+    sprintf_s(plot[list].advancePath, "用户参数\\自制列表\\高级任务%d.txt", list);
+  //如果是用执行器打开列表文件，替换高级任务0的列表路径
+  if (strlen(openedListPath) > 0)
+    strcpy_s(plot[curList].advancePath, openedListPath);
+  //载入5个高级任务的列表
+  for (int list = 0; list < listNum; list++)
   {
-    SaveBackup(2);//保存至2.txt
-    MissionReturn();//还原公会任务
-    SaveBackup(1);//保存至1.txt
-    LoadBackup(2);//载入2.txt，CurrentBackup=2
-    backupNum = 2;//备份数量设为2
+    plot[list].advancePage = 1;
+    plot[list].outputPage = 1;
+    LoadAdvance(list);
+    if (isMissionExisted(list)) //如果列表中存在公会任务
+    {
+      SaveBackup(list, 2);//保存至2.txt
+      MissionReturn(list);//还原公会任务
+      SaveBackup(list, 1);//保存至1.txt
+      LoadBackup(list, 2);//载入2.txt，CurrentBackup=2
+      plot[list].backupNum = 2;//备份数量设为2
+    }
+    SaveAdvance(list);//启动时保存任务列表，形成备份
   }
-  //Make2PContestList();
-  SaveAdvance();//启动时保存任务列表，形成备份
-  for (int task = 0; task <= taskNum; task++)
+  for (int task = 0; task < maxTaskNum; task++)
     isHallModified[task] = 1;
   OpenGraph_Fit();
   hWndActuator = GetHWnd();
@@ -12650,7 +15488,7 @@ int main(int argc, char *argv[])
   DragAcceptFiles(hWndActuator, TRUE);//允许窗口接收文件
   RecoverWindow(hWndActuator);
   SetForegroundWindow(hWndActuator);
-  SetWindowText(hWndActuator, WndTitle);
+  SetWindowText(hWndActuator, wndTitle);
 
   HINSTANCE hInstance = GetModuleHandle(NULL);
   HICON hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(101), IMAGE_ICON,
@@ -12662,16 +15500,16 @@ int main(int argc, char *argv[])
 
   setfillcolor(defaultFillColor);
 
-  setbkmode(TRANSPARENT);     //透明字体
+  setbkmode(TRANSPARENT);    //透明字体
   LOGFONT font;
-  gettextstyle(&font);      //获取当前字体设置
-  font.lfHeight = 20;      //设置字体高度
+  gettextstyle(&font);       //获取当前字体设置
+  font.lfHeight = 20;        //设置字体高度
   font.lfWeight = 1000;      //设置字体粗细
-  strcpy_s(font.lfFaceName, _T("等线"));   //设置字体为“黑体”
-  font.lfQuality = ANTIALIASED_QUALITY;    //设置输出效果为抗锯齿
-  settextstyle(&font);      //设置字体样式
+  strcpy_s(font.lfFaceName, "等线");   //设置字体为“等线”
+  font.lfQuality = ANTIALIASED_QUALITY;//设置输出效果为抗锯齿
+  settextstyle(&font);       //设置字体样式
 
-  while (1)
+  while (true)
     if (mode == 1)
       EditParameter();
     else if (mode == 2)

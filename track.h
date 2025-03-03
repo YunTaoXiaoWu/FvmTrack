@@ -5,15 +5,14 @@
 //4. 窗口创建及相关绘图操作
 //5. 大厅、flash窗口及选服窗口查找
 #pragma once
-#include <io.h>       //使用_access函数
 #include <direct.h>   //获取和修改工作目录
 #include <time.h>     //获取系统时间
 #include <Windows.h>  //Windows API
 #include <atlimage.h> //保存截图（CImage类）
-#include <graphics.h> //ExsyX库
+#include <graphics.h> //EasyX库
 #include <windowsx.h> //组合框控件操作宏
 
-const char *const version = "v4.3";//版本号
+const char version[] = "v4.5";//版本号
 const int zero = 0;//整数的0
 const int maxPath = 260;//最大文件路径长度
 const int gameWidth = 950, gameHeight = 596;//游戏窗口尺寸
@@ -32,13 +31,21 @@ const int minRequiredSimilarity = 10, maxRequiredSimilarity = 500;
 int DPI = 96; //DPI缩放，用于校正点击位置
 int area;//记录最近一次点击的区域
 
-//从0xbbggrr格式的颜色中提取RGB分量
+//从0xrrggbb格式的颜色中提取RGB分量
 #define bgrRValue(rgb)      (LOBYTE((rgb)>>16))
 #define bgrGValue(rgb)      (LOBYTE(((WORD)(rgb)) >> 8))
 #define bgrBValue(rgb)      (LOBYTE(rgb))
 
+bool FileExist(const char *path)
+{
+  return PathFileExistsA(path) != 0;
+}
 //a的平方
 int Sqr(int a)
+{
+  return a * a;
+}
+double Sqr(double a)
 {
   return a * a;
 }
@@ -61,6 +68,13 @@ void SetFontSize(int size)
 void CenterView(const char *s, int x, int y)
 {
   outtextxy(x - textwidth(s) / 2, y - textheight(s) / 2, s);
+}//给定中心坐标(x,y)显示文字s
+void CenterView(char c, int x, int y)
+{
+  if (c == 0)
+    return;
+  char s[2] = { c };
+  CenterView(s, x, y);
 }
 //给定中心坐标(x,y)显示数字a
 void CenterView(int a, int x, int y)
@@ -68,6 +82,33 @@ void CenterView(int a, int x, int y)
   char str[20];
   sprintf_s(str, "%d", a);
   CenterView(str, x, y);
+}
+const int defaultTextSize = 20;//默认字体大小
+//给定中心坐标(x,y)和场宽width显示字符串s，必要时缩小字体或断为两行
+template <size_t size>
+void LongCenterView(const char(&s)[size], int x, int y, int width)
+{
+  char line1[size];//第一行
+  char preLine2[size];//预处理的第二行
+  char line2[size];//第二行
+
+  SetFontSize(defaultTextSize);
+  if (textwidth(s) <= width)//如果原字体一行能显示得下
+    CenterView(s, x, y);
+  else //如果原字体一行显示不下
+  {
+    SetFontSize(16);//字体缩小为16px
+    Truncate(s, line1, preLine2, width);//分成两行
+    TruncateWithEllipsis(line2, preLine2, width);//第二行如果过长，截尾并添加省略号
+    if ((int)strlen(line2) > zero)//如果一行显示不下
+    {
+      CenterView(line1, x, y - 9);
+      CenterView(line2, x, y + 9);
+    }
+    else //如果一行显示得下
+      CenterView(line1, x, y);
+    SetFontSize(defaultTextSize);//字体还原为20px
+  }
 }
 //把UTF8原位转成ANSI
 void Utf8ToAnsi(char *Utf8Str)
@@ -341,59 +382,34 @@ void RemoveBlank(char(&source)[size])
   }
   strcpy_s(source, dest);//将dest拷贝到source
 }
-//将color数组从(x0,y0)开始、宽高为picWidth,picHeight的区域保存为24位bmp文件path
-template <size_t width, size_t height>
-void ColorToBitmap(COLORREF(&color)[height][width], const char *path
-  , int x0 = 0, int y0 = 0, int picWidth = 0, int picHeight = 0)
+//向指定窗口输入一段字符串（仅限ASCII字符）
+void StringToWindow(const char *str, HWND hWnd)
 {
-  FILE *f;
-  fopen_s(&f, path, "wb");
-  fprintf(f, "BM");
-  if (picWidth == 0)
-    picWidth = width;
-  if (picHeight == 0)
-    picHeight = height;
-  int size = (picWidth * 3 + picWidth % 4) * picHeight + 54;
-  for (int i = 1; i <= 4; i++)
-  {
-    fprintf(f, "%c", size % 256);
-    size = size / 256;
-  }
-  fprintf(f, "%c%c%c%c", 0, 0, 0, 0);
-  fprintf(f, "%c%c%c%c", 54, 0, 0, 0);
-  fprintf(f, "%c%c%c%c", 40, 0, 0, 0);
-  size = picWidth;
-  for (int i = 1; i <= 4; i++)
-  {
-    fprintf(f, "%c", size % 256);
-    size = size / 256;
-  }
-  size = picHeight;
-  for (int i = 1; i <= 4; i++)
-  {
-    fprintf(f, "%c", size % 256);
-    size = size / 256;
-  }
-  fprintf(f, "%c%c%c%c", 1, 0, 24, 0);
-  fprintf(f, "%c%c%c%c", 0, 0, 0, 0);
-  fprintf(f, "%c%c%c%c", 0, 0, 0, 0);
-  fprintf(f, "%c%c%c%c", 196, 14, 0, 0);
-  fprintf(f, "%c%c%c%c", 196, 14, 0, 0);
-  fprintf(f, "%c%c%c%c", 0, 0, 0, 0);
-  fprintf(f, "%c%c%c%c", 0, 0, 0, 0);
+  int length = strlen(str);
+  for (int i = 0; i < length; i++)// 逐个字符发送到窗口
+    PostMessageA(hWnd, WM_CHAR, str[i], 0);
+}
+//将color数组指定区域保存为24位bmp/png
+template <size_t width, size_t height>
+bool ColorToBitmap(COLORREF(&color)[height][width], const char *path,
+  int x0 = 0, int y0 = 0, int bmpWidth = 0, int bmpHeight = 0)
+{
+  if (bmpWidth == 0)
+    bmpWidth = width - x0;
+  if (bmpHeight == 0)
+    bmpHeight = height - y0;
 
-  for (int y = picHeight - 1; y >= 0; y--)
-  {
-    for (int x = 0; x < picWidth; x++)
-    {
-      fprintf(f, "%c", bgrBValue(color[y0 + y][x0 + x]));
-      fprintf(f, "%c", bgrGValue(color[y0 + y][x0 + x]));
-      fprintf(f, "%c", bgrRValue(color[y0 + y][x0 + x]));
-    }
-    for (int i = 1; i <= picWidth % 4; i++)
-      fprintf(f, "%c", 0);
-  }
-  fclose(f);
+  CImage image;
+  int nByte = 3;
+  image.Create(bmpWidth, -bmpHeight, nByte * 8);
+  byte *start = (byte *)image.GetBits(); // 左上角地址
+  int pitch = image.GetPitch();  // 每行间距
+  for (int y = 0; y < bmpHeight; y++)
+    for (int x = 0; x < bmpWidth; x++)
+      memcpy(start + y * pitch + x * nByte, &color[y0 + y][x0 + x], nByte); //拷贝像素
+  image.Save(path);
+
+  return true;
 }
 //获得窗口尺寸（大厅、选服窗口要缩放，游戏窗口固定950*596）
 bool GetWindowSize(HWND hWnd, int *pWidth, int *pHeight)
@@ -414,16 +430,17 @@ bool GetWindowSize(HWND hWnd, int *pWidth, int *pHeight)
   }
   return true;
 }
-//将窗口hWnd从(x0,y0)开始cx*cy的区域保存为图片文件path
-bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0, int cx = MAXINT, int cy = MAXINT, int times = 1)
+//将窗口hWnd的指定区域保存为bmp或png
+bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0,
+  int cx = MAXINT, int cy = MAXINT, int times = 1)
 {
   if (!IsWindowVisible(hWnd))
     return false;
-  RECT ScreenRect, DesktopRect;
-  GetWindowRect(hWnd, &ScreenRect);//获取窗口尺寸
-  GetWindowRect(GetDesktopWindow(), &DesktopRect);//获取桌面尺寸
-  int width = (ScreenRect.right - ScreenRect.left) * 96 / DPI;//获取窗口尺寸的宽高
-  int height = (ScreenRect.bottom - ScreenRect.top) * 96 / DPI;
+  RECT windowRect, desktopRect;
+  GetWindowRect(hWnd, &windowRect);//获取窗口尺寸
+  GetWindowRect(GetDesktopWindow(), &desktopRect);//获取桌面尺寸
+  int width = (windowRect.right - windowRect.left) * 96 / DPI;//获取窗口尺寸的宽高
+  int height = (windowRect.bottom - windowRect.top) * 96 / DPI;
   char ClassName[256];
   GetClassName(hWnd, ClassName, 256);//获取窗口类名
   if (strcmp(ClassName, "NativeWindowClass") == 0 || strcmp(ClassName, "WebPluginView") == 0)
@@ -435,16 +452,9 @@ bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0, int cx 
   HDC hMemDC = CreateCompatibleDC(hScreenDC);//创建内存DC
   HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);//创建位图
   SelectObject(hMemDC, hBitmap);//将位图选择到内存DC
-  if (ScreenRect.left >= 0 && ScreenRect.right <= DesktopRect.right &&
-    ScreenRect.top >= 0 && ScreenRect.bottom <= DesktopRect.bottom)//如果屏幕完全在桌面内
-    BitBlt(hMemDC, 0, 0, width, height, hScreenDC, 0, 0, SRCCOPY);//将屏幕内容复制到内存DC
-  else
-  {
-    for (int i = 0; i < times; i++)
-      PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
-    InvalidateRect(hWnd, NULL, false);//重画
-  }
-
+  for (int i = 0; i < times; i++)
+    PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
+  InvalidateRect(hWnd, NULL, false);//重画
   CImage image;
   if (x0 == 0 && y0 == 0 && cx == MAXINT && cy == MAXINT)
   {
@@ -471,58 +481,25 @@ bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0, int cx 
 //获取bmp尺寸
 int GetBitmapRect(char *path, int *pWidth = NULL, int *pHeight = NULL)
 {
-  if (_access(path, 0) != 0)
+  CImage image;
+  if (image.Load(path))
     return 0;
-  HBITMAP hBitmap = (HBITMAP)LoadImageA(NULL, path, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
-  if (!hBitmap)
-    return 0;
-  BITMAP bmp = {};
-  GetObject(hBitmap, sizeof(BITMAP), &bmp);
-
   if (pWidth)
-    *pWidth = bmp.bmWidth;
+    *pWidth = image.GetWidth();
   if (pHeight)
-    *pHeight = bmp.bmHeight;
-
-  DeleteObject(hBitmap);
+    *pHeight = image.GetHeight();
   return 1;
 }
-//将图片path读入数组color，记录图片尺寸
+//将连续储存的颜色信息按照位图尺寸重排，并删除最高字节
 template <size_t width, size_t height>
-bool BitmapToColor(const char *path, COLORREF(&color)[height][width], int *pBmpWidth = nullptr, int *pBmpHeight = nullptr)
+void RearrangeColor(COLORREF(&color)[height][width], int bmpWidth, int bmpHeight)
 {
-  if (_access(path, 0) != 0)
-    return false;
-  HBITMAP hBitmap = (HBITMAP)LoadImageA(NULL, path, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
-  if (!hBitmap)
-    return false;
-  BITMAP bmp = {};
-  GetObject(hBitmap, sizeof(BITMAP), &bmp);//获取bmp尺寸
-  if (pBmpWidth)
-    *pBmpWidth = bmp.bmWidth;
-  if (pBmpHeight)
-    *pBmpHeight = bmp.bmHeight;
-  if (bmp.bmWidth > width || bmp.bmHeight > height) //图片尺寸超过数组尺寸，返回0
-    return false;
-
-  HDC hScreenDC = GetDC(NULL);
-  HDC hMemDC = CreateCompatibleDC(hScreenDC);
-  SelectObject(hMemDC, hBitmap);
-
-  BITMAPINFO bmi = { 0 };
-  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);//设置BITMAPINFO结构
-  bmi.bmiHeader.biWidth = bmp.bmWidth;
-  bmi.bmiHeader.biHeight = -bmp.bmHeight;
-  bmi.bmiHeader.biPlanes = 1;
-  bmi.bmiHeader.biBitCount = bmp.bmBitsPixel; //色深
-
-  GetDIBits(hMemDC, hBitmap, 0, bmp.bmHeight, color, &bmi, DIB_RGB_COLORS);//获取位图的像素数据
-  if (bmp.bmWidth < width)//如果图片宽度小于数组宽度，需要进行移动并删除最高字节
+  if (bmpWidth < width)//如果图片宽度小于数组宽度，移动像素并删除最高字节
   {
-    for (int y = bmp.bmHeight - 1; y >= 0; y--)
-      for (int x = bmp.bmWidth - 1; x >= 0; x--)
+    for (int y = bmpHeight - 1; y >= 0; y--)
+      for (int x = bmpWidth - 1; x >= 0; x--)
       {
-        int order = y * bmp.bmWidth + x;//计算图像的y行x列是第几个像素
+        int order = y * bmpWidth + x;//计算图像的y行x列是第几个像素
         //找到这个像素在连续数组中的位置，移动至数组的y行x列
         color[y][x] = color[order / width][order % width] & 0x00ffffff;
       }
@@ -533,10 +510,30 @@ bool BitmapToColor(const char *path, COLORREF(&color)[height][width], int *pBmpW
       for (int x = 0; x < width; x++)
         color[y][x] &= 0x00ffffff;
   }
-
-  DeleteObject(hBitmap);
-  DeleteDC(hMemDC);
-  ReleaseDC(NULL, hScreenDC);
+}
+//将位图（bmp/png）读入COLORREF数组
+template <size_t width, size_t height>
+bool BitmapToColor(const char *path, COLORREF(&color)[height][width], int *pBmpWidth = nullptr,
+  int *pBmpHeight = nullptr)
+{
+  CImage image;
+  if (image.Load(path))
+    return false;
+  int bmpWidth = image.GetWidth();
+  int bmpHeight = image.GetHeight();
+  if (pBmpWidth)
+    *pBmpWidth = bmpWidth;
+  if (pBmpHeight)
+    *pBmpHeight = bmpHeight;
+  byte *start = (byte *)image.GetBits(); // 左上角地址
+  int pitch = image.GetPitch();  // 每行间距
+  int bpp = image.GetBPP() / 8;  // 每像素字节数
+  for (int y = 0; y < bmpHeight; y++)
+    for (int x = 0; x < bmpWidth; x++)
+    {
+      memcpy(&color[y][x], start + y * pitch + x * bpp, bpp); //拷贝像素
+      color[y][x] &= 0x00ffffff; //只保留3字节
+    }
   return true;
 }
 //在当前绘图窗口(xView,yView )位置显示数组color从(x0,y0)开始的部分
@@ -635,7 +632,7 @@ int IsChineseSecond(const char *str, int n)
 }
 //将字符串source按场宽fieldWidth截断并添加省略号（...），写入dest
 template<size_t size>
-void TruncateStringWithEllipsis(char(&dest)[size], char *source, int fieldWidth)
+void TruncateWithEllipsis(char(&dest)[size], char *source, int fieldWidth)
 {
   if (textwidth(source) <= fieldWidth)//如果字符串长度不超过场宽，则无需截尾
   {
@@ -669,7 +666,7 @@ void TruncateStringWithEllipsis(char(&dest)[size], char *source, int fieldWidth)
 }
 //将字符串source按场宽fieldWidth截断，写入dest
 template<size_t size>
-void TruncateString(char(&dest)[size], char *source, int fieldWidth)
+void Truncate(char(&dest)[size], char *source, int fieldWidth)
 {
   if (textwidth(source) <= fieldWidth)//如果字符串长度不超过场宽，则无需分割
   {
@@ -693,7 +690,7 @@ void TruncateString(char(&dest)[size], char *source, int fieldWidth)
 }
 //将字符串source按长度length截断，写入dest
 template<size_t size>
-void TruncateStringInLength(char(&dest)[size], char *source, int length)
+void TruncateInLength(char(&dest)[size], char *source, int length)
 {
   if ((int)strlen(source) <= length)//如果字符串长度不超过场宽，则无需分割
   {
@@ -717,7 +714,7 @@ void TruncateStringInLength(char(&dest)[size], char *source, int length)
 }
 //将字符串source按场宽fieldWidth截断，分两行写入dest1和dest2
 template<size_t size1, size_t size2>
-void TruncateString(const char *source, char(&dest1)[size1], char(&dest2)[size2], int fieldWidth)
+void Truncate(const char *source, char(&dest1)[size1], char(&dest2)[size2], int fieldWidth)
 {
   if (textwidth(source) <= fieldWidth)//如果字符串长度不超过场宽，则无需分割
   {
@@ -756,7 +753,25 @@ void CenterRectangle(int x, int y, int dx, int dy)
   line(x - dx, y - dy, x + dx, y - dy);
   line(x - dx, y + dy, x + dx, y + dy);
 }
-//位图map从(x0,y0)开始、color1从(x1,y1)开始截取cx*cy区域比较，相等返回1，不相等返回0
+int maxTolerance;
+//（带容差）位图color0从(x0,y0)开始、color1从(x1,y1)开始截取cx*cy区域比较，相等返回1，不相等返回0
+template <size_t width0, size_t height0, size_t width1, size_t height1>
+bool IsBitmapEqual_Tolerance(COLORREF(&color0)[height0][width0], COLORREF(&color1)[height1][width1],
+  int cx, int cy, int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0, int tolerance = 0)
+{
+  int counter = 0;
+  for (int y = 0; y < cy; y++)
+    for (int x = 0; x < cx; x++)
+      if (color0[y0 + y][x0 + x] != color1[y1 + y][x1 + x])
+      {
+        counter++;
+        if (counter > tolerance)
+          return false;
+      }
+  maxTolerance = max(maxTolerance, counter);
+  return true;
+}
+//位图color0从(x0,y0)开始、color1从(x1,y1)开始截取cx*cy区域比较，相等返回1，不相等返回0
 template <size_t width0, size_t height0, size_t width1, size_t height1>
 bool IsBitmapEqual(COLORREF(&color0)[height0][width0], COLORREF(&color1)[height1][width1],
   int cx, int cy, int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0, COLORREF specificColor = 0)
@@ -777,6 +792,18 @@ bool IsBitmapEqual(COLORREF(&color0)[height0][width0], COLORREF(&color1)[height1
   }
   return true;
 }
+//位图color0从(x0,y0)开始、color1从(x1,y1)开始截取cx*cy区域比较，前者是否涵盖后者
+template <size_t width0, size_t height0, size_t width1, size_t height1>
+bool IsBitmapCovering(COLORREF(&color0)[height0][width0], COLORREF(&color1)[height1][width1],
+  int cx, int cy, int x0 = 0, int y0 = 0, int x1 = 0, int y1 = 0, COLORREF specificColor = 0)
+{
+  for (int y = 0; y < cy; y++)
+    for (int x = 0; x < cx; x++)
+      if (color1[y1 + y][x1 + x] == specificColor && color0[y0 + y][x0 + x] != specificColor)
+        return false;
+  return true;
+}
+
 //位图color0从(x0,y0)开始的cx*cy区域是否全部满足颜色要求requirement
 int IsBitmapFit(bool requirement(COLORREF, int), COLORREF *(&color0)[4320], int platform, int cx, int cy, int x0 = 0, int y0 = 0, int step = 1)
 {
@@ -786,54 +813,116 @@ int IsBitmapFit(bool requirement(COLORREF, int), COLORREF *(&color0)[4320], int 
         return 0;
   return 1;
 }
-//检索路径符合表达式pathExpression（例如"图片\\*.bmp"）的所有文件（夹），返回文件数量
-int GetFileList(char *pathExpression, char(*fileList)[maxPath], int maxFileNum)
+//检索路径符合表达式searchPath（例如"图片\\*.png"）的所有文件（夹），返回文件数量
+int GetFileList(char *searchPath, char(*fileList)[maxPath], int maxFileNum)
 {
-  _finddata_t fileinfo;
-  int handle = _findfirst(pathExpression, &fileinfo);// 使用_findfirst函数查找文件夹中的第一个文件
-  if (handle == -1)
+  WIN32_FIND_DATAA findFileData;
+  HANDLE hFind = FindFirstFileA(searchPath, &findFileData);
+  if (hFind == INVALID_HANDLE_VALUE)
     return 0;
 
   int order = 0;
-  do // 遍历文件夹中的文件
+  //查找目录下的每一项文件（夹）
+  do
   {
-    if (strcmp(fileinfo.name, ".") == 0 || strcmp(fileinfo.name, "..") == 0)
+    const char *itemName = findFileData.cFileName;
+    if (strcmp(itemName, ".") == 0 || strcmp(itemName, "..") == 0)
       continue;
-    strcpy_s(fileList[order], fileinfo.name);
+    strcpy_s(fileList[order], itemName);
     order++;
-  } while (_findnext(handle, &fileinfo) == 0 && order < maxFileNum);
+  } while (FindNextFileA(hFind, &findFileData) != 0);
 
-  // 关闭文件搜索句柄
-  _findclose(handle);
+  FindClose(hFind);
   return order;
 }
-//删除指定目录direct下具有指定后缀名extension的文件
-void ClearDirect(char *direct, char *extension)
+//删除文件夹及其中内容
+int DeleteFolder(const char *folderPath)
 {
-  char direct1[maxPath];//以斜杠结尾的目录
-  strcpy_s(direct1, direct);
-  if (direct[strlen(direct) - 1] != '\\') //结尾不是斜杠，就加一个斜杠
-    strcat_s(direct1, "\\");
-  char FilePath[maxPath];//文件路径
-  char expression[maxPath];//检索表达式
-  sprintf_s(expression, "%s*%s", direct1, extension);
+  char slashedFolerPath[maxPath];//以斜杠结尾的目录
+  strcpy_s(slashedFolerPath, folderPath);
+  if (folderPath[strlen(folderPath) - 1] != '\\') //结尾不是斜杠，就加一个斜杠
+    strcat_s(slashedFolerPath, "\\");
+  char searchPath[MAX_PATH];//搜索表达式
+  sprintf_s(searchPath, "%s*", slashedFolerPath);
 
-  int handle;
-  _finddata_t fileinfo;
-  handle = _findfirst(expression, &fileinfo);// 使用_findfirst函数查找文件夹中的第一个文件
-  if (handle == -1L)
+  WIN32_FIND_DATAA findFileData;
+  HANDLE hFind = FindFirstFileA(searchPath, &findFileData);
+  if (hFind == INVALID_HANDLE_VALUE)
+    return 0;
+
+  //查找目录下的每一项文件（夹）
+  do
+  {
+    const char *itemName = findFileData.cFileName;
+    if (strcmp(itemName, ".") == 0 || strcmp(itemName, "..") == 0)
+      continue;
+
+    char itemPath[MAX_PATH];
+    sprintf_s(itemPath, "%s%s", slashedFolerPath, itemName);
+    if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+      DeleteFolder(itemPath); //删除文件夹（递归）
+    else
+      DeleteFileA(itemPath); //删除文件
+  } while (FindNextFileA(hFind, &findFileData) != 0);
+
+  FindClose(hFind);
+  RemoveDirectoryA(folderPath);// 删除文件夹本身
+  return 1;
+}
+//删除文件夹folderPath下具有后缀名extension的文件
+void ClearFolder(const char *folderPath, const char *extension)
+{
+  char slashedFolerPath[maxPath];//以斜杠结尾的目录
+  strcpy_s(slashedFolerPath, folderPath);
+  if (folderPath[strlen(folderPath) - 1] != '\\') //结尾不是斜杠，就加一个斜杠
+    strcat_s(slashedFolerPath, "\\");
+  char filePath[maxPath];//文件路径
+  char searchPath[maxPath];//检索表达式
+  sprintf_s(searchPath, "%s*%s", slashedFolerPath, extension);
+
+  WIN32_FIND_DATAA findFileData;
+  HANDLE hFind = FindFirstFileA(searchPath, &findFileData);
+  if (hFind == INVALID_HANDLE_VALUE)
     return;
 
   do // 遍历文件夹中的文件
   {
-    if (strcmp(fileinfo.name, ".") == 0 || strcmp(fileinfo.name, "..") == 0)
+    const char *itemName = findFileData.cFileName;
+    if (strcmp(itemName, ".") == 0 || strcmp(itemName, "..") == 0)
       continue;
-    sprintf_s(FilePath, "%s%s", direct1, fileinfo.name);
-    remove(FilePath);
-  } while (_findnext(handle, &fileinfo) == 0);
 
-  // 关闭文件搜索句柄
-  _findclose(handle);
+    sprintf_s(filePath, "%s%s", slashedFolerPath, itemName);
+    remove(filePath);
+  } while (FindNextFileA(hFind, &findFileData) != 0);
+
+  FindClose(hFind);
+}
+//转换图片格式（bmp/png）
+void PictureTransform(const char *source, const char *dest)
+{
+  CImage image;
+  image.Load(source);
+  image.Save(dest);
+}
+const int maxBmpNum = 2000;
+char bmpList[maxBmpNum][maxPath];
+
+// 将一个文件夹内的bmp全部转化为png//至多2000个文件
+void BmpToPngInFolder(const char *folder)
+{
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.bmp", folder);
+  int filesNum = GetFileList(searchPath, bmpList, maxBmpNum);//查找所有bmp文件
+  char bmpPath[maxPath] = {};
+  char pngPath[maxPath] = {};
+  for (int i = 0; i < filesNum; i++)
+  {
+    sprintf_s(bmpPath, "%s\\%s", folder, bmpList[i]);
+    bmpList[i][strlen(bmpList[i]) - 4] = 0;
+    sprintf_s(pngPath, "%s\\%s.png", folder, bmpList[i]);
+    PictureTransform(bmpPath, pngPath);
+    remove(bmpPath);
+  }
 }
 //判断Ansi和Unicode是否相等
 bool IsAnsiAndUnicodeEqual(const char *ansiStr, const wchar_t *unicodeStr)
@@ -924,7 +1013,7 @@ bool GetClipboardString(char(&dest)[size])
   return true;
 }
 //指定中心和半径，绘制水平调节按钮
-void PrintHorizontalAdjustButton(int centerX, int centerY, int radium)
+void PaintHorizontalAdjust(int centerX, int centerY, int radium)
 {
   LOGFONT font;
   int size = GetFontSize();
@@ -941,9 +1030,17 @@ void PrintHorizontalAdjustButton(int centerX, int centerY, int radium)
   SetFontSize(size);
 }
 //指定矩形区域，绘制水平调节按钮
-void PrintHorizontalAdjustButton(int x, int y, int width, int height)
+void PaintHorizontalAdjust(int x, int y, int width, int height)
 {
-  PrintHorizontalAdjustButton(x + width / 2, y + height / 2, width / 2);
+  PaintHorizontalAdjust(x + width / 2, y + height / 2, width / 2);
+}
+//给定中心点，绘制靶形光标
+void PaintTargetCursor(int cx, int cy)
+{
+  circle(cx, cy, 8);
+  circle(cx, cy, 4);
+  line(cx - 8, cy, cx + 8, cy);
+  line(cx, cy - 8, cx, cy + 8);
 }
 //资源文件输出到磁盘
 void OutputRes(char *ResName, char *ResClass, char *OutputPath)
@@ -967,9 +1064,9 @@ void outtextxy(int x, int y, int num)
   outtextxy(x, y, str);
 }
 //复制文件
-void Copy(const char *sourcePath, const char *destinationPath)
+bool Copy(const char *sourcePath, const char *destPath)
 {
-  CopyFile(sourcePath, destinationPath, FALSE);
+  return CopyFileA(sourcePath, destPath, FALSE) != 0;
 }
 //交换两个整数
 void Swap(int *pA, int *pB)
@@ -1006,20 +1103,20 @@ int Execute(const char *exePath, bool hide = false, bool wait = false)
 //将sourceDir目录下所有文件复制到destDir目录（目录不存在则创建）
 int CopyDirect(const char *sourceDir, const char *destDir)
 {
-  if (_access(destDir, 0))
+  if (!FileExist(destDir))
     CreatePath(destDir);
-  char sourceDir1[maxPath] = {};
-  strcpy_s(sourceDir1, sourceDir);
+  char sourceDirSlashed[maxPath] = {};
+  strcpy_s(sourceDirSlashed, sourceDir);
   if (sourceDir[strlen(sourceDir) - 1] != '\\')
-    strcat_s(sourceDir1, "\\"); //结尾不是斜杠，就加一个斜杠
+    strcat_s(sourceDirSlashed, "\\"); //结尾不是斜杠，就加一个斜杠
 
-  char destDir1[maxPath] = {};
-  strcpy_s(destDir1, destDir);
+  char destDirSlashed[maxPath] = {};
+  strcpy_s(destDirSlashed, destDir);
   if (destDir[strlen(destDir) - 1] != '\\')
-    strcat_s(destDir1, "\\"); //结尾不是斜杠，就加一个斜杠
+    strcat_s(destDirSlashed, "\\"); //结尾不是斜杠，就加一个斜杠
 
   char expression[maxPath] = {};
-  sprintf_s(expression, "%s*", sourceDir1);
+  sprintf_s(expression, "%s*", sourceDirSlashed);
 
   // 查找目录下的所有文件
   WIN32_FIND_DATA findData;
@@ -1028,12 +1125,12 @@ int CopyDirect(const char *sourceDir, const char *destDir)
     return 0;
 
   char sourcePath[maxPath];
-  char destinationPath[maxPath];
+  char destPath[maxPath];
   do
   {
-    sprintf_s(sourcePath, "%s%s", sourceDir1, findData.cFileName);
-    sprintf_s(destinationPath, "%s%s", destDir1, findData.cFileName);
-    CopyFile(sourcePath, destinationPath, FALSE);
+    sprintf_s(sourcePath, "%s%s", sourceDirSlashed, findData.cFileName);
+    sprintf_s(destPath, "%s%s", destDirSlashed, findData.cFileName);
+    CopyFileA(sourcePath, destPath, FALSE);
   } while (FindNextFile(hFind, &findData));
 
   FindClose(hFind);
@@ -1209,7 +1306,7 @@ bool MultiPrintWindow(HWND hWnd, HDC hMemDC, int times)
   }
   return false;
 }
-//对游戏窗口的一部分进行截图
+//（待优化）对游戏窗口的一部分进行截图
 template <size_t width, size_t height>
 int RegionalMapShot(HWND hWnd, COLORREF(&color)[height][width], int x0 = 0, int y0 = 0)
 {
@@ -1252,7 +1349,7 @@ int RegionalMapShot(HWND hWnd, COLORREF(&color)[height][width], int x0 = 0, int 
   return result;
 }
 //对大厅进行截图，存入一维数组hall并返回，记录大厅宽高
-int HallShot(HWND hWnd, COLORREF *&hall, int *pWidth, int *pHeight, int times)
+int HallShot(HWND hWnd, COLORREF *&color, int *pWidth, int *pHeight, int times)
 {
   if (!IsWindowVisible(hWnd))
     return 0;
@@ -1263,10 +1360,10 @@ int HallShot(HWND hWnd, COLORREF *&hall, int *pWidth, int *pHeight, int times)
     *pWidth = width;
   if (pHeight)
     *pHeight = height;
-  if (hall)//如果pHall内存还没释放，则释放内存
-    free(hall);
-  hall = (COLORREF *)malloc(width * height * sizeof(COLORREF));//分配内存
-  if (!hall) //分配失败则返回0
+  if (color)//如果pHall内存还没释放，则释放内存
+    free(color);
+  color = (COLORREF *)malloc(width * height * sizeof(COLORREF));//分配内存
+  if (!color) //分配失败则返回0
     return 0;
 
   HDC hScreenDC = GetDC(hWnd);
@@ -1286,9 +1383,9 @@ int HallShot(HWND hWnd, COLORREF *&hall, int *pWidth, int *pHeight, int times)
   bmi.bmiHeader.biHeight = -height;
   bmi.bmiHeader.biPlanes = 1;
   bmi.bmiHeader.biBitCount = 32; // 32位色深
-  GetDIBits(hMemDC, hBitmap, 0, height, hall, &bmi, DIB_RGB_COLORS);//获取位图的像素数据
+  GetDIBits(hMemDC, hBitmap, 0, height, color, &bmi, DIB_RGB_COLORS);//获取位图的像素数据
   for (int i = 0; i < width * height; i++)
-    hall[i] &= 0x00ffffff;
+    color[i] &= 0x00ffffff;
 
   DeleteObject(hBitmap);
   DeleteDC(hMemDC);
@@ -1311,6 +1408,17 @@ void PaintGrid(int row, int column, int x, int y, int width, int height)
   for (j = 0; j <= column; j++)
     line(x + j * width, y, x + j * width, y + row * height);
 }
+//在给定的格子内画勾选框，offsetX为勾选框偏离格子中线的距离
+void PaintCheckBox(int x, int y, int width, int height, int offsetX)
+{
+  PaintGrid(1, 1, x + width / 2 + offsetX - 10, y + height / 2 - 10, 20, 20);
+}
+//在给定的格子内画勾选框的√，offsetX为勾选框偏离格子中线的距离
+void PaintCheck(int x, int y, int width, int height, int offsetX)
+{
+  int dx = offsetX + 1, dy = 3;
+  CenterView("√", x + width / 2 + dx, y + height / 2 + dy);
+}
 //弹出消息框
 void PopMessage(HWND hWnd, const char *content, const char *title = "提示")
 {
@@ -1324,6 +1432,14 @@ void CopyMap(COLORREF(&dest)[destHeight][destWidth], COLORREF(&source)[sourceHei
   for (int y = 0; y < destHeight; y++)
     for (int x = 0; x < destWidth; x++)
       dest[y][x] = source[y0 + y][x0 + x];
+}//将图像source从(x0,y0)开始的区域拷贝到dest
+template <size_t destWidth, size_t sourceWidth>
+void CopyMap(COLORREF(*dest)[destWidth], int x1, int y1, int width, int height,
+  COLORREF(*source)[sourceWidth], int x0, int y0)
+{
+  for (int y = 0; y < height; y++)
+    for (int x = 0; x < width; x++)
+      dest[y1 + y][x1 + x] = source[y0 + y][x0 + x];
 }
 const int maxWave = 24;
 const int maxSmallWave = 12;
@@ -1410,7 +1526,7 @@ int SetDPIAware()
 //596x950地图类型
 typedef COLORREF MapType[gameHeight][gameWidth];
 //申请Map[596][950]的内存空间，返回颜色数据地址和HDC hMemDC
-MapType *MallocMap(HDC &hMemDC)
+MapType *MallocMap(HDC *pHDC, HBITMAP *pHBmp = nullptr)
 {
   void *pvMap; // pointer to DIB section pixels
   BITMAPINFO bmi = {};
@@ -1420,9 +1536,11 @@ MapType *MallocMap(HDC &hMemDC)
   bmi.bmiHeader.biPlanes = 1;
   bmi.bmiHeader.biBitCount = 32; // 32位色深
 
-  hMemDC = CreateCompatibleDC(GetDC(NULL));
-  HBITMAP hBitmap = CreateDIBSection(hMemDC, &bmi, DIB_RGB_COLORS, &pvMap, NULL, 0);
-  SelectObject(hMemDC, hBitmap);
+  *pHDC = CreateCompatibleDC(GetDC(NULL));
+  HBITMAP hBmp = CreateDIBSection(*pHDC, &bmi, DIB_RGB_COLORS, &pvMap, NULL, 0);
+  SelectObject(*pHDC, hBmp);
+  if (pHBmp)
+    *pHBmp = hBmp;
   return (MapType *)pvMap;
 }
 // 注册窗口类
@@ -1436,8 +1554,8 @@ void InitClass(const char *className, WNDPROC WindowProc)
   RegisterClass(&wndClass);
 }
 HBRUSH hBrushBlack;//黑色画刷
-// 窗口创建信息
-struct WindowInfo
+// 监视窗口类型
+struct MonitorType
 {
   int cx, cy;
   char className[maxPath];
@@ -1547,7 +1665,7 @@ struct WindowInfo
 // 创建透明窗口并进行消息循环
 DWORD __stdcall TransparentWindowThread(void *param)
 {
-  WindowInfo &wndInfo = *(WindowInfo *)param;
+  MonitorType &wndInfo = *(MonitorType *)param;
   wndInfo.hWnd = CreateWindowExA(
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST,  // 扩展窗口风格
     wndInfo.className,                      // 窗口类名
@@ -1577,7 +1695,7 @@ DWORD __stdcall TransparentWindowThread(void *param)
   return 0;
 }
 //创建透明窗口
-HWND InitTransparentWindow(WindowInfo &wndInfo)
+HWND InitTransparentWindow(MonitorType &wndInfo)
 {
   CreateThread(NULL, 0, TransparentWindowThread, &wndInfo, 0, NULL);//启动任务线程
   while (wndInfo.isCreated == false)
@@ -1661,7 +1779,7 @@ bool IsItemPathLegal(const char *itemPath, char(&itemName)[10], int *pRequiredSi
       return false;
     middleBra[0] = 0;
   }
-  else //没有中括号，把最右边的.bmp删除
+  else //没有中括号，把最右边的.png删除
   {
     char *dot = strrchr(path, '.');
     if (dot)
@@ -1688,6 +1806,11 @@ bool IsItemPathLegal(const char *itemPath, char(&itemName)[10], int *pRequiredSi
 void RecordColor(byte(&hashTable)[1 << 21], COLORREF color)
 {
   hashTable[color >> 3] |= 1 << (color & 0x00000007);
+}
+//在hashTable中取消颜色color的记录
+void EraseColor(byte(&hashTable)[1 << 21], COLORREF color)
+{
+  hashTable[color >> 3] &= ~(1 << (color & 0x00000007));
 }
 //在hashTable中判断颜色color是否存在
 int IsColorExist(byte(&hashTable)[1 << 21], COLORREF color)

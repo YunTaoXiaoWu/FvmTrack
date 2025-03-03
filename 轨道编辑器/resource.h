@@ -1,6 +1,6 @@
 //{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ 生成的包含文件。
-// 供 轨道编辑器2.5.rc 使用
+// 供 轨道编辑器.rc 使用
 //
 #define IDOK                            1
 #define IDCANCEL                        2

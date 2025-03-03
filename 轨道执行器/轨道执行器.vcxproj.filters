@@ -33,7 +33,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="附加程序\执行器64.ico">
+    <Image Include="资源文件\执行器64.ico">
       <Filter>资源文件</Filter>
     </Image>
   </ItemGroup>

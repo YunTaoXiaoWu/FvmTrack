@@ -92,7 +92,7 @@
     <ClCompile Include="轨道执行器.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="附加程序\执行器64.ico" />
+    <Image Include="资源文件\执行器64.ico" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="附加程序\依赖文件.txt" />

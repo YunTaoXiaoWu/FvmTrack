@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="附加程序\编辑器64.ico">
+    <Image Include="资源文件\编辑器64.ico">
       <Filter>资源文件</Filter>
     </Image>
   </ItemGroup>
@@ -24,6 +24,9 @@
     <Text Include="防御卡背包_初始.txt" />
     <Text Include="Track_初始.txt" />
     <Text Include="附加程序\依赖文件.txt" />
+    <Text Include="资源文件\防御卡背包_初始.txt" />
+    <Text Include="资源文件\生产信息_初始.txt" />
+    <Text Include="资源文件\Track_初始.txt" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="resource.h">
