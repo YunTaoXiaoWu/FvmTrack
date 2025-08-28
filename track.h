@@ -5,14 +5,22 @@
 //4. 窗口创建及相关绘图操作
 //5. 大厅、flash窗口及选服窗口查找
 #pragma once
-#include <direct.h>   //获取和修改工作目录
+#include <stdio.h>
 #include <time.h>     //获取系统时间
-#include <Windows.h>  //Windows API
-#include <atlimage.h> //保存截图（CImage类）
-#include <graphics.h> //EasyX库
+#include <type_traits>
+#include <Windows.h> 
 #include <windowsx.h> //组合框控件操作宏
+#include <direct.h>   //获取和修改工作目录
+#include <winhttp.h>
+#include <gdiplus.h>
+#include <graphics.h> //EasyX库
+#pragma comment(lib, "urlmon.lib")
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "wininet.lib")
+extern "C" BOOL WINAPI DeleteUrlCacheEntryA(LPCSTR lpszUrlName);
 
-const char version[] = "v4.5";//版本号
+const char version[] = "v4.9.7";//版本号
 const int zero = 0;//整数的0
 const int maxPath = 260;//最大文件路径长度
 const int gameWidth = 950, gameHeight = 596;//游戏窗口尺寸
@@ -30,15 +38,132 @@ const int minRequiredSimilarity = 10, maxRequiredSimilarity = 500;
 
 int DPI = 96; //DPI缩放，用于校正点击位置
 int area;//记录最近一次点击的区域
+HWND *pHWndExit;//不为nullptr时，ExitMessage必须在窗口*pHWndExit上弹窗
+bool isExitMessagePopped;//是否已触发ExitMessage
+
+//弹出消息框
+void PopMessage(HWND hWnd, const char *message, const char *title = "提示")
+{
+  MessageBox(hWnd, message, title, MB_ICONINFORMATION | MB_SYSTEMMODAL);
+}
+//弹出消息框并退出进程（填写pHwnd时，必须等到*pHWnd不为0才弹窗）
+void ExitMessage(const char *message)
+{
+  HWND hWnd = nullptr;//弹窗窗口
+  //如果指定了弹窗窗口，在该窗口上弹窗
+  if (pHWndExit)
+  {
+    while (*pHWndExit == nullptr) //等待该窗口创建成功
+      Sleep(1);
+    hWnd = *pHWndExit;
+  }
+  //如果在一个线程中已经触发ExitMessage，不再触发第二次
+  if (isExitMessagePopped)
+    while (true)
+      Sleep(10000);
+  isExitMessagePopped = true;//标记ExitMessage已触发
+  PopMessage(hWnd, message);
+  exit(0);
+}
+
+//用于初始化GDI+的类
+class InitGdiplus
+{
+private:
+  ULONG_PTR token;
+public:
+  CLSID pngClsid;
+  CLSID bmpClsid;
+
+  //获取png编码器
+  int GetPngClsid()
+  {
+    UINT num = 0;          // Number of image encoders
+    UINT size = 0;         // Size of the image encoder array in bytes
+    Gdiplus::GetImageEncodersSize(&num, &size);
+    if (size == 0)
+      return -1;
+
+    Gdiplus::ImageCodecInfo *pInfo = (Gdiplus::ImageCodecInfo *)(malloc(size));
+    if (!pInfo)
+      return -1;
+
+    GetImageEncoders(num, size, pInfo);
+    bool bmpFound = false, pngFound = false;
+    for (UINT i = 0; i < num; ++i)
+      if (!pngFound && wcscmp(pInfo[i].MimeType, L"image/png") == 0)
+      {
+        pngClsid = pInfo[i].Clsid;
+        pngFound = true;
+      }
+      else if (!bmpFound && wcscmp(pInfo[i].MimeType, L"image/bmp") == 0)
+      {
+        bmpClsid = pInfo[i].Clsid;
+        bmpFound = true;
+      }
+    free(pInfo);
+    return bmpFound && pngFound ? 0 : -1;
+  }
+  //初始化GDI+
+  explicit InitGdiplus()
+  {
+    Gdiplus::GdiplusStartupInput input;
+    Gdiplus::GdiplusStartup(&token, &input, nullptr);
+    if (GetPngClsid() == -1)
+      ExitMessage("找不到png编码器");
+  }
+  //注销GDI+
+  ~InitGdiplus()
+  {
+    Gdiplus::GdiplusShutdown(token);
+  }
+};
+InitGdiplus initGdiplus;//创建对象的时候执行GDI+初始化
 
 //从0xrrggbb格式的颜色中提取RGB分量
 #define bgrRValue(rgb)      (LOBYTE((rgb)>>16))
 #define bgrGValue(rgb)      (LOBYTE(((WORD)(rgb)) >> 8))
 #define bgrBValue(rgb)      (LOBYTE(rgb))
+//将RGB分量转化为0xrrggbb格式的颜色
+#define bgr(r,g,b)          ((COLORREF)(((BYTE)(b)|((WORD)((BYTE)(g))<<8))|(((DWORD)(BYTE)(r))<<16)))
 
+//文件是否存在
 bool FileExist(const char *path)
 {
-  return PathFileExistsA(path) != 0;
+  return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+//从字符串begin位置开始删除num个字符
+void DeleteString(char *begin, int num)
+{
+  for (char *c = begin; c[0] != 0; c++)
+    c[0] = c[num];
+}
+//在字符串begin位置插入subString
+void InsertString(char *begin, const char *subString)
+{
+  int beginLen = strlen(begin);
+  int subLen = strlen(subString);
+  for (char *c = begin + beginLen; c >= begin; c--)
+    c[subLen] = c[0];
+  for (int i = 0; i < subLen; i++)
+    begin[i] = subString[i];
+}
+//将字符串begin位置开始的num个字符替换为subString
+void ReplaceString(char *begin, int num, const char *subString)
+{
+  DeleteString(begin, num);
+  InsertString(begin, subString);
+}
+//将字符串中全部子串oldSubStr替换为子串newSubStr
+void ReplaceString(char *str, const char *oldSubStr, const char *newSubStr)
+{
+  int oldLength = strlen(oldSubStr);
+  char *begin = strstr(str, oldSubStr);
+  while (begin)
+  {
+    ReplaceString(begin, oldLength, newSubStr);
+    begin = strstr(str, oldSubStr);
+  }
 }
 //a的平方
 int Sqr(int a)
@@ -111,21 +236,49 @@ void LongCenterView(const char(&s)[size], int x, int y, int width)
   }
 }
 //把UTF8原位转成ANSI
-void Utf8ToAnsi(char *Utf8Str)
+void Utf8ToAnsi(char *utf8Str)
 {
-  /*UTF-8转UTF-16*/
-  int wideSize = MultiByteToWideChar(CP_UTF8, 0, Utf8Str, -1, NULL, 0);//计算宽字符串长度
+  //UTF-8转UTF-16
+  int wideSize = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);//计算宽字符串长度
   WCHAR *wideStr = (WCHAR *)malloc(wideSize * sizeof(WCHAR));//分配宽字符数组
-  MultiByteToWideChar(CP_UTF8, 0, Utf8Str, -1, wideStr, wideSize);//UTF-8转UTF-16
+  MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, wideStr, wideSize);
 
-  /*UTF-16转ANSI*/
-  int ansiSize = WideCharToMultiByte(CP_ACP, 0, wideStr, -1, NULL, 0, NULL, NULL);//计算需要的ANSI字符串大小
+  //UTF-16转ANSI
+  int ansiSize = WideCharToMultiByte(CP_ACP, 0, wideStr, -1, NULL, 0, NULL, NULL);//计算需要的字符串大小
   char *ansiStr = (char *)malloc(ansiSize * sizeof(char));//分配ANSI字符串数组
-  WideCharToMultiByte(CP_ACP, 0, wideStr, -1, ansiStr, ansiSize, NULL, NULL);//UTF-16转ANSI
+  WideCharToMultiByte(CP_ACP, 0, wideStr, -1, ansiStr, ansiSize, NULL, NULL);
 
-  strcpy_s(Utf8Str, strlen(ansiStr) + 1, ansiStr);//输出ANSI字符串
+  strcpy_s(utf8Str, strlen(ansiStr) + 1, ansiStr);//输出ANSI字符串
   free(wideStr);//释放内存
   free(ansiStr);//释放内存
+}
+//UTF8转ANSI
+void Utf8ToAnsi(const char *utf8Str, char *ansiStr)
+{
+  //UTF-8转UTF-16
+  int wideSize = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);//计算宽字符串长度
+  WCHAR *wideStr = (WCHAR *)malloc(wideSize * sizeof(WCHAR));//分配宽字符数组
+  MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, wideStr, wideSize);
+
+  //UTF-16转ANSI
+  int ansiSize = WideCharToMultiByte(CP_ACP, 0, wideStr, -1, NULL, 0, NULL, NULL);//计算需要的字符串大小
+  WideCharToMultiByte(CP_ACP, 0, wideStr, -1, ansiStr, ansiSize, NULL, NULL);
+
+  free(wideStr);//释放内存
+}
+//ANSI转UTF8
+void AnsiToUtf8(const char *ansiStr, char *utf8Str)
+{
+  //ANSI转UTF-16
+  int wideSize = MultiByteToWideChar(CP_ACP, 0, ansiStr, -1, NULL, 0);//计算宽字符串长度
+  WCHAR *wideStr = (WCHAR *)malloc(wideSize * sizeof(WCHAR));//分配宽字符数组
+  MultiByteToWideChar(CP_ACP, 0, ansiStr, -1, wideStr, wideSize);
+
+  //UTF-16转UTF-8
+  int utf8Size = WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, NULL, 0, NULL, NULL);//计算需要的字符串大小
+  WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, utf8Str, utf8Size, NULL, NULL);
+
+  free(wideStr);//释放内存
 }
 //判断字符串是不是UTF8格式（如果符合UTF8编码但不可转换为ANSI，依然返回“否”）
 template<size_t size>
@@ -245,8 +398,7 @@ void GetTimeString(char(&timeString)[size], time_t time)
     1900 + local.tm_year, 1 + local.tm_mon, local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
 }
 //秒数（second）转时分秒hh:mm:ss（timeString）
-template<size_t size>
-bool SecondToHms(char(&timeString)[size], int second)
+bool SecondToHms(char(&timeString)[9], int second)
 {
   if (second < 0 || second >= 86400)
     return false;
@@ -278,7 +430,7 @@ int HmsToSecond(const char *timeString)
     return -1;
   //至此timeString只能是a:b:c:d格式，冒号数量为0-n
   int colonsNum = 0;//冒号数量
-  char tempTimeString[9];
+  char tempTimeString[10] = {};
   strcpy_s(tempTimeString, timeString);//拷贝timeString
   char *colons = strchr(tempTimeString, ':');//冒号的位置
   char *dataLoc[3] = { tempTimeString };//数据位置，第一个设为开头
@@ -389,26 +541,55 @@ void StringToWindow(const char *str, HWND hWnd)
   for (int i = 0; i < length; i++)// 逐个字符发送到窗口
     PostMessageA(hWnd, WM_CHAR, str[i], 0);
 }
+//将ANSI字符串转化为UTF-16字符串
+template <size_t size>
+int AnsiToUtf16(const char *str, wchar_t(&wstr)[size])
+{
+  return MultiByteToWideChar(CP_ACP, 0, str, -1, wstr, size);
+}
+//将位图（Gdiplus::Bitmap）保存到指定路径
+void SaveBitmap(Gdiplus::Bitmap &bitmap, const char *path)
+{
+  wchar_t wPath[maxPath];
+  AnsiToUtf16(path, wPath);
+  bitmap.Save(wPath, &initGdiplus.pngClsid, NULL);
+}
+//将位图（HBITMAP）保存到指定路径
+void SaveBitmap(HBITMAP hBitmap, const char *path)
+{
+  Gdiplus::Bitmap bitmap(hBitmap, nullptr);
+  SaveBitmap(bitmap, path);
+}
 //将color数组指定区域保存为24位bmp/png
 template <size_t width, size_t height>
 bool ColorToBitmap(COLORREF(&color)[height][width], const char *path,
   int x0 = 0, int y0 = 0, int bmpWidth = 0, int bmpHeight = 0)
 {
+  // 当bmp尺寸缺省时计算尺寸
   if (bmpWidth == 0)
     bmpWidth = width - x0;
   if (bmpHeight == 0)
     bmpHeight = height - y0;
+  Gdiplus::Bitmap bitmap(bmpWidth, bmpHeight);
 
-  CImage image;
-  int nByte = 3;
-  image.Create(bmpWidth, -bmpHeight, nByte * 8);
-  byte *start = (byte *)image.GetBits(); // 左上角地址
-  int pitch = image.GetPitch();  // 每行间距
+  // 锁定位图内存
+  Gdiplus::BitmapData bmpData;
+  Gdiplus::Rect rect(0, 0, bmpWidth, bmpHeight);
+  bitmap.LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bmpData);
+
+  // 写入颜色数据
   for (int y = 0; y < bmpHeight; y++)
+  {
+    COLORREF *row = (COLORREF *)bmpData.Scan0 + y * bmpData.Stride / 4;
     for (int x = 0; x < bmpWidth; x++)
-      memcpy(start + y * pitch + x * nByte, &color[y0 + y][x0 + x], nByte); //拷贝像素
-  image.Save(path);
+      row[x] = color[y0 + y][x0 + x] | 0xff000000;
+  }
 
+  // 解锁
+  bitmap.UnlockBits(&bmpData);
+
+  // 保存
+  SaveBitmap(bitmap, path);
   return true;
 }
 //获得窗口尺寸（大厅、选服窗口要缩放，游戏窗口固定950*596）
@@ -430,12 +611,156 @@ bool GetWindowSize(HWND hWnd, int *pWidth, int *pHeight)
   }
   return true;
 }
-//将窗口hWnd的指定区域保存为bmp或png
+
+//找到一个小号子窗口下唯一的选服窗口
+HWND GetServerWindow(HWND hWndChild)
+{
+  HWND hWnd1 = FindWindowEx(hWndChild, NULL, "CefBrowserWindow", NULL); //一级子窗口
+  if (hWnd1 == NULL)
+    return NULL;
+  HWND hWnd2 = FindWindowEx(hWnd1, NULL, "Chrome_WidgetWin_0", NULL); //二级子窗口
+  if (hWnd2 == NULL)
+    return NULL;
+  return FindWindowEx(hWnd2, NULL, "Chrome_RenderWidgetHostHWND", NULL); //三级子窗口
+}
+//找到游戏大厅当前显示的选服窗口，找不到返回NULL
+HWND GetActiveServerWindow(HWND hWndHall)
+{
+  char className[256];
+  GetClassName(hWndHall, className, sizeof(className));
+  if (strcmp(className, "ApolloRuntimeContentWindow") == 0)
+    return hWndHall; //微端的选服窗口就是微端窗口
+  if (strcmp(className, "DUIWindow") != 0)
+    return NULL; //不是微端也不是大厅，返回NULL
+  //判断为游戏大厅窗口
+  HWND hWndChild = NULL, hWndServer;
+  while (true)
+  {
+    hWndChild = FindWindowEx(hWndHall, hWndChild, "TabContentWnd", NULL); //查找一个小号窗口
+    if (hWndChild == NULL)
+      return NULL;//没有小号窗口了，还没找到活跃窗口，就返回NULL
+    hWndServer = GetServerWindow(hWndChild);
+    if (hWndServer != NULL)
+      return hWndServer;
+  }
+}
+//找到一个小号子窗口下唯一的游戏窗口
+HWND GetGameWindow(HWND hWndChild)
+{
+  HWND hWnd2 = FindWindowEx(hWndChild, NULL, "CefBrowserWindow", NULL); //二级子窗口
+  if (hWnd2 == NULL)
+    return NULL;
+  HWND hWnd3 = FindWindowEx(hWnd2, NULL, "Chrome_WidgetWin_0", NULL); //三级子窗口
+  if (hWnd3 == NULL)
+    return NULL;
+  HWND hWnd4 = FindWindowEx(hWnd3, NULL, "WrapperNativeWindowClass", NULL); //四级子窗口
+  if (hWnd4 == NULL)
+    return NULL;
+  return FindWindowEx(hWnd4, NULL, "NativeWindowClass", NULL); //五级子窗口
+}
+//找到游戏大厅当前显示的游戏窗口，找不到返回NULL
+HWND GetActiveGameWindow(HWND hWndHall)
+{
+  HWND hWndChild = FindWindowEx(hWndHall, NULL, "WebPluginView", NULL); //按微端查找小号窗口
+  if (hWndChild != NULL)
+    return hWndChild;//找到了直接返回游戏窗口
+  while (1)
+  {
+    hWndChild = FindWindowEx(hWndHall, hWndChild, "TabContentWnd", NULL); //查找一个小号窗口
+    if (hWndChild == NULL)
+      return NULL;//没有小号窗口了，还没找到活跃窗口，就返回NULL
+    HWND hWndGame = GetGameWindow(hWndChild);
+    if (hWndGame != NULL)
+      return hWndGame;
+  }
+}
+//根据副大厅找主大厅
+HWND GetMainHallWindow(HWND hHallWnd)
+{
+  char className[256], title[256];
+  GetClassName(hHallWnd, className, 256);//获取窗口类名
+  if (strcmp(className, "DUIWindow") != zero)//如果参数不是大厅句柄，返回NULL
+    return NULL;
+
+  //到这里说明hHallWnd是大厅了，直接获取标题
+  GetWindowTextA(hHallWnd, title, sizeof(title));//获取窗口标题
+  char *bar = strstr(title, " | ");//从标题中寻找" | "
+  while (true)
+  {
+    if (!bar)//找不到" | "，说明现在的大厅就是主大厅
+      return hHallWnd;
+    char *subTitle = bar + 3;//找到了则去掉" | "前面的内容（可能是小号名称），再次查找
+    HWND hWndMain = FindWindow("DUIWindow", subTitle);
+    if (hWndMain)//如果去掉一层或几层后能找到大厅，找到的就是主大厅
+      return hWndMain;
+    bar = strstr(subTitle, " | ");//没找到就继续寻找" | "，继续去掉
+  }
+}
+//找到游戏窗口或选服窗口hWnd所属的大厅窗口
+HWND GetHallWindow(HWND hWnd)
+{
+  HWND hWndParent = GetParent(hWnd);//获得父窗口
+  if (hWndParent == NULL)
+    return NULL;//没有父窗口，返回NULL
+  char className[256];
+  GetClassName(hWndParent, className, 256);//获取窗口类名
+  if (strcmp(className, "ApolloRuntimeContentWindow") == zero)//如果是微端窗口，直接返回
+    return hWndParent;
+  if (strcmp(className, "WrapperNativeWindowClass") == zero)//如果是大厅游戏窗口的上级窗口，向上找四层
+  {
+    hWndParent = GetParent(hWndParent);//找到Chrome_WidgetWin_0层
+    hWndParent = GetParent(hWndParent);//找到CefBrowserWindow层
+    hWndParent = GetParent(hWndParent);//找到TabContentWnd层
+    return GetParent(hWndParent);//找到DUIWindow层（大厅）并返回
+  }
+  if (strcmp(className, "Chrome_WidgetWin_0") == zero)//如果是大厅选服窗口的上级窗口，向上找三层
+  {
+    hWndParent = GetParent(hWndParent);//找到CefBrowserWindow层
+    hWndParent = GetParent(hWndParent);//找到TabContentWnd层
+    return GetParent(hWndParent);//找到DUIWindow层（大厅）并返回
+  }
+  return NULL;
+}
+//从选服窗口获取游戏窗口
+HWND GetGameWindowFromServer(HWND hWndServer)
+{
+  HWND hWnd3 = GetParent(hWndServer);//获取三级子窗口Chrome_WidgetWin_0
+  if (hWnd3 == NULL)
+    return NULL;
+  HWND hWnd4 = FindWindowEx(hWnd3, NULL, "WrapperNativeWindowClass", NULL); //四级子窗口
+  if (hWnd4 == NULL)
+    return NULL;
+  return FindWindowEx(hWnd4, NULL, "NativeWindowClass", NULL); //五级子窗口
+}
+//游戏窗口hWnd是否能识别图像
+bool IsGameWindowVisible(HWND hWnd)
+{
+  return IsWindowVisible(hWnd) && !IsIconic(GetHallWindow(hWnd));//窗口可见且大厅没有最小化
+}
+//多次调用PrintWindow直到左上角不是黑色，成功返回1，一直是黑色返回0
+bool MultiPrintWindow(HWND hWnd, HDC hMemDC, int times)
+{
+  int counter = 0;
+  while (true)
+  {
+    if (counter >= times || !IsGameWindowVisible(hWnd)) //如果截图times次还没成功，或窗口不可见
+      return false;//截图失败
+    Sleep(1);
+    PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
+    counter++;
+    if (GetPixel(hMemDC, 0, 0)) //如果左上角不是黑色
+      return true;//截图成功
+  }
+  return false;
+}
+//将窗口hWnd指定区域保存为bmp/png。times：截图次数，0=截到首格非黑为止
 bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0,
-  int cx = MAXINT, int cy = MAXINT, int times = 1)
+  int cx = INT_MAX, int cy = INT_MAX, int times = 1)
 {
   if (!IsWindowVisible(hWnd))
     return false;
+
+  //通过PrintWindow获取窗口截图到内存
   RECT windowRect, desktopRect;
   GetWindowRect(hWnd, &windowRect);//获取窗口尺寸
   GetWindowRect(GetDesktopWindow(), &desktopRect);//获取桌面尺寸
@@ -452,23 +777,24 @@ bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0,
   HDC hMemDC = CreateCompatibleDC(hScreenDC);//创建内存DC
   HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);//创建位图
   SelectObject(hMemDC, hBitmap);//将位图选择到内存DC
-  for (int i = 0; i < times; i++)
-    PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
+  if (times == 0)
+    MultiPrintWindow(hWnd, hMemDC, 5);
+  else
+    for (int i = 0; i < times; i++)
+      PrintWindow(hWnd, hMemDC, NULL);
   InvalidateRect(hWnd, NULL, false);//重画
-  CImage image;
-  if (x0 == 0 && y0 == 0 && cx == MAXINT && cy == MAXINT)
-  {
-    image.Attach(hBitmap);
-    image.Save(path);
-  }
+
+  //全窗口截图：直接用创建bitmap对象保存
+  if (x0 == 0 && y0 == 0 && cx == INT_MAX && cy == INT_MAX)
+    SaveBitmap(hBitmap, path);
+  //区域截图：先区域拷贝，再创建bitmap对象保存
   else
   {
     HDC hMemDC2 = CreateCompatibleDC(hScreenDC);//创建内存DC
     HBITMAP hBitmap2 = CreateCompatibleBitmap(hScreenDC, cx, cy);//创建位图
     SelectObject(hMemDC2, hBitmap2);//将位图选择到内存DC
     BitBlt(hMemDC2, 0, 0, cx, cy, hMemDC, x0, y0, SRCCOPY);
-    image.Attach(hBitmap2);
-    image.Save(path);
+    SaveBitmap(hBitmap2, path);
     DeleteObject(hBitmap2);
     DeleteDC(hMemDC2);
   }
@@ -479,15 +805,18 @@ bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0,
   return true;
 }
 //获取bmp尺寸
-int GetBitmapRect(char *path, int *pWidth = NULL, int *pHeight = NULL)
+int GetBitmapRect(const char *path, int *pWidth = NULL, int *pHeight = NULL)
 {
-  CImage image;
-  if (image.Load(path))
-    return 0;
-  if (pWidth)
-    *pWidth = image.GetWidth();
-  if (pHeight)
-    *pHeight = image.GetHeight();
+  wchar_t wPath[maxPath];
+  AnsiToUtf16(path, wPath);
+  Gdiplus::Image image(wPath);
+  if (image.GetLastStatus() == Gdiplus::Ok)
+  {
+    if (pWidth)
+      *pWidth = image.GetWidth();
+    if (pHeight)
+      *pHeight = image.GetHeight();
+  }
   return 1;
 }
 //将连续储存的颜色信息按照位图尺寸重排，并删除最高字节
@@ -511,43 +840,56 @@ void RearrangeColor(COLORREF(&color)[height][width], int bmpWidth, int bmpHeight
         color[y][x] &= 0x00ffffff;
   }
 }
-//将位图（bmp/png）读入COLORREF数组
+//将位图（bmp/png）读入COLORREF数组（可获取位图尺寸）
 template <size_t width, size_t height>
 bool BitmapToColor(const char *path, COLORREF(&color)[height][width], int *pBmpWidth = nullptr,
   int *pBmpHeight = nullptr)
 {
-  CImage image;
-  if (image.Load(path))
-    return false;
-  int bmpWidth = image.GetWidth();
-  int bmpHeight = image.GetHeight();
+  // 载入位图并获取尺寸
+  wchar_t wPath[maxPath];
+  AnsiToUtf16(path, wPath);
+  Gdiplus::Bitmap bitmap(wPath);
+  int bmpWidth = bitmap.GetWidth();
+  int bmpHeight = bitmap.GetHeight();
   if (pBmpWidth)
     *pBmpWidth = bmpWidth;
   if (pBmpHeight)
     *pBmpHeight = bmpHeight;
-  byte *start = (byte *)image.GetBits(); // 左上角地址
-  int pitch = image.GetPitch();  // 每行间距
-  int bpp = image.GetBPP() / 8;  // 每像素字节数
+
+  // 锁定位图内存
+  Gdiplus::BitmapData bmpData;
+  Gdiplus::Rect rect(0, 0, bmpWidth, bmpHeight);
+  bitmap.LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bmpData);
+
+  // 写入颜色数据
   for (int y = 0; y < bmpHeight; y++)
+  {
+    COLORREF *row = (COLORREF *)bmpData.Scan0 + y * bmpData.Stride / 4;
     for (int x = 0; x < bmpWidth; x++)
-    {
-      memcpy(&color[y][x], start + y * pitch + x * bpp, bpp); //拷贝像素
-      color[y][x] &= 0x00ffffff; //只保留3字节
-    }
+      color[y][x] = row[x] & 0x00ffffff;
+  }
+
+  // 解锁
+  bitmap.UnlockBits(&bmpData);
   return true;
 }
-//在当前绘图窗口(xView,yView )位置显示数组color从(x0,y0)开始的部分
+//在当前绘图窗口(destX,destY)位置显示color数组的(scrX,srcY,scrWidth,scrHeight)区域
 template <size_t width, size_t height>
-void ColorToWindow(COLORREF(&color)[height][width], int xView = 0, int yView = 0,
-  int x0 = 0, int y0 = 0)
+void ColorToWindow(COLORREF(&color)[height][width], int destX = 0, int destY = 0,
+  int srcX = 0, int srcY = 0, int srcWidth = 0, int srcHeight = 0)
 {
-  int imageWidth = width - x0, imageHeight = height - y0;
-  IMAGE image(imageWidth, imageHeight);
+  //没有指定显示区域宽高时，默认显示从(srcX,srcY)到右下角的区域
+  if (srcWidth == 0)
+    srcWidth = width - srcX;
+  if (srcHeight == 0)
+    srcHeight = height - srcY;
+
+  IMAGE image(srcWidth, srcHeight);
   DWORD *grid = GetImageBuffer(&image);
-  for (int y = 0; y < imageHeight; y++)
-    for (int x = 0; x < imageWidth; x++)
-      grid[y * imageWidth + x] = color[y0 + y][x0 + x];
-  putimage(xView, yView, &image);
+  for (int y = 0; y < srcHeight; y++)
+    for (int x = 0; x < srcWidth; x++)
+      grid[y * srcWidth + x] = color[srcY + y][srcX + x];
+  putimage(destX, destY, &image);
 }
 //获取鼠标指向的窗口句柄
 HWND MousePoint()
@@ -589,6 +931,13 @@ BOOL LeftClickDPI(HWND hWnd, int x, int y)
   int x1 = int(double(x) * DPI / 96 + 0.5);
   int y1 = int(double(y) * DPI / 96 + 0.5);
   return LeftClick(hWnd, x1, y1);
+}
+//在窗口hWnd内点击，位置进行DPI换算，返回是否成功
+BOOL RightClickDPI(HWND hWnd, int x, int y)
+{
+  int x1 = int(double(x) * DPI / 96 + 0.5);
+  int y1 = int(double(y) * DPI / 96 + 0.5);
+  return RightClick(hWnd, x1, y1);
 }
 //在窗口hWnd内移动，位置进行DPI换算，返回是否成功
 BOOL MouseMoveDPI(HWND hWnd, int x, int y)
@@ -805,13 +1154,13 @@ bool IsBitmapCovering(COLORREF(&color0)[height0][width0], COLORREF(&color1)[heig
 }
 
 //位图color0从(x0,y0)开始的cx*cy区域是否全部满足颜色要求requirement
-int IsBitmapFit(bool requirement(COLORREF, int), COLORREF *(&color0)[4320], int platform, int cx, int cy, int x0 = 0, int y0 = 0, int step = 1)
+bool IsBitmapFit(bool requirement(COLORREF, int), COLORREF *(&color0)[4320], int platform, int cx, int cy, int x0 = 0, int y0 = 0, int step = 1)
 {
   for (int x = cx - 1; x >= 0; x -= step)
     for (int y = 0; y < cy; y += step)
       if (!requirement(color0[y0 + y][x0 + x], platform))
-        return 0;
-  return 1;
+        return false;
+  return true;
 }
 //检索路径符合表达式searchPath（例如"图片\\*.png"）的所有文件（夹），返回文件数量
 int GetFileList(char *searchPath, char(*fileList)[maxPath], int maxFileNum)
@@ -830,7 +1179,7 @@ int GetFileList(char *searchPath, char(*fileList)[maxPath], int maxFileNum)
       continue;
     strcpy_s(fileList[order], itemName);
     order++;
-  } while (FindNextFileA(hFind, &findFileData) != 0);
+  } while (FindNextFileA(hFind, &findFileData) != 0 && order < maxFileNum);
 
   FindClose(hFind);
   return order;
@@ -900,9 +1249,14 @@ void ClearFolder(const char *folderPath, const char *extension)
 //转换图片格式（bmp/png）
 void PictureTransform(const char *source, const char *dest)
 {
-  CImage image;
-  image.Load(source);
-  image.Save(dest);
+  wchar_t wSource[maxPath], wDest[maxPath];
+  AnsiToUtf16(source, wSource);
+  AnsiToUtf16(dest, wDest);
+  Gdiplus::Image image(wSource);
+  if (strstr(dest, ".png"))
+    image.Save(wDest, &initGdiplus.pngClsid);
+  else if (strstr(dest, ".bmp"))
+    image.Save(wDest, &initGdiplus.bmpClsid);
 }
 const int maxBmpNum = 2000;
 char bmpList[maxBmpNum][maxPath];
@@ -1068,12 +1422,22 @@ bool Copy(const char *sourcePath, const char *destPath)
 {
   return CopyFileA(sourcePath, destPath, FALSE) != 0;
 }
-//交换两个整数
-void Swap(int *pA, int *pB)
+//交换两个任意类型的变量
+template <class Type>
+void Swap(Type *pA, Type *pB)
 {
-  int temp = *pA;
+  Type temp = *pA;
   *pA = *pB;
   *pB = temp;
+}
+//交换两个字符串
+void SwapStr(char *strA, char *strB)
+{
+  int lenA = strlen(strA);
+  int lenB = strlen(strB);
+  int maxLen = max(lenA, lenB);
+  for (int i = 0; i <= maxLen; i++)
+    Swap(strA + i, strB + i);
 }
 //运行程序（返回-1=执行失败，0=执行正常，正数=执行出错）
 int Execute(const char *exePath, bool hide = false, bool wait = false)
@@ -1163,148 +1527,6 @@ int GetLastFolder(char *direct, char(&lastFolder)[maxPath])
   if (strlen(lastFolder) > 0)
     return 1;
   return 0;
-}
-//找到一个小号子窗口下唯一的选服窗口
-HWND GetServerWindow(HWND hWndChild)
-{
-  HWND hWnd1 = FindWindowEx(hWndChild, NULL, "CefBrowserWindow", NULL); //一级子窗口
-  if (hWnd1 == NULL)
-    return NULL;
-  HWND hWnd2 = FindWindowEx(hWnd1, NULL, "Chrome_WidgetWin_0", NULL); //二级子窗口
-  if (hWnd2 == NULL)
-    return NULL;
-  return FindWindowEx(hWnd2, NULL, "Chrome_RenderWidgetHostHWND", NULL); //三级子窗口
-}
-//找到游戏大厅当前显示的选服窗口，找不到返回NULL
-HWND GetActiveServerWindow(HWND hWndHall)
-{
-  char className[256];
-  GetClassName(hWndHall, className, sizeof(className));
-  if (strcmp(className, "ApolloRuntimeContentWindow") == 0)
-    return hWndHall; //微端的选服窗口就是微端窗口
-  if (strcmp(className, "DUIWindow") != 0)
-    return NULL; //不是微端也不是大厅，返回NULL
-  //判断为游戏大厅窗口
-  HWND hWndChild = NULL, hWndServer;
-  while (true)
-  {
-    hWndChild = FindWindowEx(hWndHall, hWndChild, "TabContentWnd", NULL); //查找一个小号窗口
-    if (hWndChild == NULL)
-      return NULL;//没有小号窗口了，还没找到活跃窗口，就返回NULL
-    hWndServer = GetServerWindow(hWndChild);
-    if (hWndServer != NULL)
-      return hWndServer;
-  }
-}
-//找到一个小号子窗口下唯一的游戏窗口
-HWND GetGameWindow(HWND hWndChild)
-{
-  HWND hWnd2 = FindWindowEx(hWndChild, NULL, "CefBrowserWindow", NULL); //二级子窗口
-  if (hWnd2 == NULL)
-    return NULL;
-  HWND hWnd3 = FindWindowEx(hWnd2, NULL, "Chrome_WidgetWin_0", NULL); //三级子窗口
-  if (hWnd3 == NULL)
-    return NULL;
-  HWND hWnd4 = FindWindowEx(hWnd3, NULL, "WrapperNativeWindowClass", NULL); //四级子窗口
-  if (hWnd4 == NULL)
-    return NULL;
-  return FindWindowEx(hWnd4, NULL, "NativeWindowClass", NULL); //五级子窗口
-}
-//找到游戏大厅当前显示的游戏窗口，找不到返回NULL
-HWND GetActiveGameWindow(HWND hWndHall)
-{
-  HWND hWndChild = FindWindowEx(hWndHall, NULL, "WebPluginView", NULL); //按微端查找小号窗口
-  if (hWndChild != NULL)
-    return hWndChild;//找到了直接返回游戏窗口
-  while (1)
-  {
-    hWndChild = FindWindowEx(hWndHall, hWndChild, "TabContentWnd", NULL); //查找一个小号窗口
-    if (hWndChild == NULL)
-      return NULL;//没有小号窗口了，还没找到活跃窗口，就返回NULL
-    HWND hWndGame = GetGameWindow(hWndChild);
-    if (hWndGame != NULL)
-      return hWndGame;
-  }
-}
-//根据副大厅找主大厅
-HWND GetMainHallWindow(HWND hHallWnd)
-{
-  HWND hWndMain;
-  char className[256], title[256];
-  GetClassName(hHallWnd, className, 256);//获取窗口类名
-  if (strcmp(className, "DUIWindow") != zero)//如果参数不是大厅句柄，返回NULL
-    return NULL;
-  /*到这里说明hHallWnd是大厅了，直接获取标题*/
-  GetWindowText(hHallWnd, title, 256);//获取窗口标题
-  char *SubTitle;
-  char *str = strstr(title, " | ");//从标题中寻找" | "
-  while (1)
-  {
-    if (str == NULL)//找不到" | "，说明现在的大厅就是主大厅
-      return hHallWnd;
-    SubTitle = str + 3;//找到了则去掉" | "前面的内容（可能是小号名称），再次查找
-    hWndMain = FindWindow("DUIWindow", SubTitle);
-    if (hWndMain != NULL)//如果去掉一层或几层后能找到大厅，找到的就是主大厅
-      return hWndMain;
-    str = strstr(SubTitle, " | ");//没找到就继续寻找" | "，继续去掉
-  }
-}
-//找到游戏窗口或选服窗口hWnd所属的大厅窗口
-HWND GetHallWindow(HWND hWnd)
-{
-  HWND hWndParent = GetParent(hWnd);//获得父窗口
-  if (hWndParent == NULL)
-    return NULL;//没有父窗口，返回NULL
-  char className[256];
-  GetClassName(hWndParent, className, 256);//获取窗口类名
-  if (strcmp(className, "ApolloRuntimeContentWindow") == zero)//如果是微端窗口，直接返回
-    return hWndParent;
-  if (strcmp(className, "WrapperNativeWindowClass") == zero)//如果是大厅游戏窗口的上级窗口，向上找四层
-  {
-    hWndParent = GetParent(hWndParent);//找到Chrome_WidgetWin_0层
-    hWndParent = GetParent(hWndParent);//找到CefBrowserWindow层
-    hWndParent = GetParent(hWndParent);//找到TabContentWnd层
-    return GetParent(hWndParent);//找到DUIWindow层（大厅）并返回
-  }
-  if (strcmp(className, "Chrome_WidgetWin_0") == zero)//如果是大厅选服窗口的上级窗口，向上找三层
-  {
-    hWndParent = GetParent(hWndParent);//找到CefBrowserWindow层
-    hWndParent = GetParent(hWndParent);//找到TabContentWnd层
-    return GetParent(hWndParent);//找到DUIWindow层（大厅）并返回
-  }
-  return NULL;
-}
-//游戏窗口hWnd是否能识别图像
-bool IsGameWindowVisible(HWND hWnd)
-{
-  return IsWindowVisible(hWnd) && !IsIconic(GetHallWindow(hWnd));//窗口可见且大厅没有最小化
-}
-//从选服窗口获取游戏窗口
-HWND GetGameWindowFromServer(HWND hWndServer)
-{
-  HWND hWnd3 = GetParent(hWndServer);//获取三级子窗口Chrome_WidgetWin_0
-  if (hWnd3 == NULL)
-    return NULL;
-  HWND hWnd4 = FindWindowEx(hWnd3, NULL, "WrapperNativeWindowClass", NULL); //四级子窗口
-  if (hWnd4 == NULL)
-    return NULL;
-  return FindWindowEx(hWnd4, NULL, "NativeWindowClass", NULL); //五级子窗口
-}
-//多次调用PrintWindow直到左上角不是黑色，成功返回1，一直是黑色返回0
-bool MultiPrintWindow(HWND hWnd, HDC hMemDC, int times)
-{
-  int counter = 0;
-  while (true)
-  {
-    if (counter >= times || !IsGameWindowVisible(hWnd)) //如果截图times次还没成功，或窗口不可见
-      return false;//截图失败
-    Sleep(1);
-    PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
-    counter++;
-    if (GetPixel(hMemDC, 0, 0)) //如果左上角不是黑色
-      return true;//截图成功
-  }
-  return false;
 }
 //（待优化）对游戏窗口的一部分进行截图
 template <size_t width, size_t height>
@@ -1419,27 +1641,47 @@ void PaintCheck(int x, int y, int width, int height, int offsetX)
   int dx = offsetX + 1, dy = 3;
   CenterView("√", x + width / 2 + dx, y + height / 2 + dy);
 }
-//弹出消息框
-void PopMessage(HWND hWnd, const char *content, const char *title = "提示")
+//检查图片尺寸。返回0=检查合格；-1=itemMode模式下遇到"背景.png"；-2=不合格，需要报错
+int CheckBitmapSizez(const char *path, int width0, int height0, bool itemMode,
+  char(&info)[1000])
 {
-  MessageBox(hWnd, content, title, MB_ICONINFORMATION | MB_SYSTEMMODAL);
+  int width = 0, height = 0;
+  if (GetBitmapRect(path, &width, &height)) //如果能读取bmp尺寸
+  {
+    //尺寸不对提示
+    if (!(width == width0 && height == height0))
+    {
+      //itemMode下遇到950x596的"背景.png"
+      if (itemMode && strstr(path, "\\背景.png") && width == gameWidth && height == gameHeight)
+        return -1;
+      sprintf_s(info, "【%s】尺寸错误，\n请删除该图片后重试。\n注意：只能用自带[综合截图工具]截图。", path);
+      return -2;
+    }
+  }
+  else //图片打不开提示
+  {
+    sprintf_s(info, "【%s】无法打开，\n请检查是否被其他程序占用，\n或是没有磁盘读写权限。", path);
+    return -2;
+  }
+  return 0;
 }
 //将图像source从(x0,y0)开始的区域拷贝到dest
 template <size_t destWidth, size_t destHeight, size_t sourceWidth, size_t sourceHeight>
 void CopyMap(COLORREF(&dest)[destHeight][destWidth], COLORREF(&source)[sourceHeight][sourceWidth],
-  int x0, int y0)
+  int sourceX = 0, int sourceY = 0)
 {
   for (int y = 0; y < destHeight; y++)
     for (int x = 0; x < destWidth; x++)
-      dest[y][x] = source[y0 + y][x0 + x];
-}//将图像source从(x0,y0)开始的区域拷贝到dest
+      dest[y][x] = source[sourceY + y][sourceX + x];
+}
+//将图像source从(x0,y0)开始的区域拷贝到dest(x1,y1)
 template <size_t destWidth, size_t sourceWidth>
-void CopyMap(COLORREF(*dest)[destWidth], int x1, int y1, int width, int height,
-  COLORREF(*source)[sourceWidth], int x0, int y0)
+void CopyMap(COLORREF(*dest)[destWidth], int destX, int destY, int width, int height,
+  COLORREF(*source)[sourceWidth], int sourceX = 0, int sourceY = 0)
 {
   for (int y = 0; y < height; y++)
     for (int x = 0; x < width; x++)
-      dest[y1 + y][x1 + x] = source[y0 + y][x0 + x];
+      dest[destY + y][destX + x] = source[sourceY + y][sourceX + x];
 }
 const int maxWave = 24;
 const int maxSmallWave = 12;
@@ -1495,7 +1737,7 @@ bool IsWaveLegal(const char *waveString)
     return true;
   return false;
 }
-char *const waveErrorString = "【波次】格式为m或m.n。\n大波m范围0~23，小波n范围0~11。";
+const char waveErrorString[] = "【波次】格式为m或m.n。\n大波m范围0~23，小波n范围0~11。";
 //字符串分割，但是不跳过空串
 char *NewStrTok(char *source, const char *delim, char **context)
 {
@@ -1524,11 +1766,11 @@ int SetDPIAware()
   return int(96 * double(screenWidthAfterAware) / screenWidthBeforeAware + 0.5);//获取DPI值
 }
 //596x950地图类型
-typedef COLORREF MapType[gameHeight][gameWidth];
-//申请Map[596][950]的内存空间，返回颜色数据地址和HDC hMemDC
-MapType *MallocMap(HDC *pHDC, HBITMAP *pHBmp = nullptr)
+typedef COLORREF Map[gameHeight][gameWidth];
+//申请Map[596][950]的内存空间，返回颜色数据地址和HDC HBITMAP
+Map *MallocMap(HDC *pHDC, HBITMAP *pHBmp = nullptr)
 {
-  void *pvMap; // pointer to DIB section pixels
+  void *pvMap = nullptr; // pointer to DIB section pixels
   BITMAPINFO bmi = {};
   bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);//设置BITMAPINFO结构
   bmi.bmiHeader.biWidth = gameWidth;
@@ -1538,10 +1780,38 @@ MapType *MallocMap(HDC *pHDC, HBITMAP *pHBmp = nullptr)
 
   *pHDC = CreateCompatibleDC(GetDC(NULL));
   HBITMAP hBmp = CreateDIBSection(*pHDC, &bmi, DIB_RGB_COLORS, &pvMap, NULL, 0);
+  if (!pvMap)
+  {
+    PopMessage(nullptr, "系统内存不足。");
+    exit(0);
+  }
   SelectObject(*pHDC, hBmp);
   if (pHBmp)
     *pHBmp = hBmp;
-  return (MapType *)pvMap;
+  return (Map *)pvMap;
+}
+//申请width*height的COLORREF数组，返回颜色数据地址和HDC HBITMAP
+void *MallocColor(int width, int height, HDC *pHDC, HBITMAP *pHBmp = nullptr)
+{
+  void *pvMap = nullptr; // pointer to DIB section pixels
+  BITMAPINFO bmi = {};
+  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);//设置BITMAPINFO结构
+  bmi.bmiHeader.biWidth = width;
+  bmi.bmiHeader.biHeight = -height;
+  bmi.bmiHeader.biPlanes = 1;
+  bmi.bmiHeader.biBitCount = 32; // 32位色深
+
+  *pHDC = CreateCompatibleDC(GetDC(NULL));
+  HBITMAP hBmp = CreateDIBSection(*pHDC, &bmi, DIB_RGB_COLORS, &pvMap, NULL, 0);
+  if (!pvMap)
+  {
+    PopMessage(nullptr, "系统内存不足。");
+    exit(0);
+  }
+  SelectObject(*pHDC, hBmp);
+  if (pHBmp)
+    *pHBmp = hBmp;
+  return pvMap;
 }
 // 注册窗口类
 void InitClass(const char *className, WNDPROC WindowProc)
@@ -1555,7 +1825,7 @@ void InitClass(const char *className, WNDPROC WindowProc)
 }
 HBRUSH hBrushBlack;//黑色画刷
 // 监视窗口类型
-struct MonitorType
+struct Monitor
 {
   int cx, cy;
   char className[maxPath];
@@ -1665,7 +1935,7 @@ struct MonitorType
 // 创建透明窗口并进行消息循环
 DWORD __stdcall TransparentWindowThread(void *param)
 {
-  MonitorType &wndInfo = *(MonitorType *)param;
+  Monitor &wndInfo = *(Monitor *)param;
   wndInfo.hWnd = CreateWindowExA(
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST,  // 扩展窗口风格
     wndInfo.className,                      // 窗口类名
@@ -1695,7 +1965,7 @@ DWORD __stdcall TransparentWindowThread(void *param)
   return 0;
 }
 //创建透明窗口
-HWND InitTransparentWindow(MonitorType &wndInfo)
+HWND InitTransparentWindow(Monitor &wndInfo)
 {
   CreateThread(NULL, 0, TransparentWindowThread, &wndInfo, 0, NULL);//启动任务线程
   while (wndInfo.isCreated == false)
@@ -1703,7 +1973,7 @@ HWND InitTransparentWindow(MonitorType &wndInfo)
   return wndInfo.hWnd;
 }
 //将窗口hWnd截图到map数组，需要传入map和hDCMap
-int MapShot(HWND hWnd, MapType(&map), HDC(&hDCMap))
+int MapShot(HWND hWnd, Map(&map), HDC(&hDCMap))
 {
   if (!IsGameWindowVisible(hWnd))
     return 0;
@@ -1716,50 +1986,90 @@ int MapShot(HWND hWnd, MapType(&map), HDC(&hDCMap))
 }
 //调节变量Variable（下限Minimum，上限Maximum，下调区域TurnDownArea，上调区域TurnUpArea）isCycle：是否循环
 //Variable数值改变返回1
-int Adjust(int &Variable, int Minimum, int Maximum, int step, int TurnDownArea, int TurnUpArea, int isCycle = 0)
+int Adjust(int &variable, int minimum, int maximum, int step, int turnDownArea, int turnUpArea, int isCycle = 0)
 {
-  int oldValue = Variable;//记录原值
-  if (area == TurnDownArea) //下调
+  int oldValue = variable;//记录原值
+  if (area == turnDownArea) //下调
   {
-    if (Variable > Minimum + step)
-      Variable -= step;
+    if (variable > minimum + step)
+      variable -= step;
     else
     {
-      if (isCycle == 1 && Variable == Minimum)
-        Variable = Maximum;
+      if (isCycle == 1 && variable == minimum)
+        variable = maximum;
       else
-        Variable = Minimum;
+        variable = minimum;
     }
   }
-  if (area == TurnUpArea) //上调
+  if (area == turnUpArea) //上调
   {
-    if (Variable < Maximum - step)
-      Variable += step;
+    if (variable < maximum - step)
+      variable += step;
     else
     {
-      if (isCycle == 1 && Variable == Maximum)
-        Variable = Minimum;
+      if (isCycle == 1 && variable == maximum)
+        variable = minimum;
       else
-        Variable = Maximum;
+        variable = maximum;
     }
   }
-  if (oldValue != Variable) //数值改变返回1
+  if (oldValue != variable) //数值改变返回1
     return 1;
   return 0;
 }
-//截图文件名是否合格，是则更新参数
-bool IsItemPathLegal(const char *itemPath, char(&itemName)[10], int *pRequiredSimilarity = nullptr,
+//自定卡槽名fileName（带不带.png后缀均可）是否合格，是则填写参数
+bool IsCustomPathLegal(const char *fileName, char(&customName)[10], int *pPriority)
+{
+  char name[maxPath] = {};//卡槽名
+  strcpy_s(name, fileName);//拷贝图片文件名
+  if (strstr(name, ".png"))
+    name[strlen(name) - 4] = 0;//如果有".png"，删除".png"
+
+  int priority = 0;
+  char *underline = strchr(name, '_');//下划线
+  if (!underline) //无下划线：0优先级
+    priority = 0;
+  else //有下划线：-9~9优先级
+  {
+    //负优先级
+    if (underline[1] == '-')
+    {
+      if (!IsNature(underline + 2)) //负号后面不是自然数报错
+        return false;
+      priority = -atoi(underline + 2);
+      if (priority == 0 || priority < -9) //"-0"或小于-9的优先级报错
+        return false;
+    }
+    else //非负优先级
+    {
+      if (!IsNature(underline + 1)) //下划线后不是自然数报错
+        return false;
+      priority = atoi(underline + 1);
+      if (priority > 9) //下划线后数字>9报错
+        return false;
+    }
+    underline[0] = 0; //移除下划线后的内容
+  }
+  if (strlen(name) > 6) //长度超过6不合格
+    return false;
+  strcpy_s(customName, name);
+  if (pPriority)
+    *pPriority = priority;
+  return true;
+}
+//自定图像文件名是否合格，是则填写参数
+bool IsItemPathLegal(const char *fileName, char(&itemName)[10], int *pRequiredSimilarity = nullptr,
   int *pOffsetX = nullptr, int *pOffsetY = nullptr, int *pWidth = nullptr, int *pHeight = nullptr)
 {
-  //拷贝图片路径
-  char path[maxPath] = {};
-  strcpy_s(path, itemPath);
+  //拷贝图片文件名
+  char name[maxPath] = {};
+  strcpy_s(name, fileName);
 
   //预设默认数值
   int tempSimilarity = 200;
   int tempOffsetX = 0, tempOffsetY = 0, tempGridWidth = gridWidth, tempGridHeight = gridHeight;
 
-  char *middleBra = strchr(path, '[');//中括号
+  char *middleBra = strchr(name, '[');//中括号
   if (middleBra) //如果有中括号，按格式读取
   {
     //读取的项数
@@ -1781,15 +2091,15 @@ bool IsItemPathLegal(const char *itemPath, char(&itemName)[10], int *pRequiredSi
   }
   else //没有中括号，把最右边的.png删除
   {
-    char *dot = strrchr(path, '.');
+    char *dot = strrchr(name, '.');
     if (dot)
       dot[0] = 0;
   }
-  if (!(strlen(path) > 0 && strlen(path) <= 8)) //名称长度必须是1-8字符
+  if (!(strlen(name) > 0 && strlen(name) <= 8)) //名称长度必须是1-8字符
     return false;
 
   //如果合格，记录名称和参数
-  strcpy_s(itemName, path);
+  strcpy_s(itemName, name);
   if (pRequiredSimilarity)
     *pRequiredSimilarity = tempSimilarity;
   if (pOffsetX)
@@ -1866,10 +2176,10 @@ bool IsTxtFile(const char *path)
     return false;
   return strcmp(path + length - 4, ".txt") == 0;
 }
-//检查文件path类型：0=无效文件；1=轨道；2=任务列表
+//检查文件path类型：0=无效文件；1=战斗轨道；2=任务列表；3=签到轨道
 int CheckFileType(const char *path)
 {
-  int fileType = 0;//文件类型：0=无效文件；1=轨道；2=任务列表
+  int fileType = 0;//文件类型：0=无效文件；1=轨道；2=任务列表；3=签到轨道
   if (!IsTxtFile(path)) //不是txt视为无效文件
     return 0;
   FILE *f;
@@ -1878,14 +2188,86 @@ int CheckFileType(const char *path)
   char s[100];
   fgets(f, s);
   fclose(f);
-  if (strstr(s, "人物1位置=") || strstr(s, "轨道版本号="))
-    fileType = 1; //第一行是人物1位置或轨道版本号，判定为轨道
-  if (strstr(s, "列表版本号="))
+  if (strstr(s, "人物1位置=") == s || strstr(s, "轨道版本号=") == s)
+    fileType = 1; //第一行是人物1位置或轨道版本号，判定为战斗轨道
+  else if (strstr(s, "列表版本号=") == s)
     fileType = 2; //第一行是列表版本号，判定为列表
-  //不是列表版本号，那就读6个数据
-  int checked = 0, type = 0, level = 0, maxGames = 0, deck0 = 0, deck1 = 0;
-  if (sscanf_s(s, "%d\t%d\t%d\t%d\t%d\t%d",
-    &checked, &type, &level, &maxGames, &deck0, &deck1) == 6)
-    fileType = 2;
+  else if (strstr(s, "openid="))
+    fileType = 3; //第一行是openid，判定为签到轨道
+  else //其他情况读6个数据，成功则为旧版列表
+  {
+    int checked = 0, type = 0, level = 0, maxGames = 0, deck0 = 0, deck1 = 0;
+    if (sscanf_s(s, "%d\t%d\t%d\t%d\t%d\t%d",
+      &checked, &type, &level, &maxGames, &deck0, &deck1) == 6)
+      fileType = 2;
+  }
   return fileType;
+}
+//报告缺少文件并退出程序
+void ReportMissingFile(const char *path)
+{
+  char message[100 + maxPath] = {};
+  sprintf_s(message, "缺少依赖文件（夹）：\n%s", path);
+  PopMessage(nullptr, message);
+  exit(0);
+}
+//弹出更新公告
+void PopUpdateNotice()
+{
+  if (!FileExist("..\\开发者文件.txt"))//如果上级目录没有开发者文件
+  {
+    const char path[] = "用户参数\\更新公告.txt";
+    char notice[50][400] = {};//最多50行，每行最多200字
+    int noticeSize = 0;
+    FILE *f;
+    if (fopen_s(&f, path, "r"))
+      return;
+    fgets(f, notice[noticeSize]);
+    while (strlen(notice[noticeSize]) > 0)
+    {
+      noticeSize++;
+      fgets(f, notice[noticeSize]);
+    }
+    fclose(f);
+    remove(path);
+    char tip[20000] = {};
+    strcpy_s(tip, notice[0]);
+    for (int i = 1; i < noticeSize; i++)
+    {
+      strcat_s(tip, "\n");
+      strcat_s(tip, notice[i]);
+    }
+    PopMessage(nullptr, tip, "更新公告");
+  }
+}
+//将value设置为大赛文本text中关键词keyword后面的数值
+void GetKeyValue(int &value, const char *text, const char *keyword)
+{
+  if (value != 0) //如果value已经有值，不再设置
+    return;
+  const char *keyString = strstr(text, keyword);
+  if (keyString)
+  {
+    int length = strlen(keyword);
+    value = atoi(keyString + length);
+  }
+}
+//勾选框idItem是否选中，是返回1，否返回0
+int GetItemCheck(HWND hDlg, int idItem)
+{
+  UINT checkState = SendMessage(GetDlgItem(hDlg, idItem), BM_GETCHECK, 0, 0);
+  if (checkState == BST_CHECKED)
+    return 1;
+  else
+    return 0;
+}
+//对话框位置居中
+void CenterDialog(HWND hDlg)
+{
+  RECT desktop, dialog;
+  GetWindowRect(GetDesktopWindow(), &desktop);
+  GetWindowRect(hDlg, &dialog);
+  int xPos = (desktop.left + desktop.right - (dialog.right - dialog.left)) / 2;
+  int yPos = (desktop.top + desktop.bottom - (dialog.bottom - dialog.top)) / 2;
+  SetWindowPos(hDlg, HWND_TOP, xPos, yPos, 0, 0, SWP_NOSIZE);
 }

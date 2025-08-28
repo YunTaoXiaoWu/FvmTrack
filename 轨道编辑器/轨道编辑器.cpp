@@ -1,4 +1,6 @@
-﻿#pragma comment(linker, "/subsystem:\"windows\" /entry:\"mainCRTStartup\"")
+﻿#ifndef _DEBUG
+#pragma comment(linker, "/subsystem:windows /entry:mainCRTStartup")
+#endif
 #include "resource.h"
 #include "..\\track.h"
 const char versionString[] = "轨道编辑器%s by -云涛晓雾-";
@@ -20,17 +22,19 @@ const int recordX = 20, recordY = 110, recordHeight = 30;//录制信息
 const int recordPageCX = recordWndWidth / 2, recordPageCY = recordY + 20 * recordHeight + 20;//录制翻页
 const int recordEndCX = recordWndWidth / 2, recordEndCY = 40;//结束录制
 const int timelineX = 175, timelineY = 50, timelineWidth = 16, bigScale = 10;//时间轴；1s宽度；大刻度间距
-const int trackX = timelineX - timelineWidth / 2, trackY = 97 + 43, trackWidth = timelineWidth, trackHeight = 43;//轨道
+const int trackX = timelineX - timelineWidth / 2, trackY = 127, trackWidth = timelineWidth, trackHeight = 41;//轨道
 const int trackNum = 61;//一页的轨道数量
 const int undoX = modeX, undoY = mapGridY + 7 * mapGridHeight - 2 * trackHeight, undoWidth = modeWidth, undoHeight = trackHeight;//撤销按钮
 const int waveX = modeX, waveY = mapGridY + trackHeight, waveWidth = modeWidth / 4, waveHeight = 30;
 const int buttonX = modeX, buttonY = waveY + 3 * waveHeight, buttonWidth = modeWidth, buttonHeight = trackHeight;//自动布轨按钮
 const int trackSlotX = 40, trackSlotY = trackY, trackSlotWidth = trackX - trackSlotX, trackSlotHeight = trackHeight;//轨道编辑卡槽
 const int pageX = modeX, pageY = mapGridY + 3 * waveHeight + 6 * trackHeight + 20, pageWidth = modeWidth / 4, pageHeight = 30;//翻页框
-const int stackX = modeX, stackY = 332, stackWidth = modeWidth, stackHeight = 31;//堆叠区
+const int stackX = modeX, stackY = 331, stackWidth = modeWidth, stackHeight = 31;//堆叠区
 const int moveX = trackSlotX, moveY = 30, moveWidth = 26, moveHeight = 42;//轨道编辑方向键
 const int playerX = 140, playerHeight = roleSlotY, playerTitleWidth = 40, playerOptionWidth = 60, playerDistance = 480;//[1P]字样宽度；[1P]和[2P]的距离
 const int skillX = playerX + 2 * playerDistance - 25, skillY = 5, skillWidth = 20, skillHeight = 20;//刷技能勾选框
+const int queueTitleX = trackSlotX, queueTitleWidth = trackSlotWidth;//优先队列标题
+const int queueX = trackX + trackWidth, queueY = trackY - 32, queueWidth = 80, queueHeight = 32;//优先队列
 //2. 生产信息常数
 const int fireworkYield[17] = { 450, 486, 522, 558, 612, 666, 738, 810, 882, 954, 1098, 1242, 1386, 1602, 1818, 2250, 2700 };//花火龙产值
 const int rabbitFactor[2][17] = {//不转和一转炎焱兔的增幅倍数*100
@@ -74,12 +78,11 @@ char notation[2][1000];//两个账号的注释
 char wndTitle[100];//编辑器标题
 const int maxStack = 99;//堆叠容量
 const int maxViewStack = 9;//堆叠显示容量
-const int trackSlotNumPerPage = 13;//每页显示的卡槽数量
+const int trackSlotNumPerPage = 14;//每页显示的卡槽数量
 IMAGE imageBackup;//编辑器图像备份
 int commonPage = 1;//防御卡背包当前页数
 int lastClickMessage;//上次鼠标点击信息：单击1xxxxyyyy，右击2xxxxyyyy，无消息0
 char lastTip[200];//上一次显示的提示（用于判断要不要更新提示）
-int isWaveUsed;//按波变阵是否使用过
 HWND hWndEditor;
 HCURSOR crossCursor;//十字光标
 char tracePrint[1000];//调试输出
@@ -93,7 +96,10 @@ int recordPage = 1;//当前显示录制的页数（1页=20条）
 int state;//0=未选中任何格子，101-114=选中卡槽，300=选中人物，501-503=设置三大时间,1000+=选中地图层级
 int isStateRetained;//是否保持状态不清零
 int trackSlotSelected;//选中轨道卡槽
-int firstTrackSlot;//轨道编辑界面显示的第一条轨道
+bool isTrackSlotSelectionRetained;//轨道卡槽的选中状态是否需要保留
+int queueSelected;//选中的队列（712=标题，700-711=第0-11张卡）
+bool isQueueSelectionRetained;//队列的选中状态是否需要保留
+int firstTrackSlot = -1;//轨道编辑界面显示的第一条轨道
 int timeSelected;//选中的时间
 char runTimeString[30];//本次启动的时间
 int currentBackup, backupNum;//当前备份数，总备份数
@@ -132,12 +138,13 @@ struct SlotType  //卡牌类型
   int sunNum;//火苗数量
   int transfer;//转职
   /*轨道状态*/
-  int lock;//是否锁定轨道。锁定的卡片不参与自动布轨
-  int repair;//是否自动补阵
-  int limit;//是否极限成阵
-  int independent;//是否独立计时
-  int search;
-  int retain;//是否保持上一波
+  bool prior;//是否绝对优先
+  bool lock;//是否锁定轨道。锁定的卡片不参与自动布轨
+  bool repair;//是否自动补阵
+  bool limit;//是否极限成阵
+  bool independent;//是否独立计时
+  bool search;
+  bool retain;//是否保持上一波
   /*放卡条件*/
   int delay;//达成条件后延迟放卡的时间
   int triggerMode;//触发模式（达成条件一次后不断放卡）
@@ -179,15 +186,21 @@ char tempTrackForSave[maxPath];//SaveTrack用的临时轨道文件
 int tower[2];//魔塔层数
 int quitTime[2];//退出时间
 bool isSkillMode;//是否刷技能模式
-int roleLocNum[2], roleLoc[2][63];//两个人物的放置次数，人物1/2位置(最多允许放63个)
-int SlotNum[2];//卡槽数
+int roleLocNum[2];//两个人物的放置次数，
+int roleLoc[2][63];//人物1/2位置（第一个位置存放在roleLoc[account][1]）
+int slotNum[2];//卡槽数
 int realSlotNum[2];//（录制轨道）游戏中识别到的卡槽数
-SlotType Slot[2][maxSlotNum + 2];
-GridType Map[2][8][10];//地图数据：每个格子的种卡信息
-int Loc[2][maxSlotNum + 2][maxPlantTimes + 2];//卡片种植位置
-int Track[2][maxSlotNum + 2][maxTime + 1];//轨道数据：第i张卡第j秒有放置则为1，否则为0
-int Moment[2][maxSlotNum + 2][maxPlantTimes + 2];//卡片种植时刻，单位0.1 s
-//int acceleration[2][maxTime + 1];//加速时间
+SlotType slot[2][maxSlotNum + 2];
+GridType map[2][8][10];//地图数据：每个格子的种卡信息
+int location[2][maxSlotNum + 2][maxPlantTimes + 2];//卡片种植位置
+int track[2][maxSlotNum + 2][maxTime + 1];//轨道数据：第i张卡第j秒有放置则为1，否则为0
+int moment[2][maxSlotNum + 2][maxPlantTimes + 2];//卡片种植时刻，单位0.1s
+int trackBackup[2][maxSlotNum + 2][maxTime + 1];//备份轨道
+int momentBackup[2][maxSlotNum + 2][maxPlantTimes + 2];//备份放卡时刻
+
+const int maxQueueSize = 12;//优先队列容量
+char queue[2][maxQueueSize][10];//放卡优先队列（记录卡片名）
+int queueSize[2];//优先队列大小
 
 //6. 其他参数
 int bagNum[2];//背包卡数量
@@ -228,8 +241,8 @@ AutoTableType autoTable;//自动布轨面板
 //账号account名称为name的卡在几号卡槽？不在返回-1
 int GetOrder(int account, const char *name)
 {
-  for (int order = 0; order <= SlotNum[account]; order++)
-    if (strcmp(Slot[account][order].name, name) == zero)
+  for (int order = 0; order <= slotNum[account]; order++)
+    if (strcmp(slot[account][order].name, name) == zero)
       return order;
   return -1;
 }
@@ -242,7 +255,7 @@ int GetRoleNum()
 int GetLocTimes(int account, int order)
 {
   for (int times = 1; times <= maxPlantTimes; times++)
-    if (Loc[account][order][times] == zero)
+    if (location[account][order][times] == zero)
       return times - 1;
   return maxPlantTimes;
 }
@@ -251,25 +264,25 @@ int GetMomentTimes(int account, int order, int t = maxTime)
 {
   //搜索到超过t秒的时刻或Moment已空
   for (int times = 1; times <= maxPlantTimes; times++)
-    if (Moment[account][order][times] / 10 > t || Moment[account][order][times] == zero)
+    if (moment[account][order][times] / 10 > t || moment[account][order][times] == zero)
       return times - 1;
   return maxPlantTimes;
 }
 //从Moment中搜索：卡片order第times次种植是什么时候，没找到则返回0
 int GetTime(int account, int order, int times)
 {
-  return Moment[account][order][times] / 10;
+  return moment[account][order][times] / 10;
 }
 //获得卡片order的最大轨道时间，没有轨道返回0
 int GetMaxTrack(int account, int order)
 {
   for (int times = 1; times < maxPlantTimes; times++)
-    if (Moment[account][order][times] == zero)
+    if (moment[account][order][times] == zero)
     {
       if (times == 1)
         return 0;
       else
-        return Moment[account][order][times - 1] / 10;
+        return moment[account][order][times - 1] / 10;
     }
   return 0;
 }
@@ -277,8 +290,8 @@ int GetMaxTrack(int account, int order)
 int GetMaxTrack(int account)
 {
   for (int t = maxTime; t > zero; t--)//从960s往0s找
-    for (int order = 0; order <= SlotNum[account]; order++)//如果有一张卡有轨道，返回t
-      if (Track[account][order][t] >= 1)
+    for (int order = 0; order <= slotNum[account]; order++)//如果有一张卡有轨道，返回t
+      if (track[account][order][t] >= 1)
         return t;
   return 0;//找不到轨道返回0
 }
@@ -299,7 +312,7 @@ void GetMagicTarget(int account, int magicTime, int &target, int &times)
     if (t == magicTime)//对于与幻幻鸡同轨卡片，只考虑卡槽序号在幻幻鸡之前的
     {
       for (int order = GetOrder(account, "幻幻鸡") - 1; order >= 1; order--)
-        if (Track[account][order][t] && order != ice && order != sorbet)
+        if (track[account][order][t] && order != ice && order != sorbet)
         {
           target = order;
           times = GetMomentTimes(account, target, t);
@@ -308,8 +321,8 @@ void GetMagicTarget(int account, int magicTime, int &target, int &times)
     }
     else //对于幻幻鸡轨道之前的卡片，则倒序考虑所有卡槽，但是不考虑冰激凌、冰沙、幻幻鸡
     {
-      for (int order = SlotNum[account]; order >= 1; order--)
-        if (Track[account][order][t] && order != magic && order != ice && order != sorbet)
+      for (int order = slotNum[account]; order >= 1; order--)
+        if (track[account][order][t] && order != magic && order != ice && order != sorbet)
         {
           target = order;
           times = GetMomentTimes(account, target, t);
@@ -335,16 +348,16 @@ int GetIceTarget(int account, int row, int column, int time)
   //得分=层级*10000+时间*10+非幻鸡1(幻鸡0)，大者胜出。时间晚于times+1者记为0
   for (int mapAccount = 0; mapAccount < accountNum; mapAccount++)//遍历两个账号的地图
     for (int level = 1; level <= 6; level++)//遍历该行该列每个层级的卡片
-      for (int depth = 0; depth < Map[mapAccount][row][column].depth[level]; depth++)//遍历每一深度卡片
+      for (int depth = 0; depth < map[mapAccount][row][column].depth[level]; depth++)//遍历每一深度卡片
       {
-        int order = GetOrder(mapAccount, Map[mapAccount][row][column].name[level][depth]);//这张卡在第几个卡槽？
-        int t = GetTime(mapAccount, order, Map[mapAccount][row][column].times[level][depth]);//这张卡何时种植？
+        int order = GetOrder(mapAccount, map[mapAccount][row][column].name[level][depth]);//这张卡在第几个卡槽？
+        int t = GetTime(mapAccount, order, map[mapAccount][row][column].times[level][depth]);//这张卡何时种植？
         if (t == zero || t > time + 1 || level == 5)//晚于冰激凌种植时刻，或层级为5，则不用考虑
           score = 0;
         else if (level == 6) //不属于以上情况，考虑幻幻鸡层级
         {
           magic = GetMagicTarget(mapAccount, t);//获得幻幻鸡复制目标序号
-          score = Slot[mapAccount][magic].level * 10000 + t * 10;
+          score = slot[mapAccount][magic].level * 10000 + t * 10;
           if (score > BestScore)
           {
             BestScore = score;
@@ -367,7 +380,7 @@ int GetIceTarget(int account, int row, int column, int time)
     return BestOrder;
   else //如果冷却的卡是另一个账号的卡，检查本账号有没有这张卡
   {
-    int ThisOrder = GetOrder(account, Slot[BestAccount][BestOrder].name);
+    int ThisOrder = GetOrder(account, slot[BestAccount][BestOrder].name);
     if (ThisOrder > 0) //有则返回本账号的卡
       return ThisOrder;
   }
@@ -377,11 +390,11 @@ int GetIceTarget(int account, int row, int column, int time)
 void SelectDepth(int row, int column, int level, int DepthLabel)
 {
   if (DepthLabel == zero)
-    Map[curAccount][row][column].depthSelected[level] = 0;//显示最低深度（0深度）
+    map[curAccount][row][column].depthSelected[level] = 0;//显示最低深度（0深度）
   else if (DepthLabel == 1)
-    Map[curAccount][row][column].depthSelected[level] = max(0, Map[curAccount][row][column].depth[level] - 1);//显示最高深度，最少为1
+    map[curAccount][row][column].depthSelected[level] = max(0, map[curAccount][row][column].depth[level] - 1);//显示最高深度，最少为1
   else if (DepthLabel == 2)//显示最低空深度
-    Map[curAccount][row][column].depthSelected[level] = min(maxStack - 1, Map[curAccount][row][column].depth[level]);//显示最低空深度，但最多为8
+    map[curAccount][row][column].depthSelected[level] = min(maxStack - 1, map[curAccount][row][column].depth[level]);//显示最低空深度，但最多为8
 }
 //选择全图指定层级的显示深度
 void SelectDepth(int level, int DepthLabel)
@@ -402,8 +415,8 @@ void DecreaseToEmptyDepth()//降低到最低空深度（删除卡槽时执行）
   for (row = 1; row <= 7; row++)
     for (column = 1; column <= 9; column++)
       for (level = 0; level <= 6; level++)
-        if (Map[curAccount][row][column].depthSelected[level] > Map[curAccount][row][column].depth[level])//如果深度高于最低空深度
-          Map[curAccount][row][column].depthSelected[level] = Map[curAccount][row][column].depth[level];//显示最低空深度
+        if (map[curAccount][row][column].depthSelected[level] > map[curAccount][row][column].depth[level])//如果深度高于最低空深度
+          map[curAccount][row][column].depthSelected[level] = map[curAccount][row][column].depth[level];//显示最低空深度
 }
 //生产计算与自动布轨
 
@@ -430,20 +443,20 @@ void AddRabbit(int account, int order, int rabbitRow, int rabbitColumn)
 {
   if (rabbitNum[account] >= maxRabbitNum)
     return;
-  SlotType &slot = Slot[account][order];
-  RabbitType &rab = rabbit[account][rabbitNum[account]++];
-  rab.row = rabbitRow;
-  rab.column = rabbitColumn;
-  rab.isExist = true;
-  int radius = slot.transfer == 2 ? 2 : 1;//炎焱兔作用半径
-  int isTransfered = slot.transfer >= 1 ? 1 : 0;//炎焱兔是否转职
+  SlotType &slot0 = slot[account][order];
+  RabbitType &rabbit0 = rabbit[account][rabbitNum[account]++];
+  rabbit0.row = rabbitRow;
+  rabbit0.column = rabbitColumn;
+  rabbit0.isExist = true;
+  int radius = slot0.transfer == 2 ? 2 : 1;//炎焱兔作用半径
+  int isTransfered = slot0.transfer >= 1 ? 1 : 0;//炎焱兔是否转职
 
-  ResetAmplify(rab.amplify);//每个格子的增幅预设为1倍
+  ResetAmplify(rabbit0.amplify);//每个格子的增幅预设为1倍
   //填写炎焱兔作用范围内的增幅倍率
   for (int row = rabbitRow - radius; row <= rabbitRow + radius; row++)
     for (int column = rabbitColumn - radius; column <= rabbitColumn + radius; column++)
       if (row >= 1 && row <= 7 && column >= 1 && column <= 9)
-        rab.amplify[row][column] = rabbitFactor[isTransfered][slot.star];
+        rabbit0.amplify[row][column] = rabbitFactor[isTransfered][slot0.star];
 }
 //使用最近加入的炎焱兔更新增幅表（用于新增炎焱兔时）
 void UpdateLatestRabbit(int account)
@@ -482,7 +495,7 @@ void AddProducer(int account, int order, int row, int column, int plantTime)
 {
   if (producerNum[account] >= maxProducerNum)
     return;
-  SlotType &slot = Slot[account][order];
+  SlotType &slot0 = slot[account][order];
   ProducerType &pro = producer[account][producerNum[account]++];
   pro.row = row;
   pro.column = column;
@@ -491,30 +504,30 @@ void AddProducer(int account, int order, int row, int column, int plantTime)
   memset(pro.sunNum, 0, sizeof(pro.sunNum));
   memset(pro.sun, 0, sizeof(pro.sun));
   //花火龙
-  if (slot.style == 5)
+  if (slot0.style == 5)
   {
     pro.isFirework = true;
     //花火龙的sumNum是技能等级
-    int spitTime = plantTime + fireworkDelay[slot.sunNum];
+    int spitTime = plantTime + fireworkDelay[slot0.sunNum];
     if (spitTime <= maxTime - 1)
-      pro.sun[spitTime] = slot.transfer == 2 ? fireworkYield[slot.star] * 2 : fireworkYield[slot.star];
+      pro.sun[spitTime] = slot0.transfer == 2 ? fireworkYield[slot0.star] * 2 : fireworkYield[slot0.star];
     if (plantTime <= maxTime - 1)
-      pro.sun[plantTime] = slot.transfer == 0 ? 0 : 150;
+      pro.sun[plantTime] = slot0.transfer == 0 ? 0 : 150;
     return;
   }
   pro.isFirework = false;
-  int period = 25 - slot.star;//生产周期
+  int period = 25 - slot0.star;//生产周期
   int startTime = plantTime + 2;//首轮产火时间
   //非秒产卡或(period - 2)秒前放置的次轮秒产卡：首轮产火时间推迟一个周期
-  if (slot.style == 1 || (slot.style >= 2 && slot.style <= 3 && plantTime <= period - 2))
+  if (slot0.style == 1 || (slot0.style >= 2 && slot0.style <= 3 && plantTime <= period - 2))
     startTime += period;
-  int sun = GetRoleNum() == 2 ? slot.sun * 3 / 5 : slot.sun;//双人只有3/5的产量
+  int sun = GetRoleNum() == 2 ? slot0.sun * 3 / 5 : slot0.sun;//双人只有3/5的产量
   int growth = GetRoleNum() == 2 ? 6 : 10;//酒杯灯长大后的火苗增值
-  if (slot.style == 3)//酒杯灯：放置后0-89秒正常生产，90秒后产量+10
+  if (slot0.style == 3)//酒杯灯：放置后0-89秒正常生产，90秒后产量+10
   {
     for (int t = startTime; t <= maxTime; t += period)
     {
-      pro.sunNum[t] = slot.sunNum;
+      pro.sunNum[t] = slot0.sunNum;
       if (t <= plantTime + 89)
         pro.sun[t] = sun;
       else
@@ -525,7 +538,7 @@ void AddProducer(int account, int order, int row, int column, int plantTime)
   {
     for (int t = startTime; t <= maxTime; t += period)
     {
-      pro.sunNum[t] = slot.sunNum;
+      pro.sunNum[t] = slot0.sunNum;
       pro.sun[t] = sun;
     }
   }
@@ -537,11 +550,11 @@ void AddInnateProducer(int account, int order, int innateOrder)
   {
     for (int i = 1; i <= maxPlantTimes; i++)
     {
-      int location = Loc[account][innateOrder][i];
-      if (location == 0)
+      int loc = location[account][innateOrder][i];
+      if (loc == 0)
         break;
-      int row = location / 10;
-      int column = location % 10;
+      int row = loc / 10;
+      int column = loc % 10;
       AddProducer(account, order, row, column, 0);
     }
   }
@@ -610,15 +623,15 @@ void FillEnergy(int t)
     totalCollect[account][t] = totalCollect[account][t - 1] + collect[account][t];
 
     //记录本秒放卡消耗（无论是否有阵型），不会更新times[account][order]
-    for (int order = 1; order <= SlotNum[account]; order++)
+    for (int order = 1; order <= slotNum[account]; order++)
     {
-      SlotType &slot = Slot[account][order];
-      if (Track[account][order][t])//如果这一秒有轨道
+      SlotType &slot0 = slot[account][order];
+      if (track[account][order][t])//如果这一秒有轨道
       {
-        if (slot.cost >= 1000) //带+的卡，每放置一次+50火
-          cost[account][t] += slot.cost - 1000 + 50 * times[account][order];
+        if (slot0.cost >= 1000) //带+的卡，每放置一次+50火
+          cost[account][t] += slot0.cost - 1000 + 50 * times[account][order];
         else
-          cost[account][t] += slot.cost;
+          cost[account][t] += slot0.cost;
       }
     }
     //nP累计消耗=上一秒nP累计消耗+本秒nP消耗
@@ -638,31 +651,31 @@ void FillSpit(int t)
   //第一步：添加所有生产卡（如果是升级卡，记录本格已有生产卡消失），统计本秒吐火
   for (int account = 0; account < accountNum; account++)
   {
-    for (int order = 1; order <= SlotNum[account]; order++)
+    for (int order = 1; order <= slotNum[account]; order++)
     {
-      SlotType &slot = Slot[account][order];
-      if (Track[account][order][t])//如果这一秒有轨道
+      SlotType &slot0 = slot[account][order];
+      if (track[account][order][t])//如果这一秒有轨道
       {
         times[account][order]++;//统计次数+1
-        int location = Loc[account][order][times[account][order]];
-        if (location > 0)
+        int loc = location[account][order][times[account][order]];
+        if (loc > 0)
         {
-          int row = location / 10;
-          int column = location % 10;
+          int row = loc / 10;
+          int column = loc % 10;
           //如果放置的是升级卡，本格所有已放卡消失
-          if (slot.level == 4)
+          if (slot0.level == 4)
             for (int i = 0; i < producerNum[account]; i++)
               if (producer[account][i].row == row && producer[account][i].column == column)
                 producer[account][i].isExist = false;
           //如果是生产卡，进行添加
-          if (slot.style >= 1 && slot.style <= 5)
+          if (slot0.style >= 1 && slot0.style <= 5)
             AddProducer(account, order, row, column, t);
-          else if (slot.level == 6) //如果是幻鸡
+          else if (slot0.level == 6) //如果是幻鸡
           {
             int targetOrder = GetMagicTarget(account, t);//获得幻鸡的复制目标
             if (targetOrder > 0) //如果存在复制目标
             {
-              SlotType &target = Slot[account][targetOrder];//幻鸡目标
+              SlotType &target = slot[account][targetOrder];//幻鸡目标
               //如果放置的是升级卡，本格所有已放卡消失
               if (target.level == 4)
                 for (int i = 0; i < producerNum[account]; i++)
@@ -697,30 +710,30 @@ void FillSpit(int t)
   //第二步：如果有炎焱兔放置，更新增幅数据
   for (int account = 0; account < accountNum; account++)
     if (rabbitOrder[account] > 0)
-      if (Track[account][rabbitOrder[account]][t])
+      if (track[account][rabbitOrder[account]][t])
       {
         times[account][rabbitOrder[account]]++;//统计次数+1
-        int location = Loc[account][rabbitOrder[account]][times[account][rabbitOrder[account]]];
-        if (location > 0)
+        int loc = location[account][rabbitOrder[account]][times[account][rabbitOrder[account]]];
+        if (loc > 0)
         {
-          int row = location / 10;
-          int column = location % 10;
+          int row = loc / 10;
+          int column = loc % 10;
           AddRabbit(account, rabbitOrder[account], row, column);
           UpdateLatestRabbit(account);
         }
       }
   //第三步：如果放了铲子，本格所有已放卡消失。注意同一秒可能铲了n张卡
   for (int account = 0; account < accountNum; account++)
-    if (Track[account][0][t])
+    if (track[account][0][t])
     {
-      for (int shovelTimes = 0; shovelTimes < Track[account][0][t]; shovelTimes++)
+      for (int shovelTimes = 0; shovelTimes < track[account][0][t]; shovelTimes++)
       {
         times[account][0]++;
-        int location = Loc[account][0][times[account][0]];
-        if (location > 0)
+        int loc = location[account][0][times[account][0]];
+        if (loc > 0)
         {
-          int row = location / 10;
-          int column = location % 10;
+          int row = loc / 10;
+          int column = loc % 10;
           for (int i = 0; i < producerNum[account]; i++)
             if (producer[account][i].row == row && producer[account][i].column == column)
               producer[account][i].isExist = false;
@@ -768,8 +781,8 @@ void ReadyCountEnergy()
   AddInnateProducer(0, stove, innateStove);
   AddInnateProducer(0, cup, innateCup);
 }
-//计算每秒的生产、消耗及能量
-void CountEnergy()
+//根据普通轨道计算每秒的生产、消耗及能量
+void CountEnergyNormal()
 {
   ReadyCountEnergy();
   //从第1秒开始扫描。计算每一秒的吐火（卡片、武器、天空）、收火和消耗
@@ -779,14 +792,6 @@ void CountEnergy()
     FillSpit(t);
   }
 }
-//能量是否足够
-bool IsEnergyEnough(int account, int currentCost, int thisTime)
-{
-  for (int t = thisTime; t <= maxTime; t++)
-    if (energy[account][t] < currentCost)
-      return false;
-  return true;
-}
 //是否冷却完毕
 bool IsCold(int account, int core, int thisTime)
 {
@@ -794,14 +799,14 @@ bool IsCold(int account, int core, int thisTime)
   if (times[account][core] == 0)
     return true;
   //上次放卡时间
-  int lastTime = Moment[account][core][times[account][core]] / 10;
+  int lastTime = moment[account][core][times[account][core]] / 10;
   //时间间隔不小于cd，直接判定冷却完毕
-  if (thisTime - lastTime >= Slot[account][core].cd)
+  if (thisTime - lastTime >= slot[account][core].cd)
     return true;
   if (thisTime - lastTime < 3) //间隔小于3秒，冰沙冰激凌也无法冷却，直接判断未冷却
     return false;
 
-  int iceTrack[maxTime + 1] = {};//冷却轨道数据：第i秒有冷却起始线，则为1，否则为0
+  int iceTrack[maxTime + 2] = {};//冷却轨道数据：第i秒有冷却起始线，则为1，否则为0
   //注：t时刻的冷却线，要求t时刻及以前种植的卡，t+3时刻及以后才被冷却
 
   //记录冰激凌冷却线
@@ -810,10 +815,10 @@ bool IsCold(int account, int core, int thisTime)
   {
     for (int times = 1; times < maxPlantTimes; times++)
     {
-      if (Loc[account][ice][times] == zero || Moment[account][ice][times] == zero) //位置和轨道有一个为0，就结束查找
+      if (location[account][ice][times] == zero || moment[account][ice][times] == zero) //位置和轨道有一个为0，就结束查找
         break;
-      int t = Moment[account][ice][times] / 10;
-      int iceTarget = GetIceTarget(account, Loc[account][ice][times] / 10, Loc[account][ice][times] % 10, t);//获得冷却的目标
+      int t = moment[account][ice][times] / 10;
+      int iceTarget = GetIceTarget(account, location[account][ice][times] / 10, location[account][ice][times] % 10, t);//获得冷却的目标
       if (iceTarget == core) //如果有冷却目标，记录冷却轨道
         iceTrack[t] = 1;
     }
@@ -824,9 +829,9 @@ bool IsCold(int account, int core, int thisTime)
   {
     for (int times = 1; times < maxPlantTimes; times++)
     {
-      if (Moment[account][sorbet][times] == zero) //轨道为0就结束查找
+      if (moment[account][sorbet][times] == zero) //轨道为0就结束查找
         break;
-      int t = Moment[account][sorbet][times] / 10;
+      int t = moment[account][sorbet][times] / 10;
       iceTrack[t + 1] = 1;//非冰沙的所有卡记录冷却轨道
     }
   }
@@ -837,26 +842,108 @@ bool IsCold(int account, int core, int thisTime)
 
   return false;
 }
+//为卡槽order添加轨道t，若t已有轨道则按冷却向右延长一个轨道（仅限空间足够）
+void AddTrack(int account, int order, int currentTime);
+//将极限轨道按自动布轨规则展开为普通轨道
+void ExpandLimit()
+{
+  //第一步：保留轨道，计算全局生产，填写已放次数
+  CountEnergyNormal();
+
+  //第二步：记录无需布轨的卡片编号和每张卡所需布轨的次数
+  int innateStove[2] = {};//初始火
+  int innateCup[2] = {};//初始灯
+  int magic[2] = {};//幻幻鸡
+  int ice[2] = {};//冰激凌
+  int sorbet[2] = {};//冰沙
+  int totalTimes[2][maxSlotNum + 1] = {};//每张卡所需布轨次数（阵型中的数量）
+  for (int account = 0; account < accountNum; account++)
+  {
+    innateStove[account] = GetOrder(account, "初始火");
+    innateCup[account] = GetOrder(account, "初始灯");
+    magic[account] = GetOrder(account, "幻幻鸡");
+    ice[account] = GetOrder(account, "冰激凌");
+    sorbet[account] = GetOrder(account, "冰沙");
+    for (int order = 1; order <= slotNum[account]; order++)//获得每张卡的种植次数（需布轨次数）
+    {
+      if (order == magic[account] || order == ice[account] || order == sorbet[account]
+        || order == innateStove[account] || order == innateCup[account])
+        totalTimes[account][order] = 0;
+      else
+        totalTimes[account][order] = GetLocTimes(account, order);
+    }
+  }
+
+  //第三步：从第1秒开始检查检查每张卡是否可放置，放置时更新总能量
+  for (int t = minTime; t <= maxTime; t++)
+    for (int account = 0; account < accountNum; account++)
+      for (int order = 1; order <= slotNum[account]; order++)
+      {
+        SlotType &slot0 = slot[account][order];
+        //非极限卡、继承卡、布轨已完成的卡不布轨
+        if (!slot0.limit || slot0.retain || times[account][order] >= totalTimes[account][order])
+          continue;
+        if (IsCold(account, order, t)) //如果冷却完毕
+        {
+          //本次放卡消耗
+          int currentCost = slot0.cost < 1000 ? slot0.cost : slot0.cost - 1000 + 50 * times[account][order];
+          //如果这一秒能量够用，就放一张（不考虑后面的缺火）
+          if (energy[account][t] >= currentCost)
+          {
+            AddTrack(account, order, t);//添加轨道
+            if (slot0.style >= 1 && slot0.style <= 6)//如果放下的是生产卡或炎焱兔，需要重新计算产火
+              CountEnergyNormal();
+            else //否则更新times[account][order]和能量值即可
+            {
+              times[account][order]++;
+              for (int iT = t; iT <= maxTime; iT++)
+                energy[account][iT] -= currentCost;
+            }
+            //如果这张卡是冰幻核心卡……
+          }
+        }
+      }
+}
+//考虑极限轨道计算每秒的生产、消耗及能量
+void CountEnergyLimit()
+{
+  //1. 备份当前轨道
+  memcpy(trackBackup, track, sizeof(track));
+  memcpy(momentBackup, moment, sizeof(moment));
+  //2. 按自动布轨规则填充所有极限轨道（同时更新各秒能量值）
+  ExpandLimit();
+  //3. 还原轨道
+  memcpy(track, trackBackup, sizeof(track));
+  memcpy(moment, momentBackup, sizeof(moment));
+}
+//能量是否足够
+bool IsEnergyEnough(int account, int currentCost, int thisTime)
+{
+  for (int t = thisTime; t <= maxTime; t++)
+    if (energy[account][t] < currentCost)
+      return false;
+  return true;
+}
 //在账号account卡片order的Moment数组中插入时间t
 void InsertMoment(int account, int order, int t)
 {
   int times;
   for (times = 0; times < maxPlantTimes; times++)//查找种植次数
-    if (Moment[account][order][times + 1] == zero)//如果第times+1次种植时刻为0，说明只有times次种植
+    if (moment[account][order][times + 1] == zero)//如果第times+1次种植时刻为0，说明只有times次种植
       break;
   int MaxTimes = times;//记录最大种植次数
   for (times = MaxTimes; times >= 1; times--)//从最后一次种植开始找
   {
-    if (t * 10 >= Moment[account][order][times])//如果已经找到位置，填写并结束循环
+    if (t * 10 >= moment[account][order][times])//如果已经找到位置，填写并结束循环
     {
-      Moment[account][order][times + 1] = t * 10;
+      moment[account][order][times + 1] = t * 10;
       break;
     }
     else
-      Moment[account][order][times + 1] = Moment[account][order][times];
+      moment[account][order][times + 1] = moment[account][order][times];
   }
   if (times == zero)//如果循环完了还没找到小于t*10的Moment
-    Moment[account][order][1] = t * 10;//那就填在第一位
+    moment[account][order][1] = t * 10;//那就填在第一位
 }
 //从账号account卡片order的Moment数组中删除时间t
 void RemoveMoment(int account, int order, int t)
@@ -864,30 +951,31 @@ void RemoveMoment(int account, int order, int t)
   int times;
   int RemoveTimes;//需要删除的时间t所在位置
   for (times = 1; times < maxPlantTimes; times++)//查找种植次数
-    if (Moment[account][order][times] == zero || Moment[account][order][times] / 10 == t)//找到时间t的位置或没有时间t，则结束
+    if (moment[account][order][times] == zero || moment[account][order][times] / 10 == t)//找到时间t的位置或没有时间t，则结束
       break;
   RemoveTimes = times;
   for (times = RemoveTimes; times < maxPlantTimes; times++)
   {
-    Moment[account][order][times] = Moment[account][order][times + 1];
-    if (Moment[account][order][times + 1] == zero)
+    moment[account][order][times] = moment[account][order][times + 1];
+    if (moment[account][order][times + 1] == zero)
       break;
   }
 }
-void AddTrack(int account, int order, int currentTime)//为卡槽order添加轨道t，若t已有轨道则按冷却向右延长一个轨道（仅限空间足够）
+//为卡槽order添加轨道t，若t已有轨道则按冷却向右延长一个轨道（仅限空间足够）
+void AddTrack(int account, int order, int currentTime)
 {
   if (currentTime > maxTime) //时间超过960不添加
     return;
-  if (Track[account][order][currentTime] == zero)//没有轨道，就在此处添加轨道
+  if (track[account][order][currentTime] == zero)//没有轨道，就在此处添加轨道
   {
-    Track[account][order][currentTime] = 1;
+    track[account][order][currentTime] = 1;
     InsertMoment(account, order, currentTime);
   }
   else //如果已有轨道
   {
-    if (Slot[account][order].cd == zero) //如果cd为0，增加1层轨道
+    if (slot[account][order].cd == zero) //如果cd为0，增加1层轨道
     {
-      Track[account][order][currentTime]++;
+      track[account][order][currentTime]++;
       InsertMoment(account, order, currentTime);
     }
     else //否则尝试在一个冷却周期后添加轨道
@@ -896,9 +984,9 @@ void AddTrack(int account, int order, int currentTime)//为卡槽order添加轨�
       for (int t = currentTime + 1; t <= maxTime; t++)
       {
         //如果距离是cd的整数倍
-        if ((t - currentTime) % Slot[account][order].cd == 0)
+        if ((t - currentTime) % slot[account][order].cd == 0)
         {
-          if (Track[account][order][t] == 0) //此处没有轨道，则添加轨道，结束函数
+          if (track[account][order][t] == 0) //此处没有轨道，则添加轨道，结束函数
           {
             AddTrack(account, order, t);
             return;
@@ -907,7 +995,7 @@ void AddTrack(int account, int order, int currentTime)//为卡槽order添加轨�
         }
         else //距离不是cd的整数倍
         {
-          if (Track[account][order][t])//此处有轨道，则无法添加，结束函数
+          if (track[account][order][t])//此处有轨道，则无法添加，结束函数
             return;
           //否则继续往后查找
         }
@@ -920,25 +1008,25 @@ void DeleteMap(int account, int order);
 //删除卡片order第t秒轨道
 void DeleteTrack(int account, int order, int t)
 {
-  if (Track[account][order][t] >= 1)//已有轨道，就执行删除轨道
+  if (track[account][order][t] >= 1)//已有轨道，就执行删除轨道
   {
-    Track[account][order][t]--;
+    track[account][order][t]--;
     RemoveMoment(account, order, t);
     //如果轨道全空，删除终止条件
-    if (Moment[account][order][1] == 0)
+    if (moment[account][order][1] == 0)
     {
-      Slot[account][order].endNum = 0;
-      Slot[account][order].endTime = 0;
+      slot[account][order].endNum = 0;
+      slot[account][order].endTime = 0;
     }
   }
 }
 //删除卡片order全部轨道
 void DeleteTrack(int account, int order)
 {
-  memset(Track[account][order], 0, sizeof(Track[account][order]));
-  memset(Moment[account][order], 0, sizeof(Moment[account][order]));
-  Slot[account][order].endNum = 0;
-  Slot[account][order].endTime = 0;
+  memset(track[account][order], 0, sizeof(track[account][order]));
+  memset(moment[account][order], 0, sizeof(moment[account][order]));
+  slot[account][order].endNum = 0;
+  slot[account][order].endTime = 0;
 }
 //删除卡片order的阵型和轨道
 void DeleteMapAndTrack(int account, int order)
@@ -949,26 +1037,26 @@ void DeleteMapAndTrack(int account, int order)
 //清空阵型
 void ClearMap(int account)
 {
-  memset(Map[account], 0, sizeof(Map[account]));
-  memset(Loc[account], 0, sizeof(Loc[account]));
+  memset(map[account], 0, sizeof(map[account]));
+  memset(location[account], 0, sizeof(location[account]));
   for (int order = 0; order <= maxSlotNum + 1; order++)
   {
-    Slot[account][order].repair = 0;
-    Slot[account][order].search = 0;
+    slot[account][order].repair = 0;
+    slot[account][order].search = 0;
   }
 }
 //清空轨道
 void ClearTrack(int account)
 {
-  memset(Track[account], 0, sizeof(Track[account]));
-  memset(Moment[account], 0, sizeof(Moment[account]));
+  memset(track[account], 0, sizeof(track[account]));
+  memset(moment[account], 0, sizeof(moment[account]));
   for (int order = 0; order <= maxSlotNum + 1; order++)
   {
-    Slot[account][order].lock = 0;
-    Slot[account][order].limit = 0;
-    Slot[account][order].independent = 0;
-    Slot[account][order].retain = 0;
-    memset(&Slot[account][order].delay, 0, sizeof(ConditionType));
+    slot[account][order].lock = false;
+    slot[account][order].limit = false;
+    slot[account][order].independent = false;
+    slot[account][order].retain = false;
+    memset(&slot[account][order].delay, 0, sizeof(ConditionType));//清空放卡条件
   }
 }
 //清空阵型和轨道（保留卡槽）
@@ -981,59 +1069,59 @@ void ClearMapAndTrack(int account)
 void DeleteFromGrid(int account, int row, int column, int level, int depth)
 {
   //删除后，Loc数组要向前递补，该卡后面的所有次数都要改变。
-  int oldDepth = Map[account][row][column].depth[level];//该层级原有的卡片数量
-  int oldTimes = Map[account][row][column].times[level][depth];//被删除卡的种植次序
+  int oldDepth = map[account][row][column].depth[level];//该层级原有的卡片数量
+  int oldTimes = map[account][row][column].times[level][depth];//被删除卡的种植次序
   if (depth < oldDepth)  //如果被删深度属于[0,OriginDepth-1]，才执行删除
   {
-    int order = GetOrder(account, Map[account][row][column].name[level][depth]);//获得被删除的卡片编号
+    int order = GetOrder(account, map[account][row][column].name[level][depth]);//获得被删除的卡片编号
     /*1.全图同名卡，大于times的次数都要减1。例如删了海星15，则海星16-海星30（末尾）都要减1*/
     for (int times = oldTimes + 1; times <= GetLocTimes(account, order); times++)//从海星16到海星30
     {
-      int row0 = Loc[account][order][times] / 10;
-      int column0 = Loc[account][order][times] % 10;//获得第times次海星的位置
-      for (int d = 0; d < Map[account][row0][column0].depth[level]; d++)//在该格子的海星层级内搜索每一个深度
-        if (GetOrder(account, Map[account][row0][column0].name[level][d]) == order && Map[account][row0][column0].times[level][d] == times)
+      int row0 = location[account][order][times] / 10;
+      int column0 = location[account][order][times] % 10;//获得第times次海星的位置
+      for (int d = 0; d < map[account][row0][column0].depth[level]; d++)//在该格子的海星层级内搜索每一个深度
+        if (GetOrder(account, map[account][row0][column0].name[level][d]) == order && map[account][row0][column0].times[level][d] == times)
           //如果该深度的卡片正是这一次的海星，说明要调的就是这个深度
         {
-          Map[account][row0][column0].times[level][d]--;//该海星的次序号减1
+          map[account][row0][column0].times[level][d]--;//该海星的次序号减1
           break;
         }
     }
     /*2.地图该层级该深度的卡删除，后续深度向前递补，最后一个深度清空，总深度-1*/
     for (int d = depth; d <= oldDepth - 2; d++)
     {
-      strcpy_s(Map[account][row][column].name[level][d], Map[account][row][column].name[level][d + 1]);
-      Map[account][row][column].times[level][d] = Map[account][row][column].times[level][d + 1];
+      strcpy_s(map[account][row][column].name[level][d], map[account][row][column].name[level][d + 1]);
+      map[account][row][column].times[level][d] = map[account][row][column].times[level][d + 1];
     }
-    strcpy_s(Map[account][row][column].name[level][oldDepth - 1], "");
-    Map[account][row][column].times[level][oldDepth - 1] = 0;
-    Map[account][row][column].depth[level]--;
+    strcpy_s(map[account][row][column].name[level][oldDepth - 1], "");
+    map[account][row][column].times[level][oldDepth - 1] = 0;
+    map[account][row][column].depth[level]--;
     /*3.从Loc数组中删除本次种植位置，后续位置向前递补*/
     for (int times = oldTimes; times <= maxPlantTimes; times++)
     {
-      Loc[account][order][times] = Loc[account][order][times + 1];
-      if (Loc[account][order][times + 1] == zero)
+      location[account][order][times] = location[account][order][times + 1];
+      if (location[account][order][times + 1] == zero)
         break;//后续位置为0代表删完了
     }
   }
 }
 void DeleteFromGridLevel(int account, int row, int column, int level)//删除地图某行某列某层级选中深度的卡片
 {
-  DeleteFromGrid(account, row, column, level, Map[account][row][column].depthSelected[level]);
+  DeleteFromGrid(account, row, column, level, map[account][row][column].depthSelected[level]);
 }
 void AddToGrid(int account, int order, int row, int column)//将order号卡槽添加到地图某行某列
 {//自动辨认层级，且添加到最高深度，本步骤不执行深度排列
   int times;
-  int level = Slot[account][order].level;//获得层级
-  int depth = Map[account][row][column].depth[level];//本层已有卡数，新卡添加到第[depth]位
+  int level = slot[account][order].level;//获得层级
+  int depth = map[account][row][column].depth[level];//本层已有卡数，新卡添加到第[depth]位
   //如果该层级未满或所加卡为冰沙，且该卡种植次数小于上限
   if (depth < maxStack && GetLocTimes(account, order) < maxPlantTimes)
   {
     times = GetLocTimes(account, order);//获取order号卡已种植次数
-    Loc[account][order][times + 1] = row * 10 + column;//向Loc数组中记录种植行列
-    strcpy_s(Map[account][row][column].name[level][depth], Slot[account][order].name);
-    Map[account][row][column].times[level][depth] = times + 1;  //向地图格子该层级中填写卡片名称、种植次数
-    Map[account][row][column].depth[level]++;
+    location[account][order][times + 1] = row * 10 + column;//向Loc数组中记录种植行列
+    strcpy_s(map[account][row][column].name[level][depth], slot[account][order].name);
+    map[account][row][column].times[level][depth] = times + 1;  //向地图格子该层级中填写卡片名称、种植次数
+    map[account][row][column].depth[level]++;
   }
 }
 void AddEmptyToSlot(int account, const char *name)//向卡槽中添加名称为name的空卡
@@ -1041,20 +1129,20 @@ void AddEmptyToSlot(int account, const char *name)//向卡槽中添加名称为n
   char *CardName[5][3] = {
     { "木盘子", "棉花糖", "软糖" }, { "瓜皮", "处女座", "赫拉" }, { "大火炉", "火焰牛", "大炮" },
     { "冰沙", "冰激凌", "" }, { "幻幻鸡", "", "" } };
-  if (SlotNum[account] < maxSlotNum)
+  if (slotNum[account] < maxSlotNum)
   {
-    SlotNum[account]++;
-    Slot[account][SlotNum[account]] = emptyCard;//各项参数为0的空卡
-    strcpy_s(Slot[account][SlotNum[account]].name, name);
-    Slot[account][SlotNum[account]].level = 3;
+    slotNum[account]++;
+    slot[account][slotNum[account]] = emptyCard;//各项参数为0的空卡
+    strcpy_s(slot[account][slotNum[account]].name, name);
+    slot[account][slotNum[account]].level = 3;
     for (int i = 0; i <= 4; i++)
       for (int j = 0; j <= 2; j++)
         if (strcmp(name, CardName[i][j]) == zero)
         {
           if (i <= 1)
-            Slot[account][SlotNum[account]].level = i + 1;
+            slot[account][slotNum[account]].level = i + 1;
           else
-            Slot[account][SlotNum[account]].level = i + 2;
+            slot[account][slotNum[account]].level = i + 2;
         }
   }
 }
@@ -1062,16 +1150,16 @@ void AddEmptyToSlot(int account, const char *name)//向卡槽中添加名称为n
 void DeleteShovel(int account)
 {
   int row, column, depth;
-  while (Loc[account][0][1] > zero) //如果有种植记录，全部删去（通过DeleteFromGrid函数，既删地图又删Loc）
+  while (location[account][0][1] > zero) //如果有种植记录，全部删去（通过DeleteFromGrid函数，既删地图又删Loc）
   {
-    row = Loc[account][0][1] / 10;
-    column = Loc[account][0][1] % 10;
-    for (depth = Map[account][row][column].depth[0] - 1; depth >= zero; depth--) //从高深度往低深度删除
-      if (GetOrder(account, Map[account][row][column].name[0][depth]) == zero)//该深度的卡编号为order才删除
+    row = location[account][0][1] / 10;
+    column = location[account][0][1] % 10;
+    for (depth = map[account][row][column].depth[0] - 1; depth >= zero; depth--) //从高深度往低深度删除
+      if (GetOrder(account, map[account][row][column].name[0][depth]) == zero)//该深度的卡编号为order才删除
         DeleteFromGrid(account, row, column, 0, depth);
   }
-  memset(Track[account][0], 0, sizeof(Track[account][0]));
-  memset(Moment[account][0], 0, sizeof(Moment[account][0]));
+  memset(track[account][0], 0, sizeof(track[account][0]));
+  memset(moment[account][0], 0, sizeof(moment[account][0]));
   DecreaseToEmptyDepth();//选择深度高于LUMO，则降至LUMO
 }
 void AutoShovel(int account)//自动布置铲子位置和轨道
@@ -1083,25 +1171,25 @@ void AutoShovel(int account)//自动布置铲子位置和轨道
   DeleteShovel(account);//清空铲子地图和轨道
   int MaxTrack = GetMaxTrack(account);//最大轨道时间
   for (int t = minTime; t <= MaxTrack; t++)
-    for (int order = 1; order <= SlotNum[account]; order++)
+    for (int order = 1; order <= slotNum[account]; order++)
     {
-      if (Slot[account][order].level == 5)//冰激凌和冰沙轨道不用布铲
+      if (slot[account][order].level == 5)//冰激凌和冰沙轨道不用布铲
         continue;
-      if (Track[account][order][t] >= 1) //如果这个时刻这张卡有种植
+      if (track[account][order][t] >= 1) //如果这个时刻这张卡有种植
       {
         times[order]++;
-        row = Loc[account][order][times[order]] / 10;
-        column = Loc[account][order][times[order]] % 10;//获取这张卡本次种植的位置
-        if (Slot[account][order].level == 6)//如果是幻鸡轨道
+        row = location[account][order][times[order]] / 10;
+        column = location[account][order][times[order]] % 10;//获取这张卡本次种植的位置
+        if (slot[account][order].level == 6)//如果是幻鸡轨道
         {
           int MagicTarget = GetMagicTarget(account, t);//获得幻幻鸡复制的目标卡，没找到返回0
           if (MagicTarget > zero)
-            level = Slot[account][MagicTarget].level;//获取复制目标的层级
+            level = slot[account][MagicTarget].level;//获取复制目标的层级
           else
             continue;//没有复制目标，不予考虑
         }
         else //如果不是幻鸡轨道，则是1-4层级
-          level = Slot[account][order].level;//获取这张卡的层级
+          level = slot[account][order].level;//获取这张卡的层级
         if (MapOccupied[row][column][level] == zero)//如果该层级没有占用
           MapOccupied[row][column][level] = 1;//则设为已占用
         else if (row > zero) //如果该层级已占用，添加铲子
@@ -1120,25 +1208,25 @@ void AutoTrack(int account, int order, int n)
 {
   if (n <= 0)
     return;
-  SlotType &slot = Slot[account][order];
+  SlotType &slot0 = slot[account][order];
   //继承卡不布轨
-  if (slot.retain)
+  if (slot0.retain)
     return;
 
-  CountEnergy();//计算全局生产
-  int startTime = times[account][order] == 0 ? minTime : Moment[account][order][times[account][order]] / 10 + 2;
+  CountEnergyNormal();//计算全局生产
+  int startTime = times[account][order] == 0 ? minTime : moment[account][order][times[account][order]] / 10 + 2;
   for (int t = startTime; t <= maxTime; t++)
   {
     if (IsCold(account, order, t)) //如果冷却完毕
     {
       //本次放卡消耗
-      int currentCost = slot.cost < 1000 ? slot.cost : slot.cost - 1000 + 50 * times[account][order];
+      int currentCost = slot0.cost < 1000 ? slot0.cost : slot0.cost - 1000 + 50 * times[account][order];
       //如果能量够用，就放一张
       if (IsEnergyEnough(account, currentCost, t))
       {
         AddTrack(account, order, t);//添加轨道
-        if (slot.style >= 1 && slot.style <= 6)//如果放下的是生产卡或炎焱兔，需要重新计算产火
-          CountEnergy();
+        if (slot0.style >= 1 && slot0.style <= 6)//如果放下的是生产卡或炎焱兔，需要重新计算产火
+          CountEnergyNormal();
         else //否则更新times[account][order]和能量值即可
         {
           times[account][order]++;
@@ -1156,7 +1244,7 @@ void AutoTrack(int account, int order, int n)
 void AutoTrack()
 {
   //第一步：保留轨道，计算全局生产，填写已放次数
-  CountEnergy();
+  CountEnergyNormal();
   //如果已经缺火，放弃布轨
   for (int account = 0; account < accountNum; account++)
     for (int t = minTime; t <= maxTime; t++)
@@ -1177,7 +1265,7 @@ void AutoTrack()
     magic[account] = GetOrder(account, "幻幻鸡");
     ice[account] = GetOrder(account, "冰激凌");
     sorbet[account] = GetOrder(account, "冰沙");
-    for (int order = 1; order <= SlotNum[account]; order++)//获得每张卡的种植次数（需布轨次数）
+    for (int order = 1; order <= slotNum[account]; order++)//获得每张卡的种植次数（需布轨次数）
     {
       if (order == magic[account] || order == ice[account] || order == sorbet[account]
         || order == innateStove[account] || order == innateCup[account])
@@ -1190,22 +1278,22 @@ void AutoTrack()
   //第三步：从第1秒开始检查检查每张卡是否可放置，放置时更新总能量
   for (int t = minTime; t <= maxTime; t++)
     for (int account = 0; account < accountNum; account++)
-      for (int order = 1; order <= SlotNum[account]; order++)
+      for (int order = 1; order <= slotNum[account]; order++)
       {
-        SlotType &slot = Slot[account][order];
+        SlotType &slot0 = slot[account][order];
         //锁定卡、继承卡、布轨已完成的卡、幻鸡、冰激凌、冰沙、初始火、初始灯不布轨
-        if (slot.lock || slot.retain || times[account][order] >= totalTimes[account][order])
+        if (slot0.lock || slot0.retain || times[account][order] >= totalTimes[account][order])
           continue;
         if (IsCold(account, order, t)) //如果冷却完毕
         {
           //本次放卡消耗
-          int currentCost = slot.cost < 1000 ? slot.cost : slot.cost - 1000 + 50 * times[account][order];
+          int currentCost = slot0.cost < 1000 ? slot0.cost : slot0.cost - 1000 + 50 * times[account][order];
           //如果能量够用，就放一张
           if (IsEnergyEnough(account, currentCost, t))
           {
             AddTrack(account, order, t);//添加轨道
-            if (slot.style >= 1 && slot.style <= 6)//如果放下的是生产卡或炎焱兔，需要重新计算产火
-              CountEnergy();
+            if (slot0.style >= 1 && slot0.style <= 6)//如果放下的是生产卡或炎焱兔，需要重新计算产火
+              CountEnergyNormal();
             else //否则更新times[account][order]和能量值即可
             {
               times[account][order]++;
@@ -1219,7 +1307,7 @@ void AutoTrack()
 
   //第四步：如果铲子没有锁定轨道，自动布置铲子
   for (int account = 0; account < accountNum; account++)
-    if (!Slot[account][0].lock && !Slot[account][0].retain)
+    if (!slot[account][0].lock && !slot[account][0].retain)
       AutoShovel(account);
 }
 
@@ -1400,15 +1488,6 @@ int GetItemValue(int *dest, const char *itemName, HWND hDlg, int idItem, int len
   MessageBox(hDlg, message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
   return 0;
 }
-//勾选框idItem是否选中，是返回1，否返回0
-int GetItemCheck(HWND hDlg, int idItem)
-{
-  UINT checkState = SendMessage(GetDlgItem(hDlg, idItem), BM_GETCHECK, 0, 0);
-  if (checkState == BST_CHECKED)
-    return 1;
-  else
-    return 0;
-}
 //从输入框获取文本
 template <size_t size>
 int GetItemText(char(&dest)[size], const char *itemName, HWND hDlg, int idItem, int length)
@@ -1553,11 +1632,11 @@ void InitComboBox(HWND hDlg, int idItem, const char *cardSelected)
   HWND hComboCard = GetDlgItem(hDlg, idItem);//组合框句柄
   ComboBox_AddString(hComboCard, "（无）");
   int orderSelected = 0;//当前选中的卡片
-  for (int order = 1; order <= SlotNum[curAccount]; order++)
+  for (int order = 1; order <= slotNum[curAccount]; order++)
   {
-    sprintf_s(boxString, "%02d %s", order, Slot[curAccount][order].name);
+    sprintf_s(boxString, "%02d %s", order, slot[curAccount][order].name);
     ComboBox_AddString(hComboCard, boxString);
-    if (strcmp(cardSelected, Slot[curAccount][order].name) == 0)
+    if (strcmp(cardSelected, slot[curAccount][order].name) == 0)
       orderSelected = order;
   }
   ComboBox_SetCurSel(hComboCard, orderSelected);//设置默认选中
@@ -1570,7 +1649,7 @@ void GetComboBox(HWND hDlg, int idItem, char(&cardSelected)[10])
   if (selectedCard == 0)
     strcpy_s(cardSelected, "");
   else
-    strcpy_s(cardSelected, Slot[curAccount][selectedCard].name);
+    strcpy_s(cardSelected, slot[curAccount][selectedCard].name);
 }
 //条件编辑框过程函数
 INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -1598,9 +1677,9 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
 
     //设置图像组合框
     if (params->image[0]) //设置初始文本
-      SetItemText(hDlg, idImage, params->image, 6);
+      SetItemText(hDlg, idImage, params->image, 8);
     else
-      SetItemText(hDlg, idImage, "（无）", 6);
+      SetItemText(hDlg, idImage, "（无）", 8);
     HWND hComboImage = GetDlgItem(hDlg, idImage);
     ComboBox_AddString(hComboImage, "（无）");
     int originImage = -1;//原来选中的图像
@@ -1656,7 +1735,7 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
       if (selectedCard == 0)
         strcpy_s(temp.card, "");
       else
-        strcpy_s(temp.card, Slot[curAccount][selectedCard].name);
+        strcpy_s(temp.card, slot[curAccount][selectedCard].name);
 
       if (!GetItemValue(&temp.cardNum, "卡片数量", hDlg, idCardNum, 2, 0, 63))
         break;
@@ -1675,7 +1754,7 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
       if (selectedFollow == 0)
         strcpy_s(temp.follow, "");
       else
-        strcpy_s(temp.follow, Slot[curAccount][selectedFollow].name);
+        strcpy_s(temp.follow, slot[curAccount][selectedFollow].name);
 
       if (!GetItemValue(&temp.endNum, "放满", hDlg, idEndNum, 2, 0, 63))
         break;
@@ -1709,7 +1788,7 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
 int EditCondition(int account, int order)
 {
   return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_LIMIT),
-    hWndEditor, LimitDialogProc, (LPARAM)&Slot[account][order].delay);
+    hWndEditor, LimitDialogProc, (LPARAM)&slot[account][order].delay);
 }
 //初始化自动布轨对话框控件内容
 void InitAutoDialog(HWND hDlg)
@@ -1947,33 +2026,29 @@ void PrintToClipboard(const char *AnsiStr)//将字符串AnsiStr复制到剪贴�
   CloseClipboard();//关闭剪贴板
   free(UnicodeStr);// 释放内存
 }
-void RecoverWindow(HWND hWnd)
+//居中显示窗口
+void CenterShow(HWND hWnd)
 {
+  if (!IsWindow(hWnd))
+    return;//没有窗口则结束
+  ShowWindow(hWnd, SW_SHOW);//显示窗口
   RECT rect;
-  int ScrWidth, ScrHeight, WndWidth, WndHeight;
-  if (!IsWindow(hWnd)) return;//没有窗口则结束程序
-  SetWindowLong(hWnd, GWL_EXSTYLE, GetWindowLong(hWnd, GWL_EXSTYLE) & ~WS_EX_TOOLWINDOW);//恢复任务栏图标
-  ShowWindow(hWnd, SW_RESTORE);//窗口常规显示
-  if ((unsigned int)GetWindowLong(hWnd, GWL_STYLE) / 65536 % 2 == 1)//如果窗口允许最大化
-    ShowWindow(hWnd, SW_SHOWMAXIMIZED);//最大化
-  else
-  {
-    GetWindowRect(hWnd, &rect);
-    WndWidth = rect.right - rect.left, rect;
-    WndHeight = rect.bottom - rect.top;
-    ScrWidth = GetSystemMetrics(SM_CXFULLSCREEN);
-    ScrHeight = GetSystemMetrics(SM_CYFULLSCREEN);
-    MoveWindow(hWnd, (ScrWidth - WndWidth) / 2, (ScrHeight - WndHeight * 29 / 30) / 2, WndWidth, WndHeight, true);//窗口回到屏幕并居中
-  }
+  GetWindowRect(hWnd, &rect);
+  int wndWidth = rect.right - rect.left;
+  int wndHeight = rect.bottom - rect.top;
+  int scrWidth = GetSystemMetrics(SM_CXFULLSCREEN);
+  int scrHeight = GetSystemMetrics(SM_CYFULLSCREEN);
+  MoveWindow(hWnd, (scrWidth - wndWidth) / 2, (scrHeight - wndHeight * 29 / 30) / 2,
+    wndWidth, wndHeight, true);//窗口回到屏幕并居中
 }
 //卡片order第times次种植在地图的什么位置
 void GetMapLoc(int account, int order, int times, int &row, int &column, int &level, int &depth)
 {
-  row = Loc[account][order][times] / 10;
-  column = Loc[account][order][times] % 10;
-  level = Slot[account][order].level;
-  for (depth = 0; depth < Map[account][row][column].depth[level]; depth++)
-    if (order == GetOrder(account, Map[account][row][column].name[level][depth]) && times == Map[account][row][column].times[level][depth])
+  row = location[account][order][times] / 10;
+  column = location[account][order][times] % 10;
+  level = slot[account][order].level;
+  for (depth = 0; depth < map[account][row][column].depth[level]; depth++)
+    if (order == GetOrder(account, map[account][row][column].name[level][depth]) && times == map[account][row][column].times[level][depth])
       break;
 }
 //切换到账号account
@@ -1986,7 +2061,7 @@ void SwitchToAccount(int account)
   SelectDepth(1);
   if (bagMode >= 0)
     bagMode = -1;
-  firstTrackSlot = 0;
+  firstTrackSlot = -1;
   commonPage = 1;
 }
 int IsUndoAllowed()
@@ -2038,9 +2113,9 @@ int GetArea(int originX, int originY)
   if (y < modeY)//缩放按钮
   {
     if (x >= modeX - 20 && x < modeX + modeWidth / 2)
-      return 702;
+      return 92;
     else if (x > modeX + modeWidth / 2)
-      return 703;
+      return 93;
   }
 
   if (mode == 1)//阵型编辑模式
@@ -2065,10 +2140,14 @@ int GetArea(int originX, int originY)
     if (accountNum == 1 && x >= skillX && x < skillX + skillWidth && y >= skillY
       && y < skillY + skillHeight)
       return 70; //刷技能勾选框
+
+    if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
+      return 90 + (y - undoY) / undoHeight;//90=撤销，91=恢复
+
     if (x >= mapSlotX && x < mapSlotX + 15 * mapSlotWidth && y >= mapSlotY && y < mapSlotY + mapSlotHeight)
     {
       int n = (x - mapSlotX) / mapSlotWidth;
-      if (n > SlotNum[curAccount])
+      if (n > slotNum[curAccount])
         return 0;
       if ((n + 1) * mapSlotWidth - (x - mapSlotX) < 20 && y - mapSlotY < 26)
         return 400 + n;//400-414：卡槽的补阵模式
@@ -2080,7 +2159,7 @@ int GetArea(int originX, int originY)
     if (x >= mapSlotX + 14 * mapSlotWidth && x < mapSlotX + 15 * mapSlotWidth && y >= mapSlotY + mapSlotHeight && y < mapSlotY + 8 * mapSlotHeight)
     {
       int n = (y - mapSlotY) / mapSlotHeight + 14;
-      if (n > SlotNum[curAccount])
+      if (n > slotNum[curAccount])
         return 0;
       if (15 * mapSlotWidth - (x - mapSlotX) < 20 && y - mapSlotY - (n - 14) * mapSlotHeight < 26)
         return 400 + n;//415-421：卡槽的补阵模式
@@ -2157,10 +2236,9 @@ int GetArea(int originX, int originY)
           return 616;//删除地图
       }
     }
-    if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
-      return 700 + (y - undoY) / undoHeight;//700=撤销，701=恢复
+    //800-808=深度0-8
     if (x >= stackX && x < stackX + stackWidth && y >= stackY && y < stackY + maxViewStack * stackHeight)
-      return 800 + (y - stackY) / stackHeight;//800-808=深度0-8
+      return 800 + (y - stackY) / stackHeight;
     if (x >= stackX && x < stackX + stackWidth && y >= stackY + maxViewStack * stackHeight && y < stackY + 10 * stackHeight)
     {
       if (x <= stackX + stackWidth / 3)
@@ -2202,6 +2280,7 @@ int GetArea(int originX, int originY)
   {
     if (x >= modeX && x < modeX + modeWidth && y >= modeY && y < modeY + modeHeight)
       return 1;//阵型编辑切换按钮
+
     if (x >= playerX && x < playerX + accountNum * playerDistance && y < playerHeight) //1P/2P轨道切换
     {
       int account = (x - playerX) / playerDistance;
@@ -2216,14 +2295,19 @@ int GetArea(int originX, int originY)
       return 40; //添加2P
     if (accountNum == 2 && x >= playerX + 2 * playerDistance && x < playerX + 2 * playerDistance + playerOptionWidth && y < playerHeight) //1P/2P轨道切换
       return 50; //移除2P
+
+    if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
+      return 90 + (y - undoY) / undoHeight;//90=撤销，91=恢复
+
     //轨道卡槽
     if (x >= trackSlotX && x < trackSlotX + trackSlotWidth
-      && y >= trackSlotY - trackSlotHeight && y < trackSlotY + (min(SlotNum[curAccount], trackSlotNumPerPage) + 1) * trackSlotHeight)//卡槽
+      && y >= trackSlotY && y < trackSlotY + min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1) * trackSlotHeight)//卡槽
     {
-      int order = maxSlotNum + 1;
-      if (y >= trackSlotY)
-        order = (y - trackSlotY) / trackSlotHeight + firstTrackSlot;
-      int height = (y - trackSlotY + trackSlotHeight) % trackSlotHeight;
+      int floor = (y - trackSlotY) / trackSlotHeight;
+      int lineOrder = firstTrackSlot + floor;
+      int order = lineOrder == -1 ? maxSlotNum + 1 : lineOrder;
+
+      int height = (y - trackSlotY) % trackSlotHeight;
       if (x - trackSlotX < 15 && height < 14)
         return 200 + order;//200+=继承（左上角）
       else if (x - trackSlotX < 15 && height > trackSlotHeight - 14)
@@ -2247,10 +2331,18 @@ int GetArea(int originX, int originY)
       int n = (y - buttonY) / buttonHeight;
       return 612 + n;
     }
-    if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
-      return 700 + (y - undoY) / undoHeight;//700=撤销，701=恢复
+
+    //712=优先队列标题，700-711=第0-11张卡
+    if (x >= queueX && x < queueX + 12 * queueWidth && y >= queueY && y < queueY + queueHeight)
+      return 700 + (x - queueX) / queueWidth;
+    if (x >= queueTitleX && x < queueTitleX + queueTitleWidth && y >= queueY && y < queueY + queueHeight)
+      return 712;
+
+    //801-810=翻页按钮
     if (x >= pageX && x < pageX + 4 * pageWidth && y >= pageY && y < pageY + 4 * pageHeight)
-      return 801 + (y - pageY) / pageHeight * 4 + (x - pageX) / pageWidth;//801-810=翻页按钮
+      return 801 + (y - pageY) / pageHeight * 4 + (x - pageX) / pageWidth;
+
+    //900+=箭头
     if (x >= moveX && x < moveX + 3 * moveWidth && y >= moveY && y < moveY + moveHeight)
     {
       int n = (x - moveX) / moveWidth;//n=0~2
@@ -2264,13 +2356,18 @@ int GetArea(int originX, int originY)
       if (n == 1)
         return 903;//902-903=上下
     }
-    if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= playerHeight && y < trackY - trackHeight)
-      return 2000 + (x - trackX) / timelineWidth;//2000-2600=时间轴
-    if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= trackY - trackHeight && y < trackY + (min(SlotNum[curAccount], trackSlotNumPerPage) + 1) * trackHeight)
+
+    //2000-2600=时间轴
+    if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= playerHeight && y < queueY)
+      return 2000 + (x - trackX) / timelineWidth;
+
+    //100000+=轨道
+    if (x >= trackX && x < trackX + trackNum * timelineWidth && y >= trackY
+      && y < trackY + min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1) * trackHeight)
     {
-      int order = maxSlotNum + 1;
-      if (y >= trackY)
-        order = (y - trackY) / trackHeight + firstTrackSlot;
+      int floor = (y - trackY) / trackHeight;
+      int lineOrder = firstTrackSlot + floor;
+      int order = lineOrder == -1 ? maxSlotNum + 1 : lineOrder;
       return 100000 + order * 1000 + (x - trackX) / timelineWidth;//轨道：114050=14号卡槽050秒（第2页的110秒区域也是050）
     }
     return 0;
@@ -2299,129 +2396,162 @@ int GetArea(int originX, int originY)
 //账号account的常用卡common是否已选入卡槽
 bool isCommonSelected(int account, int common)
 {
-  for (int order = 1; order <= SlotNum[account]; order++)
-    if (strcmp(Slot[account][order].name, bag[account][common].name) == 0)
+  for (int order = 1; order <= slotNum[account]; order++)
+    if (strcmp(slot[account][order].name, bag[account][common].name) == 0)
       return true;
   return false;
 }
 //向卡槽中添加常用卡组中的第common张卡片
 void AddToSlot(int account, int common)
 {
-  if (isCommonSelected(account, common) == false && SlotNum[account] < maxSlotNum)//如果该卡未被添加，且卡槽有空位
+  if (isCommonSelected(account, common) == false && slotNum[account] < maxSlotNum)//如果该卡未被添加，且卡槽有空位
   {
-    SlotNum[account]++;
-    Slot[account][SlotNum[account]] = bag[account][common];
+    slotNum[account]++;
+    slot[account][slotNum[account]] = bag[account][common];
   }
 }
 //删除这张卡的全部阵型
 void DeleteMap(int account, int order)
 {
   int row, column, depth;
-  int level = Slot[account][order].level;
-  while (Loc[account][order][1] > zero) //如果有种植记录，全部删去（通过DeleteFromGrid函数，既删地图又删Loc）
+  int level = slot[account][order].level;
+  while (location[account][order][1] > zero) //如果有种植记录，全部删去（通过DeleteFromGrid函数，既删地图又删Loc）
   {
-    row = Loc[account][order][1] / 10;
-    column = Loc[account][order][1] % 10;
-    for (depth = Map[account][row][column].depth[level] - 1; depth >= zero; depth--) //从高深度往低深度删除
-      if (GetOrder(account, Map[account][row][column].name[level][depth]) == order)//该深度的卡编号为order才删除
+    row = location[account][order][1] / 10;
+    column = location[account][order][1] % 10;
+    for (depth = map[account][row][column].depth[level] - 1; depth >= zero; depth--) //从高深度往低深度删除
+      if (GetOrder(account, map[account][row][column].name[level][depth]) == order)//该深度的卡编号为order才删除
         DeleteFromGrid(account, row, column, level, depth);
   }
   DecreaseToEmptyDepth();//选择深度高于LUMO，则降至LUMO
+}
+
+//向队列添加卡片
+void AddQueue(int account, int order)
+{
+  if (order == 0 || order == maxSlotNum + 1)
+    return;
+  if (queueSize[account] >= 12)
+    return;
+  strcpy_s(queue[account][queueSize[account]++], slot[account][order].name);
+}
+//删除队列第qOrder张卡片
+void DeleteQueue(int account, int qOrder)
+{
+  for (int i = qOrder; i < queueSize[account] - 1; i++)
+    strcpy_s(queue[account][i], queue[account][i + 1]);
+  queueSize[account]--;
+}
+//向队列第qOrder个位置插入卡片slotName
+void InsertToQueue(int account, int qOrder, const char *slotName)
+{
+  for (int i = queueSize[account] - 1; i >= qOrder; i--)
+    strcpy_s(queue[account][i + 1], queue[account][i]);
+  strcpy_s(queue[account][qOrder], slotName);
+  queueSize[account]++;
+}
+//将队列中第qOrder1张卡插入到qOrder2位置
+void InsertQueue(int account, int qOrder1, int qOrder2)
+{
+  char slotName[10] = {};
+  strcpy_s(slotName, queue[account][qOrder1]);
+  DeleteQueue(account, qOrder1);
+  InsertToQueue(account, qOrder2, slotName);
 }
 //删除卡槽中的第order张卡片（如果有种植记录也会清空）；删除针对此卡的卡片数量和跟随条件
 void DeleteFromSlot(int account, int order)
 {
   //删除针对此卡的卡片数量和跟随条件
-  for (int i = 0; i <= SlotNum[account]; i++)
+  for (int i = 0; i <= slotNum[account]; i++)
   {
-    if (strcmp(Slot[account][i].card, Slot[account][order].name) == 0)
-      strcpy_s(Slot[account][i].card, "");
-    if (strcmp(Slot[account][i].follow, Slot[account][order].name) == 0)
-      strcpy_s(Slot[account][i].follow, "");
+    if (strcmp(slot[account][i].card, slot[account][order].name) == 0)
+      strcpy_s(slot[account][i].card, "");
+    if (strcmp(slot[account][i].follow, slot[account][order].name) == 0)
+      strcpy_s(slot[account][i].follow, "");
   }
 
   DeleteMap(account, order);
-  for (int i = order; i < SlotNum[account]; i++)//后面的卡槽向前递补
+  for (int i = order; i < slotNum[account]; i++)//后面的卡槽向前递补
   {
-    Slot[account][i] = Slot[account][i + 1];//卡片信息递补
+    slot[account][i] = slot[account][i + 1];//卡片信息递补
     for (int times = 0; times <= maxPlantTimes; times++)//卡片种植位置递补
-      Loc[account][i][times] = Loc[account][i + 1][times];
+      location[account][i][times] = location[account][i + 1][times];
     for (int t = 0; t <= maxTime; t++)//卡片轨道递补
-      Track[account][i][t] = Track[account][i + 1][t];
+      track[account][i][t] = track[account][i + 1][t];
     for (int times = 0; times < maxPlantTimes; times++)
-      Moment[account][i][times] = Moment[account][i + 1][times];
+      moment[account][i][times] = moment[account][i + 1][times];
   }
   for (int times = 0; times <= maxPlantTimes; times++)
-    Loc[account][SlotNum[account]][times] = 0;//空出来的那个卡槽，种植位置全部设为0
+    location[account][slotNum[account]][times] = 0;//空出来的那个卡槽，种植位置全部设为0
   for (int t = 0; t <= maxTime; t++)
-    Track[account][SlotNum[account]][t] = 0;//空出来的那个卡槽，轨道信息全部设为0
+    track[account][slotNum[account]][t] = 0;//空出来的那个卡槽，轨道信息全部设为0
   for (int times = 0; times <= maxPlantTimes; times++)
-    Moment[account][SlotNum[account]][times] = 0;//空出来的那个卡槽，种植时刻全部设为0
-  SlotNum[account]--;
-  if (firstTrackSlot + trackSlotNumPerPage > SlotNum[account] && firstTrackSlot > zero)
+    moment[account][slotNum[account]][times] = 0;//空出来的那个卡槽，种植时刻全部设为0
+  slotNum[account]--;
+  if (firstTrackSlot + trackSlotNumPerPage > slotNum[account] && firstTrackSlot > -1)
     firstTrackSlot--;
 }
 void ChangeSlot(int account, int order, int common)//将卡槽与常用卡组对换
 {
   //如果换的是本卡，将卡槽卡片的层级、冷却赋值成该卡即可
-  if (strcmp(bag[account][common].name, Slot[account][order].name) == 0)
+  if (strcmp(bag[account][common].name, slot[account][order].name) == 0)
   {
-    Slot[account][order].cd = bag[account][common].cd;
-    Slot[account][order].level = bag[account][common].level;
+    slot[account][order].cd = bag[account][common].cd;
+    slot[account][order].level = bag[account][common].level;
     return;
   }
   //如果换的是一张已经携带的卡，直接退出
   if (isCommonSelected(account, common))
     return;
   //如果换的是一张未携带的卡，先删除针对原卡的卡片数量和跟随条件
-  for (int i = 0; i <= SlotNum[account]; i++)
+  for (int i = 0; i <= slotNum[account]; i++)
   {
-    if (strcmp(Slot[account][i].card, Slot[account][order].name) == 0)
-      strcpy_s(Slot[account][i].card, "");
-    if (strcmp(Slot[account][i].follow, Slot[account][order].name) == 0)
-      strcpy_s(Slot[account][i].follow, "");
+    if (strcmp(slot[account][i].card, slot[account][order].name) == 0)
+      strcpy_s(slot[account][i].card, "");
+    if (strcmp(slot[account][i].follow, slot[account][order].name) == 0)
+      strcpy_s(slot[account][i].follow, "");
   }
 
   for (int row = 1; row <= 7; row++)
     for (int column = 1; column <= 9; column++)
       for (int level = 1; level <= 6; level++)
         for (int depth = 0; depth < maxStack; depth++)
-          if (strcmp(Map[account][row][column].name[level][depth], Slot[account][order].name) == zero)
-            strcpy_s(Map[account][row][column].name[level][depth], bag[account][common].name);
-  strcpy_s(Slot[account][order].name, bag[account][common].name);
-  Slot[account][order].cd = bag[account][common].cd;
-  Slot[account][order].level = bag[account][common].level;
-  Slot[account][order].cost = bag[account][common].cost;
-  Slot[account][order].style = bag[account][common].style;
-  Slot[account][order].star = bag[account][common].star;
-  Slot[account][order].sun = bag[account][common].sun;
-  Slot[account][order].sunNum = bag[account][common].sunNum;
-  Slot[account][order].transfer = bag[account][common].transfer;
+          if (strcmp(map[account][row][column].name[level][depth], slot[account][order].name) == zero)
+            strcpy_s(map[account][row][column].name[level][depth], bag[account][common].name);
+  strcpy_s(slot[account][order].name, bag[account][common].name);
+  slot[account][order].cd = bag[account][common].cd;
+  slot[account][order].level = bag[account][common].level;
+  slot[account][order].cost = bag[account][common].cost;
+  slot[account][order].style = bag[account][common].style;
+  slot[account][order].star = bag[account][common].star;
+  slot[account][order].sun = bag[account][common].sun;
+  slot[account][order].sunNum = bag[account][common].sunNum;
+  slot[account][order].transfer = bag[account][common].transfer;
 }
 //交换两个卡槽的卡片（不涉及地图信息的修改）
 void ExchangeSlot(int account, int order0, int order1)
 {
-  SlotType tempSlot = Slot[account][order0];
-  Slot[account][order0] = Slot[account][order1];
-  Slot[account][order1] = tempSlot;
+  SlotType tempSlot = slot[account][order0];
+  slot[account][order0] = slot[account][order1];
+  slot[account][order1] = tempSlot;
   int temp;
   for (int times = 0; times <= maxPlantTimes; times++)
   {
-    temp = Loc[account][order0][times];
-    Loc[account][order0][times] = Loc[account][order1][times];
-    Loc[account][order1][times] = temp;
+    temp = location[account][order0][times];
+    location[account][order0][times] = location[account][order1][times];
+    location[account][order1][times] = temp;
   }
   for (int times = 0; times <= maxPlantTimes; times++)
   {
-    temp = Moment[account][order0][times];
-    Moment[account][order0][times] = Moment[account][order1][times];
-    Moment[account][order1][times] = temp;
+    temp = moment[account][order0][times];
+    moment[account][order0][times] = moment[account][order1][times];
+    moment[account][order1][times] = temp;
   }
   for (int t = 0; t <= maxTime; t++)
   {
-    temp = Track[account][order0][t];
-    Track[account][order0][t] = Track[account][order1][t];
-    Track[account][order1][t] = temp;
+    temp = track[account][order0][t];
+    track[account][order0][t] = track[account][order1][t];
+    track[account][order1][t] = temp;
   }
 }
 //将卡槽order0插入到order1位置
@@ -2508,36 +2638,37 @@ void ClearMap_RetainDepth(int account)
   int depth[7][9][7] = {};
   for (int row = 1; row <= 7; row++) //记录选中深度
     for (int column = 1; column <= 9; column++)
-      memcpy(depth[row - 1][column - 1], Map[account][row][column].depthSelected, sizeof(depth[0][0]));
-  memset(Map[account], 0, sizeof(Map[account]));//地图清空
+      memcpy(depth[row - 1][column - 1], map[account][row][column].depthSelected, sizeof(depth[0][0]));
+  memset(map[account], 0, sizeof(map[account]));//地图清空
   for (int row = 1; row <= 7; row++) //还原选中深度
     for (int column = 1; column <= 9; column++)
-      memcpy(Map[account][row][column].depthSelected, depth[row - 1][column - 1], sizeof(depth[0][0]));
+      memcpy(map[account][row][column].depthSelected, depth[row - 1][column - 1], sizeof(depth[0][0]));
 }
 //删除账号account的波次信息
 void ClearWave(int account)
 {
-  memset(Slot[account], 0, sizeof(Slot[account]));
-  memset(Loc[account], 0, sizeof(Loc[account]));
+  memset(slot[account], 0, sizeof(slot[account]));
+  memset(location[account], 0, sizeof(location[account]));
   ClearMap_RetainDepth(account);//地图清空
-  memset(Moment[account], 0, sizeof(Moment[account]));
-  memset(Track[account], 0, sizeof(Track[account]));
-  SlotNum[account] = 0;
-  Slot[account][0] = shovel;//卡槽0设为铲子
-  Slot[account][maxSlotNum + 1] = jewel;//最后一个卡槽设为宝石
+  memset(moment[account], 0, sizeof(moment[account]));
+  memset(track[account], 0, sizeof(track[account]));
+  slotNum[account] = 0;
+  slot[account][0] = shovel;//卡槽0设为铲子
+  slot[account][maxSlotNum + 1] = jewel;//最后一个卡槽设为宝石
 }
+bool isCupUsed;//酒杯灯是否使用过
 //bool isWaterUsed;//开水壶是否使用过
 //bool isPuddingUsed;//布丁是否使用过
 //bool isPuddingInSlot12;
 //从文件当前位置读取波次信息到账号account的内存中，指定读取slotNum张卡片。返回出错的行数
-int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &line, char(&info)[1000])
+int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &line, char(&info)[1000])
 {
   ClearWave(account);//清空波次信息（卡槽数、地图轨道）
   char s[maxLineSize], segment[maxLineSize];//从文件读取的字符串，用来分割的字符串
   char tip[100];
   char *name = nullptr, *nextName = nullptr;
   //读取接下来的slotNum+2行。originOrder = -1代表宝石，0代表铲子
-  for (int originOrder = -1; originOrder <= slotNum; originOrder++)
+  for (int originOrder = -1; originOrder <= slotNum0; originOrder++)
   {
     fgets(f, s);
     line++;
@@ -2546,13 +2677,13 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
     //如果卡槽还没读完，就遇到了空行或--第x波--，说明卡槽数填多了
     if (strlen(s) == 0 || IsWaveTitle(s))
     {
-      sprintf_s(tip, "卡槽数=%d，但只读取到%d个卡槽", slotNum, originOrder - 1);
+      sprintf_s(tip, "卡槽数=%d，但只读取到%d个卡槽", slotNum0, originOrder - 1);
       return WriteInfo(info, f, path, line, s, tip);
     }
     //第一行如果不是宝石，则从铲子（order=0）开始读
     if (originOrder == -1 && strstr(s, "宝石") == nullptr)
       order = originOrder = 0;
-    SlotType &slot = Slot[account][order];
+    SlotType &slot0 = slot[account][order];
 
     strcpy_s(segment, s);
     if (segment[0] == '\t')//没有卡片名称
@@ -2562,16 +2693,16 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
     {
       if (strlen(name) > 6)
         return WriteInfo(info, f, path, line, s, "卡片名称不能超过3个汉字");
+      bool isCommonCard = false;//这张卡是否为背包中的卡
       for (int common = 0; common < bagNum[account]; common++)//通过名称查找是哪张常用卡
-      {
         if (strcmp(bag[account][common].name, name) == zero)
         {
           AddToSlot(account, common);//从卡组中向卡槽添加这张卡（包括名称、冷却时间、层级）
+          isCommonCard = true;
           break;
         }
-        if (common == bagNum[account] - 1) //如果没有在常用卡中找到该卡
-          AddEmptyToSlot(account, name);//向卡组中添加只有名称、其他信息为0的卡
-      }
+      if (!isCommonCard) //如果没有在常用卡中找到该卡
+        AddEmptyToSlot(account, name);//向卡组中添加只有名称、其他信息为0的卡
     }
 
     //子串1：冷却|补极独索继|放卡条件
@@ -2581,20 +2712,21 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
     //按逗号分割"7[3]补极,火苗=120,血量=80,图像=hello"
     char *nextCondition = nullptr;
     char *condition = NewStrTok(name, ",", &nextCondition);//第一项：7[3]补极
-    slot.lock = strstr(condition, "x") ? 1 : 0;
-    slot.repair = strstr(condition, "补") ? 1 : 0;
-    slot.limit = strstr(condition, "极") ? 1 : 0;
-    slot.independent = strstr(condition, "独") ? 1 : 0;
-    slot.search = strstr(condition, "索") ? 1 : 0;
-    slot.retain = strstr(condition, "继") ? 1 : 0;
-    sscanf_s(condition, "%d[%d]", &slot.cd, &slot.level);//冷却和层级
-    if (order == zero && (slot.cd < zero || slot.cd > 320))
+    slot0.prior = strstr(condition, "绝") != nullptr;
+    slot0.lock = strstr(condition, "x") != nullptr;
+    slot0.repair = strstr(condition, "补") != nullptr;
+    slot0.limit = strstr(condition, "极") != nullptr;
+    slot0.independent = strstr(condition, "独") != nullptr;
+    slot0.search = strstr(condition, "索") != nullptr;
+    slot0.retain = strstr(condition, "继") != nullptr;
+    sscanf_s(condition, "%d[%d]", &slot0.cd, &slot0.level);//冷却和层级
+    if (order == zero && (slot0.cd < zero || slot0.cd > 320))
       return WriteInfo(info, f, path, line, s, "铲子cd范围0~320s");
-    if (order != zero && (slot.cd < 2 || slot.cd > 320))
+    if (order != zero && (slot0.cd < 2 || slot0.cd > 320))
       return WriteInfo(info, f, path, line, s, "卡片cd范围2~320s");
 
     //第2-n项：13种极限条件
-    memset(&slot.delay, 0, sizeof(ConditionType));
+    memset(&slot0.delay, 0, sizeof(ConditionType));
     for (int i = 0; i < 13; i++)
     {
       condition = NewStrTok(nullptr, ",", &nextCondition);
@@ -2603,16 +2735,16 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
       switch (i)
       {
       case 0:
-        slot.delay = atoi(condition);
-        if (slot.delay < 0 || slot.delay > 960)
+        slot0.delay = atoi(condition);
+        if (slot0.delay < 0 || slot0.delay > 960)
           return WriteInfo(info, f, path, line, s, "【延迟】范围为0~960");
         break;
       case 1:
-        slot.triggerMode = atoi(condition) ? 1 : 0;
+        slot0.triggerMode = atoi(condition) ? 1 : 0;
         break;
       case 2:
-        slot.energy = atoi(condition);
-        if (slot.energy < 0 || slot.energy > 15000)
+        slot0.energy = atoi(condition);
+        if (slot0.energy < 0 || slot0.energy > 15000)
           return WriteInfo(info, f, path, line, s, "【火苗】范围为0~15000");
         break;
       case 3: //波次：只能是m.n格式
@@ -2622,46 +2754,46 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
         int mainWave = 0, smallWave = 0;
         int scannedNum = sscanf_s(condition, "%d.%d", &mainWave, &smallWave);
         if (smallWave > 0)
-          sprintf_s(slot.wave, "%d.%d", mainWave, smallWave);
+          sprintf_s(slot0.wave, "%d.%d", mainWave, smallWave);
         else if (mainWave > 0)
-          sprintf_s(slot.wave, "%d", mainWave);
+          sprintf_s(slot0.wave, "%d", mainWave);
         else
-          sprintf_s(slot.wave, "");
+          sprintf_s(slot0.wave, "");
       }
       break;
       case 4:
         if (strcmp(condition, "NULL") == 0)
-          strcpy_s(slot.card, "");
+          strcpy_s(slot0.card, "");
         else
         {
           if (strlen(condition) > 6)
             return WriteInfo(info, f, path, line, s, "【卡片】长度不能超过3个汉字");
-          strcpy_s(slot.card, condition);
+          strcpy_s(slot0.card, condition);
         }
         break;
       case 5:
-        slot.cardNum = atoi(condition);
-        if (slot.cardNum < 0 || slot.cardNum > 63)
+        slot0.cardNum = atoi(condition);
+        if (slot0.cardNum < 0 || slot0.cardNum > 63)
           return WriteInfo(info, f, path, line, s, "【卡片数量】范围为0~63");
         break;
       case 6:
         if (strcmp(condition, "NULL") == 0)
-          strcpy_s(slot.image, "");
+          strcpy_s(slot0.image, "");
         else
         {
           if (strlen(condition) > 8)
             return WriteInfo(info, f, path, line, s, "【图像】长度不能超过4个汉字");
-          strcpy_s(slot.image, condition);
+          strcpy_s(slot0.image, condition);
         }
         break;
       case 7:
-        slot.imageNum = atoi(condition);
-        if (slot.imageNum < 0 || slot.imageNum > 63)
+        slot0.imageNum = atoi(condition);
+        if (slot0.imageNum < 0 || slot0.imageNum > 63)
           return WriteInfo(info, f, path, line, s, "【图像数量】范围为0~63");
         break;
       case 8://行数:a,4,a+4,a-4
         if (strcmp(condition, "NULL") == 0)
-          strcpy_s(slot.hunterRow, "");
+          strcpy_s(slot0.hunterRow, "");
         else
         {
           const char *tip = "【索敌行数】应为n,a,a±n三种格式之一";
@@ -2679,12 +2811,12 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
             if (!(condition[0] == 'a' && (condition[1] == '+' || condition[1] == '-') && condition[2] >= '1' && condition[2] <= '6'))
               return WriteInfo(info, f, path, line, s, tip);
           }
-          strcpy_s(slot.hunterRow, condition);
+          strcpy_s(slot0.hunterRow, condition);
         }
         break;
       case 9:
         if (strcmp(condition, "NULL") == 0)
-          strcpy_s(slot.hunterColumn, "");
+          strcpy_s(slot0.hunterColumn, "");
         else
         {
           const char *tip = "【索敌列数】应为n,b,b±n三种格式之一";
@@ -2702,34 +2834,34 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
             if (!(condition[0] == 'b' && (condition[1] == '+' || condition[1] == '-') && condition[2] >= '1' && condition[2] <= '9'))
               return WriteInfo(info, f, path, line, s, tip);
           }
-          strcpy_s(slot.hunterColumn, condition);
+          strcpy_s(slot0.hunterColumn, condition);
         }
         break;
       case 10:
         if (strcmp(condition, "NULL") == 0)
-          strcpy_s(slot.image, "");
+          strcpy_s(slot0.image, "");
         else
         {
           if (strlen(condition) > 6)
             return WriteInfo(info, f, path, line, s, "【跟随卡片】长度不能超过3个汉字");
-          strcpy_s(slot.follow, condition);
+          strcpy_s(slot0.follow, condition);
         }
         break;
       case 11:
-        slot.endNum = atoi(condition);
-        if (slot.endNum < 0 || slot.endNum > 63)
+        slot0.endNum = atoi(condition);
+        if (slot0.endNum < 0 || slot0.endNum > 63)
           return WriteInfo(info, f, path, line, s, "【终止数量】范围为0~63");
         break;
       case 12:
-        slot.endTime = atoi(condition);
-        if (slot.endTime < 0 || slot.endTime > 960)
+        slot0.endTime = atoi(condition);
+        if (slot0.endTime < 0 || slot0.endTime > 960)
           return WriteInfo(info, f, path, line, s, "【终止时间】范围为0~960");
         break;
       }
     }
 
     int times = 0;//种植次数
-    int location = 0, second = 0, decisecond = 0;//种植时刻和种植位置
+    int loc = 0, second = 0, decisecond = 0;//种植时刻和种植位置
     name = strtok_s(NULL, "\t", &nextName);
     while (name)
     {
@@ -2737,29 +2869,29 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
         return WriteInfo(info, f, path, line, s, "放卡格式应为ttt(.t)|xy，以Tab键分隔");
 
       times++;//读到了ttt.s|xy型轨道，则次数+1
-      if (sscanf_s(name, "%d.%d|%d", &second, &decisecond, &location) == 3)//有小数点就按小数读取
+      if (sscanf_s(name, "%d.%d|%d", &second, &decisecond, &loc) == 3)//有小数点就按小数读取
       {
         while (decisecond >= 10)
           decisecond = decisecond / 10;//只保留1位小数
       }
       else //没有小数点就按整数读取
       {
-        sscanf_s(name, "%d|%d", &second, &location);
+        sscanf_s(name, "%d|%d", &second, &loc);
         decisecond = 0;
       }
 
       //记录种植时刻
-      Moment[account][order][times] = second * 10 + decisecond;
-      if ((Moment[account][SlotNum[account]][times] != zero && Moment[account][SlotNum[account]][times] < 10) || Moment[account][SlotNum[account]][times] > 9600)
+      moment[account][order][times] = second * 10 + decisecond;
+      if ((moment[account][slotNum[account]][times] != zero && moment[account][slotNum[account]][times] < 10) || moment[account][slotNum[account]][times] > 9600)
         return WriteInfo(info, f, path, line, s, "放卡时间范围为1~960");
       if (second > zero)//如果时刻不是000
-        Track[account][order][second]++;//记入轨道
+        track[account][order][second]++;//记入轨道
 
       //记录种植位置
-      if (strcmp(slot.name, "冰沙") == 0) //冰沙位置强制设为0
-        location = 0;
-      int row = location / 10, column = location % 10;
-      if (location != zero)//如果位置不是00
+      if (strcmp(slot0.name, "冰沙") == 0) //冰沙位置强制设为0
+        loc = 0;
+      int row = loc / 10, column = loc % 10;
+      if (loc != zero)//如果位置不是00
       {
         if (row < 1 || row > 7 || column == zero)
           return WriteInfo(info, f, path, line, s, "行数范围为1~7，列数范围为1~9");
@@ -2768,24 +2900,17 @@ int LoadCurrentWave(int account, FILE *f, int slotNum, const char *path, int &li
       name = strtok_s(NULL, "\t", &nextName);
     }
 
-    ////开水壶开启了极限成阵或有轨道，视为使用过
-    //if (strcmp(slot.name, "开水壶") == 0 && (slot.limit || Moment[account][order][1]))
-    //  isWaterUsed = true;
-
-    ////布丁开启了极限成阵，或有轨道，视为使用过
-    //if (strcmp(slot.name, "布丁") == 0 && (slot.limit || Moment[account][order][1]))
-    //  isPuddingUsed = true;
-
-    //if (strcmp(slot.name, "布丁") == 0 && order == 12)
-    //  isPuddingInSlot12 = true;
+    //酒杯灯开启了极限成阵或有轨道，视为使用过
+    if (strcmp(slot0.name, "酒杯灯") == 0 && (slot0.limit || moment[account][order][1]))
+      isCupUsed = true;
   }
   return 0;
 }
-int LoadCurrentWave(int account, FILE *f, int slotNum)
+int LoadCurrentWave(int account, FILE *f, int slotNum0)
 {
   int line = 0;
   char info[1000];
-  return LoadCurrentWave(account, f, slotNum, nullptr, line, info);
+  return LoadCurrentWave(account, f, slotNum0, nullptr, line, info);
 }
 //在文件f中输入"--第%d(.%d)波--"并换行
 void fprintWave(FILE *f, int totalWave)
@@ -2802,7 +2927,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   char s[maxLineSize];//每行读入的原始字符串，用来分割的字符串
   char Tip[100];
   /*待读信息归零*/
-  SlotNum[account] = 0;//预设参数和状态清零
+  slotNum[account] = 0;//预设参数和状态清零
   tower[account] = 0;
 
   if (!FileExist(path))//如果文件不存在，则不进行读取
@@ -2849,14 +2974,15 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   line = 0;//读取到的行数
   fgets(f, s);//读取第1行：轨道版本号
   line++;
-  if (strstr(s, "轨道版本号=")) //有版本号则再读一行
+
+  if (strstr(s, "轨道版本号=") == s) //有版本号则再读一行
   {
     fgets(f, s);//读取第2行：人物1位置
     line++;
   }
 
   strcpy_s(notation[account], "");//注释清空
-  if (strstr(s, "注释=")) //有注释则读取注释，再读一行
+  if (strstr(s, "注释=") == s) //有注释则读取注释，再读一行
   {
     strcpy_s(notation[account], s + 5);
     fgets(f, s);//读取第2行：人物1位置
@@ -2929,9 +3055,24 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
     line++;
   }
 
+  //读取优先队列
+  queueSize[account] = 0;
+  if (strstr(s, "优先队列=") == s)
+  {
+    char *context = nullptr;
+    char *name = strtok_s(s + 9, ",", &context);
+    while (name)
+    {
+      strcpy_s(queue[account][queueSize[account]++], name);
+      name = strtok_s(nullptr, ",", &context);
+    }
+    fgets(f, s);
+    line++;
+  }
+
   //如果有宝石波次，开启极限释放，再读一行
   int isJewelWaveExist = 0;
-  if (strstr(s, "宝石波次="))
+  if (strstr(s, "宝石波次=") == s)
   {
     if (strcmp(s, "宝石波次=") != 0)
       isJewelWaveExist = 1;
@@ -2940,12 +3081,12 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   }
 
   //读取卡槽数
-  int slotNum;//临时卡槽数
-  if (sscanf_s(s, "卡槽数=%d", &slotNum) != 1)
+  int slotNum0;//临时卡槽数
+  if (sscanf_s(s, "卡槽数=%d", &slotNum0) != 1)
     return WriteInfo(info, f, path, line, s, "缺少卡槽数");
   else
   {
-    if (slotNum < 0 || slotNum > 21)
+    if (slotNum0 < 0 || slotNum0 > 21)
       return WriteInfo(info, f, path, line, s, "卡槽数范围为0~21");
   }
 
@@ -2964,7 +3105,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
         return WriteInfo(info, f, path, line, s, tip);
       }
     }
-    LoadCurrentWave(account, f, slotNum);//读取当前波次的卡槽信息（不记录错误信息）
+    LoadCurrentWave(account, f, slotNum0);//读取当前波次的卡槽信息（不记录错误信息）
   }
   else //需要检查每一波轨道
   {
@@ -2972,21 +3113,21 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
       if (totalWaveExist[account][totalWave] == 1)
       {
         //读取本波，如果出错则结束读取，返回行数（info已在LoadCurrentWave中填好）
-        if (LoadCurrentWave(account, f, slotNum, path, line, info) != 0)
+        if (LoadCurrentWave(account, f, slotNum0, path, line, info) != 0)
           return line;
         //每读完一个波次再读一行
         fgets(f, s);
         line++;
         if (strlen(s) > 0 && !IsWaveTitle(s))
         {
-          sprintf_s(Tip, "卡槽数=%d，但读完%d个卡槽仍未结束", slotNum, slotNum);
+          sprintf_s(Tip, "卡槽数=%d，但读完%d个卡槽仍未结束", slotNum0, slotNum0);
           return WriteInfo(info, f, path, line, s, Tip);
         }
       }
   }
   fclose(f);
   if (isJewelWaveExist == 1)
-    Slot[account][maxSlotNum + 1].limit = 1;
+    slot[account][maxSlotNum + 1].limit = 1;
   return 0;
 }
 int LoadTrackFrom(int account, char *path)
@@ -3009,96 +3150,98 @@ void LoadTrack()
 //第order张卡的条件数量
 int GetConditionNum(int account, int order)
 {
-  SlotType &slot = Slot[account][order];
+  SlotType &slot0 = slot[account][order];
   int conditionNum = 0;
-  if (slot.endTime)
+  if (slot0.endTime)
     conditionNum = 13;
-  else if (slot.endNum)
+  else if (slot0.endNum)
     conditionNum = 12;
-  else if (strlen(slot.follow))
+  else if (strlen(slot0.follow))
     conditionNum = 11;
-  else if (strlen(slot.hunterColumn))
+  else if (strlen(slot0.hunterColumn))
     conditionNum = 10;
-  else if (strlen(slot.hunterRow))
+  else if (strlen(slot0.hunterRow))
     conditionNum = 9;
-  else if (slot.imageNum)
+  else if (slot0.imageNum)
     conditionNum = 8;
-  else if (strlen(slot.image))
+  else if (strlen(slot0.image))
     conditionNum = 7;
-  else if (slot.cardNum)
+  else if (slot0.cardNum)
     conditionNum = 6;
-  else if (strlen(slot.card))
+  else if (strlen(slot0.card))
     conditionNum = 5;
-  else if (strlen(slot.wave))
+  else if (strlen(slot0.wave))
     conditionNum = 4;
-  else if (slot.energy)
+  else if (slot0.energy)
     conditionNum = 3;
-  else if (slot.triggerMode)
+  else if (slot0.triggerMode)
     conditionNum = 2;
-  else if (slot.delay)
+  else if (slot0.delay)
     conditionNum = 1;
   return conditionNum;
 }
 void SaveCurrentWave(int account, FILE *f)
 {
-  for (int OriginOrder = -1; OriginOrder <= SlotNum[account]; OriginOrder++)
+  for (int originOrder = -1; originOrder <= slotNum[account]; originOrder++)
   {
-    int order = OriginOrder == -1 ? maxSlotNum + 1 : OriginOrder;
-    SlotType &slot = Slot[account][order];
-    fprintf(f, "%s\t%d[%d]", slot.name, slot.cd, slot.level);
+    int order = originOrder == -1 ? maxSlotNum + 1 : originOrder;
+    SlotType &slot0 = slot[account][order];
+    fprintf(f, "%s\t%d[%d]", slot0.name, slot0.cd, slot0.level);
     //写入卡牌名称、冷却、层级
-    if (slot.lock == 1)
+    if (slot0.lock)
       fprintf(f, "x");//锁定轨道
-    if (slot.search == 1)
+    if (slot0.search)
       fprintf(f, "索");//索敌
-    if (slot.repair == 1)
+    if (slot0.repair)
       fprintf(f, "补");//补阵
-    if (slot.limit == 1)
+    if (slot0.limit)
       fprintf(f, "极");//极限成阵
-    if (slot.independent == 1)
+    if (slot0.prior)
+      fprintf(f, "绝");//绝对优先
+    if (slot0.independent)
       fprintf(f, "独");//独立计时
-    if (slot.retain == 1)
+    if (slot0.retain)
       fprintf(f, "继");//继承上一波
     //写入极限条件
     int conditionNum = GetConditionNum(account, order);
     if (conditionNum >= 1)
-      fprintf(f, ",%d", slot.delay);
+      fprintf(f, ",%d", slot0.delay);
     if (conditionNum >= 2)
-      fprintf(f, ",%d", slot.triggerMode);
+      fprintf(f, ",%d", slot0.triggerMode);
     if (conditionNum >= 3)
-      fprintf(f, ",%d", slot.energy);
+      fprintf(f, ",%d", slot0.energy);
     if (conditionNum >= 4)
-      fprintf(f, ",%s", slot.wave);
+      fprintf(f, ",%s", slot0.wave);
     if (conditionNum >= 5)
-      fprintf(f, ",%s", slot.card);
+      fprintf(f, ",%s", slot0.card);
     if (conditionNum >= 6)
-      fprintf(f, ",%d", slot.cardNum);
+      fprintf(f, ",%d", slot0.cardNum);
     if (conditionNum >= 7)
-      fprintf(f, ",%s", slot.image);
+      fprintf(f, ",%s", slot0.image);
     if (conditionNum >= 8)
-      fprintf(f, ",%d", slot.imageNum);
+      fprintf(f, ",%d", slot0.imageNum);
     if (conditionNum >= 9)
-      fprintf(f, ",%s", slot.hunterRow);
+      fprintf(f, ",%s", slot0.hunterRow);
     if (conditionNum >= 10)
-      fprintf(f, ",%s", slot.hunterColumn);
+      fprintf(f, ",%s", slot0.hunterColumn);
     if (conditionNum >= 11)
-      fprintf(f, ",%s", slot.follow);
+      fprintf(f, ",%s", slot0.follow);
     if (conditionNum >= 12)
-      fprintf(f, ",%d", slot.endNum);
+      fprintf(f, ",%d", slot0.endNum);
     if (conditionNum >= 13)
-      fprintf(f, ",%d", slot.endTime);
+      fprintf(f, ",%d", slot0.endTime);
 
     int times = 1;
     char TimeString[10], LocString[10];
-    while (Moment[account][order][times] > zero || Loc[account][order][times] > zero)//种植时刻和位置有一个不为0，就记录到文件中
+    while (moment[account][order][times] > zero || location[account][order][times] > zero)//种植时刻和位置有一个不为0，就记录到文件中
     {
-      int second = Moment[account][order][times] / 10;//第times次种植的时刻
-      int decisecond = Moment[account][order][times] % 10;
+      int second = moment[account][order][times] / 10;//第times次种植的时刻
+      int decisecond = moment[account][order][times] % 10;
       if (decisecond == zero)
         sprintf_s(TimeString, "%03d", second);
       else
         sprintf_s(TimeString, "%03d.%d", second, decisecond);
-      int loc = Loc[account][order][times];
+      int loc = location[account][order][times];
       sprintf_s(LocString, "%02d", loc);
       fprintf(f, "\t%s|%s", TimeString, LocString);
       times++;
@@ -3136,7 +3279,17 @@ void SaveHead(int account, FILE *fout, int SlotNumVariation = 0)
   fprintf(fout, "魔塔层数=%d\n", tower[account]);
   fprintf(fout, "退出时间=%d\n", quitTime[account]);
   fprintf(fout, "刷技能模式=%d\n", isSkillMode ? 1 : 0);
-  fprintf(fout, "卡槽数=%d\n", SlotNum[account] + SlotNumVariation);
+
+  fprintf(fout, "优先队列=");
+  for (int i = 0; i < queueSize[account]; i++)
+  {
+    if (i > 0)
+      fprintf(fout, ",");
+    fprintf(fout, "%s", queue[account][i]);
+  }
+  fprintf(fout, "\n");
+
+  fprintf(fout, "卡槽数=%d\n", slotNum[account] + SlotNumVariation);
 }
 //提示轨道文件已删除或移动，然后退出程序
 void ReportNoTrack()
@@ -3159,12 +3312,20 @@ void SlotOperation(int account, int operation, int para1, int para2 = 0)
   fopen_s(&fout, fullTrackPath[account], "w");//输出轨道：TrackFile[account]
 
   char s[maxLineSize];
-  int OriginSlotNum = SlotNum[account];//记录修改前的卡槽数
+  int OriginSlotNum = slotNum[account];//记录修改前的卡槽数
   int SlotNumVariation = 0;//操作后卡槽数的改变量
+
   if (operation == ADD_TO_SLOT)
     SlotNumVariation = 1;
   else if (operation == DELETE_FROM_SLOT)
     SlotNumVariation = -1;
+
+  //删除、更换卡槽时，删除队列中的此卡
+  if (operation == DELETE_FROM_SLOT || operation == CHANGE_SLOT)
+    for (int i = queueSize[account] - 1; i >= 0; i--)
+      if (strcmp(queue[account][i], slot[account][para1].name) == 0)
+        DeleteQueue(account, i);
+
   SaveHead(account, fout, SlotNumVariation);//写入文件头，卡槽数比原来多1
   fskip(fin, "卡槽数=");//跳过原文件头
 
@@ -3197,7 +3358,7 @@ void SlotOperation(int account, int operation, int para1, int para2 = 0)
 //在轨道文件中添加卡槽
 void AddToSlot_File(int account, int common)
 {
-  if (isCommonSelected(account, common) == false && SlotNum[account] < maxSlotNum)
+  if (isCommonSelected(account, common) == false && slotNum[account] < maxSlotNum)
     SlotOperation(account, ADD_TO_SLOT, common);
 }
 //在轨道文件中删除卡槽
@@ -3363,7 +3524,7 @@ void LoadBackup(int offset)
     Copy(path[account], fullTrackPath[account]);//将备份文件复制到当前轨道路径
   }
   LoadTrack();//读取当前波数轨道
-  timeSelected = trackSlotSelected = state = 0;
+  timeSelected = queueSelected = trackSlotSelected = state = 0;
   SelectDepth(1);//选中最高深度
 }
 //撤销操作
@@ -3405,7 +3566,7 @@ void WaveOperation(int account, int targetTotalWave, int operation)
   if (operation == 0 || operation == 1) //如果是创建波或复制波，写下目标波次的内容（移动波也会先复制）
   {
     if (targetTotalWave == 0)
-      fprintf_s(fout, "卡槽数=%d\n", SlotNum[account]); //写下卡槽数
+      fprintf_s(fout, "卡槽数=%d\n", slotNum[account]); //写下卡槽数
     else
       fprintWave(fout, targetTotalWave); //写下目标波次
     totalWaveExist[account][targetTotalWave] = 1;
@@ -3467,7 +3628,7 @@ void CopyWave(int account, int targetTotalWave)
 
   if (isRetainCleared) //删除继承信息
     for (int order = 0; order <= maxSlotNum + 1; order++)
-      Slot[account][order].retain = 0;
+      slot[account][order].retain = 0;
 }
 //删除波次
 void DeleteWave(int account, int targetTotalWave)
@@ -3492,7 +3653,7 @@ void MoveWave(int account, int targetTotalWave)
 
   if (isRetainCleared)  //删除继承信息
     for (int order = 0; order <= maxSlotNum + 1; order++)
-      Slot[account][order].retain = 0;
+      slot[account][order].retain = 0;
 }
 //从文件中读取任务参数
 void LoadParameter()
@@ -3802,7 +3963,8 @@ template<size_t size> int LoadProduction(FILE *f, char *path, int &line, int acc
   return 0;
 }
 //读取生产信息
-template<size_t size> int LoadProduction(char(&info)[size])
+template<size_t size>
+int LoadProduction(char(&info)[size])
 {
   char s[1000];
   int line = 0;
@@ -3910,7 +4072,7 @@ void ViewMode()
 void ViewMapSlotCard(int order)//显示卡槽卡片
 {
   int left, top;
-  COLORREF slotColor = levelColor[Slot[curAccount][order].level];//卡片颜色
+  COLORREF slotColor = levelColor[slot[curAccount][order].level];//卡片颜色
   if (order <= 14)
   {
     left = mapSlotX + order * mapSlotWidth;
@@ -3934,10 +4096,10 @@ void ViewMapSlotCard(int order)//显示卡槽卡片
   //显示卡槽序号
   CenterView(order, left + mapSlotWidth / 2 - 20, top + mapSlotHeight / 2 - 30);
   //显示卡片名称
-  CenterView(Slot[curAccount][order].name, left + mapSlotWidth / 2, top + mapSlotHeight / 2);
+  CenterView(slot[curAccount][order].name, left + mapSlotWidth / 2, top + mapSlotHeight / 2);
   //显示卡片CD
   char cdString[10];
-  sprintf_s(cdString, "%ds", Slot[curAccount][order].cd);
+  sprintf_s(cdString, "%ds", slot[curAccount][order].cd);
   CenterView(cdString, left + mapSlotWidth / 2, top + mapSlotHeight / 2 + 30);
 
   //显示补阵和索敌
@@ -3946,10 +4108,10 @@ void ViewMapSlotCard(int order)//显示卡槽卡片
 
   COLORREF currentColor = gettextcolor();
 
-  settextcolor(Slot[curAccount][order].repair ? currentColor : RGB(128, 128, 128));
+  settextcolor(slot[curAccount][order].repair ? currentColor : RGB(128, 128, 128));
   CenterView("补", left + mapSlotWidth / 2 + 22, top + 14);
 
-  settextcolor(Slot[curAccount][order].search ? currentColor : RGB(128, 128, 128));
+  settextcolor(slot[curAccount][order].search ? currentColor : RGB(128, 128, 128));
   CenterView("索", left + mapSlotWidth / 2 + 6, top + 14);
 
   SetFontSize(size);
@@ -3986,7 +4148,7 @@ void ViewMapSlotCard()//显示全部卡槽卡片
   PaintGrid(1, 15, mapSlotX, mapSlotY, mapSlotWidth, mapSlotHeight);//卡槽框
   PaintGrid(7, 1, mapSlotX + 14 * mapSlotWidth, mapSlotY + mapSlotHeight, mapSlotWidth, mapSlotHeight);//卡槽框
   ViewRoleSlot();
-  for (order = 0; order <= SlotNum[curAccount]; order++)
+  for (order = 0; order <= slotNum[curAccount]; order++)
     ViewMapSlotCard(order);
 }
 void ViewCommonCard(int common)//显示常用卡片
@@ -4049,7 +4211,7 @@ void ViewGridCard(int account, int row, int column, int level, const char *name,
   else
     CenterView(times, mapGridX + (2 * column - 1) * mapGridWidth / 2 + 26, mapGridY + (2 * row - 1) * mapGridHeight / 2 + height[level]);
   //显示种植次序
-  if (Map[account][row][column].depth[level] >= 2)//至少有两张卡，才显示下标
+  if (map[account][row][column].depth[level] >= 2)//至少有两张卡，才显示下标
   {
     SetFontSize(12);
     if (times >= 10 && num >= 10)
@@ -4065,7 +4227,7 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
   int isDark = 0;//是否使用暗色
   if (account != curAccount)
   {
-    if (Map[curAccount][row][column].depth[level] > 0)
+    if (map[curAccount][row][column].depth[level] > 0)
       return;
     isDark = 1;
   }
@@ -4073,8 +4235,8 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
   int height[5] = { 0, 33, 14, -5, -24 };
   char MagicString[10];
   int MagicTargetLevel;//幻幻鸡复制目标的层级
-  int depth = Map[account][row][column].depth[level] - 1;//最高深度
-  int DepthSelected = Map[account][row][column].depthSelected[level];//选中深度
+  int depth = map[account][row][column].depth[level] - 1;//最高深度
+  int DepthSelected = map[account][row][column].depthSelected[level];//选中深度
   if (depth < zero)
     return;//该层级没卡，则不显示
   if (1000 + level * 100 + row * 10 + column == state)//如果该层级被选中，红色强调
@@ -4099,12 +4261,12 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
       solidrectangle(mapGridX + (column - 1) * mapGridWidth + 2, mapGridY + (row - 1) * mapGridHeight + 2, mapGridX + (column - 1) * mapGridWidth + 8, mapGridY + (row - 1) * mapGridHeight + 8);
       setfillcolor(defaultFillColor);
       order = GetOrder(account, "幻幻鸡");//得到幻鸡在卡槽中的编号
-      t = GetTime(account, order, Map[account][row][column].times[level][DepthSelected]);
+      t = GetTime(account, order, map[account][row][column].times[level][DepthSelected]);
       //得到幻鸡这次种植的时刻t。如果没有轨道，返回MaxTime+1
       if (t == zero)//如果本次幻幻鸡没有轨道
       {
         strcpy_s(MagicString, "幻幻鸡");//显示原名
-        Times = Map[account][row][column].times[level][DepthSelected];
+        Times = map[account][row][column].times[level][DepthSelected];
         MagicTargetLevel = 3;//在普通层级显示
       }
       else//如果找到了幻幻鸡轨道
@@ -4113,17 +4275,17 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
         if (order == zero)//如果没有复制卡
         {
           strcpy_s(MagicString, "幻幻鸡");//显示原名
-          Times = Map[account][row][column].times[level][DepthSelected];
+          Times = map[account][row][column].times[level][DepthSelected];
           MagicTargetLevel = 3;//在普通层级显示
         }
         else
         {
-          strcpy_s(MagicString, Slot[account][order].name);//显示被复制的名称
-          Times = Map[account][row][column].times[level][DepthSelected];//次数
-          MagicTargetLevel = Slot[account][order].level;//在复制目标卡片所属层级显示
+          strcpy_s(MagicString, slot[account][order].name);//显示被复制的名称
+          Times = map[account][row][column].times[level][DepthSelected];//次数
+          MagicTargetLevel = slot[account][order].level;//在复制目标卡片所属层级显示
         }
       }
-      if (Map[account][row][column].depth[MagicTargetLevel] == zero)//如果幻鸡目标层级没有卡片，才显示幻鸡文字
+      if (map[account][row][column].depth[MagicTargetLevel] == zero)//如果幻鸡目标层级没有卡片，才显示幻鸡文字
         ViewGridCard(account, row, column, MagicTargetLevel, MagicString, Times, gettextcolor(), DepthSelected + 1);
     }
   }
@@ -4135,7 +4297,7 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
     {
       size = GetFontSize();
       SetFontSize(14);
-      CenterView(Map[account][row][column].times[level][DepthSelected], mapGridX + (column - 1) * mapGridWidth + 17, mapGridY + (row - 1) * mapGridHeight + 6);
+      CenterView(map[account][row][column].times[level][DepthSelected], mapGridX + (column - 1) * mapGridWidth + 17, mapGridY + (row - 1) * mapGridHeight + 6);
       SetFontSize(size);
     }
   }
@@ -4148,7 +4310,7 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
       HorizontalLine(mapGridX + (column - 1) * mapGridWidth + 26, mapGridX + column * mapGridWidth - 18, mapGridY + (row - 1) * mapGridHeight + 5, 1);
       size = GetFontSize();
       SetFontSize(14);
-      CenterView(Map[account][row][column].times[level][DepthSelected], mapGridX + column * mapGridWidth - 9, mapGridY + (row - 1) * mapGridHeight + 6);
+      CenterView(map[account][row][column].times[level][DepthSelected], mapGridX + column * mapGridWidth - 9, mapGridY + (row - 1) * mapGridHeight + 6);
       SetFontSize(size);
     }
   }
@@ -4160,12 +4322,12 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
     {
       if (level == 1)//如果要显示的是承载卡, 第2,3层级种植时间<=承载卡种植时间，则以蓝色标注
       {
-        int TrayTime = GetTime(account, GetOrder(account, Map[account][row][column].name[1][0]), Map[account][row][column].times[1][0]);//承载卡种植时间
+        int TrayTime = GetTime(account, GetOrder(account, map[account][row][column].name[1][0]), map[account][row][column].times[1][0]);//承载卡种植时间
         if (TrayTime > zero)//如果承载卡有种植时间，则考虑是否需要报错
           for (int Level = 2; Level <= 3; Level++)//对该格的的2,3层级，若存在卡片，统计第0深度的种植时间
-            if (Map[account][row][column].depth[Level] > zero)
+            if (map[account][row][column].depth[Level] > zero)
             {
-              int PlantTime = GetTime(account, GetOrder(account, Map[account][row][column].name[Level][0]), Map[account][row][column].times[Level][0]);
+              int PlantTime = GetTime(account, GetOrder(account, map[account][row][column].name[Level][0]), map[account][row][column].times[Level][0]);
               if (PlantTime <= TrayTime && PlantTime > zero)//如果第2,3层级种植时间<=承载卡种植时间
               {
                 setfillcolor(RGB(0, 0, 255));//蓝色
@@ -4179,10 +4341,10 @@ void ViewGridCard(int account, int row, int column, int level)//显示地图某�
       if (1000 + level * 100 + row * 10 + column == state)//如果该层级被选中，红色文字强调
       {
         PaintGrid(1, 1, mapGridX + (column - 1) * mapGridWidth + 3, mapGridY + (2 * row - 1) * mapGridHeight / 2 + height[level] - 9, mapGridWidth - 5, 18);
-        ViewGridCard(account, row, column, level, Map[account][row][column].name[level][DepthSelected], Map[account][row][column].times[level][DepthSelected], RGB(255, 0, 0), DepthSelected + 1);
+        ViewGridCard(account, row, column, level, map[account][row][column].name[level][DepthSelected], map[account][row][column].times[level][DepthSelected], RGB(255, 0, 0), DepthSelected + 1);
       }
       else
-        ViewGridCard(account, row, column, level, Map[account][row][column].name[level][DepthSelected], Map[account][row][column].times[level][DepthSelected], DarkColor(levelColor[level], isDark), DepthSelected + 1);
+        ViewGridCard(account, row, column, level, map[account][row][column].name[level][DepthSelected], map[account][row][column].times[level][DepthSelected], DarkColor(levelColor[level], isDark), DepthSelected + 1);
     }
   }
   setlinecolor(RGB(255, 255, 255));
@@ -4192,7 +4354,7 @@ int RoleLevel(int row, int column)
 {
   int level[4] = { 3, 4, 2, 1 };
   for (int i = 0; i < 4; i++) //如果某个层级没有卡片，就判断人物显示在这个层级
-    if (Map[curAccount][row][column].depth[level[i]] == 0)
+    if (map[curAccount][row][column].depth[level[i]] == 0)
       return level[i];
   return 3;//都有卡片就显示在3层级
 }
@@ -4241,9 +4403,14 @@ void ViewGridCard()//显示全部地图卡片（按Loc显示）
     for (int times = 1; times <= roleLocNum[account]; times++)
       ViewRole(account, times);
 }
+//获取卡片显示位置
+int GetSlotFloor(int order)
+{
+  return order > maxSlotNum ? -1 - firstTrackSlot : order - firstTrackSlot;
+}
 void ViewTrackSlotCard(int order)//显示轨道卡片
 {
-  int floor = order > maxSlotNum ? -1 : floor = order - firstTrackSlot;//显示位置：宝石=-1，卡片= order - TrackBegin
+  int floor = GetSlotFloor(order);//显示位置
   if (trackSlotSelected - 100 == order)
   {
     settextcolor(RGB(255, 0, 0));
@@ -4252,16 +4419,18 @@ void ViewTrackSlotCard(int order)//显示轨道卡片
     setlinecolor(RGB(255, 255, 255));
   }
   else
-    settextcolor(levelColor[Slot[curAccount][order].level]);
+    settextcolor(levelColor[slot[curAccount][order].level]);
   /*卡片名称、冷却、编号*/
-  CenterView(Slot[curAccount][order].name, trackSlotX + trackSlotWidth / 2 - 19, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 1);
+  CenterView(slot[curAccount][order].name, trackSlotX + trackSlotWidth / 2 - 19,
+    trackSlotY + (2 * floor + 1) * trackSlotHeight / 2);
   char cdString[10];
-  sprintf_s(cdString, "%ds", Slot[curAccount][order].cd);
-  CenterView(cdString, trackSlotX + trackSlotWidth / 2 + 35, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 1);
+  sprintf_s(cdString, "%ds", slot[curAccount][order].cd);
+  CenterView(cdString, trackSlotX + trackSlotWidth / 2 + 35,
+    trackSlotY + (2 * floor + 1) * trackSlotHeight / 2);
   int size = GetFontSize();
   SetFontSize(14);
   if (order == maxSlotNum + 1)
-    outtextxy(trackSlotX + 1, trackSlotY + floor * trackSlotHeight, "BS");
+    outtextxy(trackSlotX + 1, trackSlotY + floor * trackSlotHeight, "-1");
   else
     outtextxy(trackSlotX + 1, trackSlotY + floor * trackSlotHeight, order);
 
@@ -4279,32 +4448,36 @@ void ViewTrackSlotCard(int order)//显示轨道卡片
   COLORREF currentColor = gettextcolor();
   SetFontSize(size);
 
-  settextcolor(Slot[curAccount][order].lock ? currentColor : RGB(128, 128, 128));
-  CenterView("×", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 - 14);
-
-  settextcolor(Slot[curAccount][order].limit ? currentColor : RGB(128, 128, 128));
-  CenterView("∞", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
 
   size = GetFontSize();
+
+  SetFontSize(17);
+  settextcolor(slot[curAccount][order].prior ? currentColor : RGB(128, 128, 128));
+  CenterView("★", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 - 13);
+
   SetFontSize(16);
-  settextcolor(Slot[curAccount][order].independent ? currentColor : RGB(128, 128, 128));
-  CenterView("in", trackSlotX + 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
+  settextcolor(slot[curAccount][order].independent ? currentColor : RGB(128, 128, 128));
+  CenterView("in", trackSlotX + 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 15);
+
   SetFontSize(size);
+
+  settextcolor(slot[curAccount][order].limit ? currentColor : RGB(128, 128, 128));
+  CenterView("∞", trackSlotX + trackSlotWidth - 8, trackSlotY + (2 * floor + 1) * trackSlotHeight / 2 + 16);
 }
 void ViewTrackSlotCard()//显示全部轨道卡片
 {
-  int order;
-  PaintGrid(min(SlotNum[curAccount], trackSlotNumPerPage) + 2, 1, trackSlotX, trackSlotY - trackSlotHeight, trackSlotWidth, trackSlotHeight);//卡槽框
-  for (order = firstTrackSlot; order <= SlotNum[curAccount] && order <= firstTrackSlot + trackSlotNumPerPage; order++)
-    ViewTrackSlotCard(order);
-  ViewTrackSlotCard(maxSlotNum + 1);
+  PaintGrid(min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1), 1,
+    trackSlotX, trackSlotY, trackSlotWidth, trackSlotHeight);//卡槽框
+  for (int order = firstTrackSlot; order <= slotNum[curAccount] && order <= firstTrackSlot + trackSlotNumPerPage; order++)
+    ViewTrackSlotCard(order == -1 ? maxSlotNum + 1 : order);
 }
 //用颜色color填充轨道
 void BarTrack(int order, int t, COLORREF color)
 {
-  int floor = order > maxSlotNum ? -1 : floor = order - firstTrackSlot;//显示位置：宝石=-1，卡片= order - TrackBegin
+  int floor = GetSlotFloor(order);//显示位置：宝石=-1，卡片= order - TrackBegin
   setfillcolor(color);
-  solidrectangle(trackX + t * trackWidth, trackY + floor * trackHeight, trackX + (t + 1) * trackWidth - 1, trackY + (floor + 1) * trackHeight - 1);
+  solidrectangle(trackX + t * trackWidth, trackY + floor * trackHeight,
+    trackX + (t + 1) * trackWidth - 1, trackY + (floor + 1) * trackHeight - 1);
   setfillcolor(defaultFillColor);
 }
 //当value非零时：若dest为空，将value写入dest；否则在dest后面添加","和value
@@ -4361,76 +4534,95 @@ void GetConditionString(int account, int order, char(&upper)[50], char(&lower)[5
 {
   //上方：10000火,2.1波,小火炉x5
   //下方：轰隆隆x1,(a+2,7+4),@查克拉
-  SlotType &slot = Slot[account][order];
+  SlotType &slot0 = slot[account][order];
   char upperTemp[50] = {};
   strcpy_s(upperTemp, "");
   strcpy_s(lower, "");
-  if (slot.delay > 0)
-    strAdd(upperTemp, "%ds", slot.delay);
-  if (slot.energy > 0)
-    strAdd(upperTemp, "%d火", slot.energy);
-  if (strcmp(slot.wave, "0") != 0)
-    strAdd(upperTemp, "%s波", slot.wave);
-  if (slot.card[0] && slot.cardNum > 0)
-    strAdd(upperTemp, "%sx%d", slot.card, slot.cardNum);
-  if (slot.triggerMode)
+  if (slot0.delay > 0)
+    strAdd(upperTemp, "%ds", slot0.delay);
+  if (slot0.energy > 0)
+    strAdd(upperTemp, "%d火", slot0.energy);
+  if (strcmp(slot0.wave, "0") != 0)
+    strAdd(upperTemp, "%s波", slot0.wave);
+  if (slot0.card[0] && slot0.cardNum > 0)
+    strAdd(upperTemp, "%sx%d", slot0.card, slot0.cardNum);
+  if (slot0.triggerMode)
     sprintf_s(upper, "★%s", upperTemp);
   else
     strcpy_s(upper, upperTemp);
 
-  if (slot.image[0] && slot.imageNum > 0)
-    strAdd(lower, "%sx%d", slot.image, slot.imageNum);
+  if (slot0.image[0] && slot0.imageNum > 0)
+    strAdd(lower, "%sx%d", slot0.image, slot0.imageNum);
 
   //索敌显示
   char content[50] = {};
-  if (slot.hunterRow[0] && slot.hunterColumn[0])
-    sprintf_s(content, "(%s,%s)", slot.hunterRow, slot.hunterColumn);
-  else if (slot.hunterRow[0])
-    sprintf_s(content, "(%s,-)", slot.hunterRow);
-  else if (slot.hunterColumn[0])
-    sprintf_s(content, "(-,%s)", slot.hunterColumn);
+  if (slot0.hunterRow[0] && slot0.hunterColumn[0])
+    sprintf_s(content, "(%s,%s)", slot0.hunterRow, slot0.hunterColumn);
+  else if (slot0.hunterRow[0])
+    sprintf_s(content, "(%s,-)", slot0.hunterRow);
+  else if (slot0.hunterColumn[0])
+    sprintf_s(content, "(-,%s)", slot0.hunterColumn);
   strcat_s(lower, content);
-  if (slot.follow[0])
-    strAdd(lower, "@%s", slot.follow);
+  if (slot0.follow[0])
+    strAdd(lower, "@%s", slot0.follow);
+}
+//显示放卡优先队列
+void ViewQueue()
+{
+  PaintGrid(1, 1, queueTitleX, queueY, queueTitleWidth, queueHeight);
+  PaintGrid(1, 1, trackX, queueY, trackWidth, queueHeight);
+  PaintGrid(1, maxQueueSize, queueX, queueY, queueWidth, queueHeight);
+
+  int size = GetFontSize();
+  SetFontSize(18);
+  settextcolor(queueSelected == 712 ? RGB(255, 0, 0) : WHITE);
+  CenterView("优先放卡队列", queueTitleX + queueTitleWidth / 2, queueY + queueHeight / 2);
+  for (int i = 0; i < queueSize[curAccount]; i++)
+  {
+    settextcolor(queueSelected == 700 + i ? RGB(255, 0, 0) : WHITE);
+    CenterView(queue[curAccount][i], queueX + (2 * i + 1) * queueWidth / 2, queueY + queueHeight / 2);
+  }
+  SetFontSize(size);
 }
 //显示轨道
 void ViewTrack()
 {
   //颜色：0=不显示，1=正常轨道，2=紧凑轨道间隙，3=冷却冲突轨道间隙
   int size = GetFontSize();
-  int lastTrack, type;//上一个轨道值
-  int IceTarget;
-  char TimeString[10];//时间字符串，如001,020,205.6,205.6(12)
-  char SequenceString[12];//次数字符串，如3,4-5,100-105(12)
+  int lastTrack;//上一个轨道值
+  char momentString[10];//时间字符串，如001,020,205.6,205.6(12)
+  char timesString[12];//次数字符串，如3,4-5,100-105(12)
 
-  /*填充10s整数倍*/
+  //填充10s整数倍
   setfillcolor(RGB(60, 60, 60));
   for (int t = 0; t < trackNum; t = t + 10)
-    solidrectangle(trackX + t * timelineWidth, trackY - trackHeight, trackX + (t + 1) * timelineWidth, trackY + (min(SlotNum[curAccount], trackSlotNumPerPage) + 1) * trackHeight);
+    solidrectangle(trackX + t * timelineWidth, trackY, trackX + (t + 1) * timelineWidth,
+      trackY + min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1) * trackHeight);
   setfillcolor(defaultFillColor);
 
-  /*计算每个轨道要显示的颜色（对全轨进行计算，否则骑页间隙无法显示）*/
+  //计算每个轨道要显示的颜色（对全轨进行计算，否则骑页间隙无法显示）
   int maxTrack[maxSlotNum + 2] = {};
   memset(trackType, 0, sizeof(trackType));
   for (int order = 0; order <= maxSlotNum + 1; order++)
   {
-    if (order > SlotNum[curAccount] && order <= maxSlotNum)
+    if (order > slotNum[curAccount] && order <= maxSlotNum)
       continue;
     lastTrack = -1;
     maxTrack[order] = GetMaxTrack(curAccount, order);
     for (int t = minTime; t <= maxTrack[order]; t++)
-      if (Track[curAccount][order][t] >= 1)//检测到轨道记录
+      if (track[curAccount][order][t] >= 1)//检测到轨道记录
       {
-        if (t == maxTrack[order] && Slot[curAccount][order].limit == 1)
+        if (t == maxTrack[order] && slot[curAccount][order].limit == 1)
           trackType[order][t] = 7;//极限成阵的最后一个轨道
         else
           trackType[order][t] = 1;//标记为正常轨道
         if (lastTrack >= zero)  //如果存在上一个轨道值，就要对间隙进行判断
         {
           int gap = t - lastTrack;
-          if (gap < Slot[curAccount][order].cd)
+          int type = 0;
+          if (gap < slot[curAccount][order].cd)
             type = 3;//冷却冲突
-          else if (gap == Slot[curAccount][order].cd)
+          else if (gap == slot[curAccount][order].cd)
             type = 2;//冷却紧凑
           else
             type = 0;//冷却间断
@@ -4439,32 +4631,34 @@ void ViewTrack()
         }
         lastTrack = t;
       }
-    if (Slot[curAccount][order].limit == 1)//标记极限轨道
+    if (slot[curAccount][order].limit == 1)//标记极限轨道
     {
-      int endTime = Slot[curAccount][order].endTime > 0 ? Slot[curAccount][order].endTime : maxTime;
+      int endTime = slot[curAccount][order].endTime > 0 ? slot[curAccount][order].endTime : maxTime;
       for (int t = max(minTime, maxTrack[order] + 1); t <= endTime; t++)
         trackType[order][t] = 4;
     }
-    if (Slot[curAccount][order].retain == 1)//标记继承
+    if (slot[curAccount][order].retain == 1)//标记继承
     {
       for (int t = minTime; t <= maxTime; t++)
         trackType[order][t] = 5;
     }
   }
   if (accountNum == 2)
-    for (int order = 0; order <= SlotNum[curAccount]; order++)//检查另一个号有没有同名卡
+    for (int order = 0; order <= slotNum[curAccount]; order++)//检查另一个号有没有同名卡
     {
-      int anotherOrder = GetOrder(1 - curAccount, Slot[curAccount][order].name);
+      int anotherOrder = GetOrder(1 - curAccount, slot[curAccount][order].name);
       if (anotherOrder >= 0)//如果另一个账号存在同名卡
         for (int t = 0; t <= maxTime; t++)//某时刻本账号无轨道，另一个账号有轨道
-          if (Track[curAccount][order][t] == 0 && Track[1 - curAccount][anotherOrder][t] >= 1)
+          if (track[curAccount][order][t] == 0 && track[1 - curAccount][anotherOrder][t] >= 1)
             trackType[order][t] = 6;//标记为他号轨道
     }
-  /*显示轨道颜色(只显示当前这页的轨道)*/
-  for (int order = firstTrackSlot; order <= maxSlotNum + 1; order++)
+
+  //显示本页轨道颜色
+  for (int lineOrder = firstTrackSlot; lineOrder <= maxSlotNum; lineOrder++)
   {
-    if (order > min(SlotNum[curAccount], firstTrackSlot + trackSlotNumPerPage) && order <= maxSlotNum)
+    if (lineOrder > min(slotNum[curAccount], firstTrackSlot + trackSlotNumPerPage))
       continue;
+    int order = lineOrder == -1 ? maxSlotNum + 1 : lineOrder;
     for (int t = minTime; t < trackNum; t++)
       switch (trackType[order][(page - 1) * 60 + t])
       {
@@ -4478,14 +4672,17 @@ void ViewTrack()
       }
   }
 
-  /*绘制轨道栅格*/
+  //绘制轨道栅格
   setlinecolor(RGB(80, 80, 80));
-  PaintGrid(min(SlotNum[curAccount], trackSlotNumPerPage) + 2, trackNum, trackX, trackY - trackHeight, trackWidth, trackHeight);//暗色绘制轨道栅格
+  PaintGrid(min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1), trackNum,
+    trackX, trackY, trackWidth, trackHeight);//暗色绘制轨道栅格
   setlinecolor(RGB(255, 255, 255));
-  PaintGrid(min(SlotNum[curAccount], trackSlotNumPerPage) + 2, 1, trackX + timelineWidth, trackY - trackHeight, (trackNum - 1) * timelineWidth, trackHeight);//亮色绘制轨道外框线
-  PaintGrid(min(SlotNum[curAccount], trackSlotNumPerPage) + 2, 1, trackX, trackY - trackHeight, timelineWidth, trackHeight);//亮色绘制轨道外框线
+  PaintGrid(min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1), 1,
+    trackX + timelineWidth, trackY, (trackNum - 1) * timelineWidth, trackHeight);//亮色绘制轨道外框线
+  PaintGrid(min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1), 1,
+    trackX, trackY, timelineWidth, trackHeight);//亮色绘制轨道外框线
 
-  /*显示冰激凌作用线*/
+  //显示冰激凌作用线
   for (int account = 0; account < accountNum; account++)
   {
     int order = GetOrder(account, "冰激凌");
@@ -4493,22 +4690,28 @@ void ViewTrack()
     {
       int times = 0;
       for (int t = minTime; t <= maxTime; t++)//遍历整个时间轴
-        if (Track[account][order][t] == 1)//每找到一条轨道
+        if (track[account][order][t] == 1)//每找到一条轨道
         {
           times++;//IceTimes增加1
-          if (Loc[account][order][times] > zero)//如果这次种植位置也有数据
+          if (location[account][order][times] > zero)//如果这次种植位置也有数据
           {
-            IceTarget = GetIceTarget(account, Loc[account][order][times] / 10, Loc[account][order][times] % 10, t);//获得冷却的目标
+            int iceTarget = GetIceTarget(account, location[account][order][times] / 10, location[account][order][times] % 10, t);//获得冷却的目标
             if (account != curAccount)
-              IceTarget = GetOrder(curAccount, Slot[account][IceTarget].name);
-            if (IceTarget > zero) //如果有冷却目标，画红绿线标记
+              iceTarget = GetOrder(curAccount, slot[account][iceTarget].name);
+            if (iceTarget > zero) //如果有冷却目标，画红绿线标记
             {
               setlinecolor(coldLine[account != curAccount]);//冰激凌轨道后1秒画线提示
-              if (t + 1 > (page - 1) * 60 && t + 1 <= page * 60 + 1 && IceTarget >= firstTrackSlot && IceTarget <= firstTrackSlot + trackSlotNumPerPage)
-                VerticalLine(trackX + (t + 1 - (page - 1) * 60) * trackWidth, trackY + (IceTarget - firstTrackSlot) * trackHeight + 1, trackY + (IceTarget - firstTrackSlot + 1) * trackHeight - 1, 1);
+              if (t + 1 > (page - 1) * 60 && t + 1 <= page * 60 + 1 && iceTarget >= firstTrackSlot
+                && iceTarget <= firstTrackSlot + trackSlotNumPerPage)
+                VerticalLine(trackX + (t + 1 - (page - 1) * 60) * trackWidth,
+                  trackY + (iceTarget - firstTrackSlot) * trackHeight + 1,
+                  trackY + (iceTarget - firstTrackSlot + 1) * trackHeight - 1, 1);
               setlinecolor(coldLine[account != curAccount]);//冰激凌轨道后3秒画线提示
-              if (t + 3 > (page - 1) * 60 && t + 3 <= page * 60 + 1 && IceTarget >= firstTrackSlot && IceTarget <= firstTrackSlot + trackSlotNumPerPage)
-                VerticalLine(trackX + (t + 3 - (page - 1) * 60) * trackWidth, trackY + (IceTarget - firstTrackSlot) * trackHeight + 1, trackY + (IceTarget - firstTrackSlot + 1) * trackHeight - 1, 1);
+              if (t + 3 > (page - 1) * 60 && t + 3 <= page * 60 + 1 && iceTarget >= firstTrackSlot
+                && iceTarget <= firstTrackSlot + trackSlotNumPerPage)
+                VerticalLine(trackX + (t + 3 - (page - 1) * 60) * trackWidth,
+                  trackY + (iceTarget - firstTrackSlot) * trackHeight + 1,
+                  trackY + (iceTarget - firstTrackSlot + 1) * trackHeight - 1, 1);
             }
           }
         }
@@ -4516,7 +4719,7 @@ void ViewTrack()
     }
   }
 
-  /*显示冰沙作用线*/
+  //显示冰沙作用线
   for (int account = 0; account < accountNum; account++)
   {
     int order = GetOrder(account, "冰沙");
@@ -4524,26 +4727,31 @@ void ViewTrack()
     {
       for (int t = minTime; t <= trackNum; t++)
       {
-        setlinecolor(coldLine[account != curAccount]);//冰沙轨道后2秒画红线提示
+        //冰沙轨道后2秒画红线提示
+        setlinecolor(coldLine[account != curAccount]);
         if ((page - 1) * 60 + t - 2 > zero)
-          if (Track[account][order][(page - 1) * 60 + t - 2] == 1)
-            VerticalLine(trackX + t * trackWidth, trackY + 1, trackY + (min(SlotNum[curAccount], trackSlotNumPerPage) + 1) * trackHeight - 1, 1);
-        setlinecolor(coldLine[account != curAccount]);//冰沙轨道后4秒画绿线提示
+          if (track[account][order][(page - 1) * 60 + t - 2] == 1)
+            VerticalLine(trackX + t * trackWidth, trackY + 1,
+              trackY + min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1) * trackHeight - 1, 1);
+        //冰沙轨道后4秒画绿线提示
+        setlinecolor(coldLine[account != curAccount]);
         if ((page - 1) * 60 + t - 4 > zero)//如果4秒前是非负时刻
-          if (Track[account][order][(page - 1) * 60 + t - 4] == 1) //且有冰沙轨道
-            VerticalLine(trackX + t * trackWidth, trackY + 1, trackY + (min(SlotNum[curAccount], trackSlotNumPerPage) + 1) * trackHeight - 1, 1);
+          if (track[account][order][(page - 1) * 60 + t - 4] == 1) //且有冰沙轨道
+            VerticalLine(trackX + t * trackWidth, trackY + 1,
+              trackY + min(slotNum[curAccount] + 2, trackSlotNumPerPage + 1) * trackHeight - 1, 1);
       }
       setlinecolor(RGB(255, 255, 255));
     }
   }
-  /*显示轨道文字(需要遍历全轨道以获得要显示的次数)*/
+  //显示轨道文字(需要遍历全轨道以获得要显示的次数)
   SetFontSize(18);
-  for (int order = firstTrackSlot; order <= maxSlotNum + 1; order++)
+  for (int lineOrder = firstTrackSlot; lineOrder <= maxSlotNum; lineOrder++)
   {
-    if (order > min(SlotNum[curAccount], firstTrackSlot + trackSlotNumPerPage) && order <= maxSlotNum)
+    if (lineOrder > min(slotNum[curAccount], firstTrackSlot + trackSlotNumPerPage))
       continue;
-    int floor = order > maxSlotNum ? -1 : order - firstTrackSlot;//宝石（22号槽）显示位置为-1
-    if (Slot[curAccount][order].retain == 1)
+    int order = lineOrder == -1 ? maxSlotNum + 1 : lineOrder;
+    int floor = GetSlotFloor(order);//宝石（22号槽）显示位置为-1
+    if (slot[curAccount][order].retain == 1)
     {
       char retainString[30] = "使用默认轨道";
       if (curTotalWave[curAccount] > 0)
@@ -4561,11 +4769,11 @@ void ViewTrack()
         sprintf_s(retainString, "继承第%s波轨道", waveString);
       }
       settextcolor(RGB(255, 255, 255));
-      outtextxy(trackX + 20, trackY + floor * trackHeight + 13, retainString);
+      outtextxy(trackX + 20, trackY + floor * trackHeight + 12, retainString);
     }
     else
     {
-      if (Slot[curAccount][order].limit == 1)
+      if (slot[curAccount][order].limit == 1)
       {
         int startTrack = (page - 1) * 60;//本页轨道起始时间
         int conditionLoc = 0;//条件显示位置
@@ -4580,52 +4788,52 @@ void ViewTrack()
           settextcolor(RGB(255, 255, 0));
           outtextxy(trackX + conditionLoc * trackWidth + 2, trackY + floor * trackHeight + 3, upper);
           settextcolor(RGB(255, 255, 255));
-          outtextxy(trackX + conditionLoc * trackWidth + 2, trackY + floor * trackHeight + 24, lower);
+          outtextxy(trackX + conditionLoc * trackWidth + 2, trackY + floor * trackHeight + 23, lower);
         }
       }
       int times = 0;
       for (int t = 0; t <= page * 60; t++)
-        if (Track[curAccount][order][t] >= 1)//如果有轨道
+        if (track[curAccount][order][t] >= 1)//如果有轨道
         {
-          times += Track[curAccount][order][t];
+          times += track[curAccount][order][t];
           if (t > (page - 1) * 60 && t <= page * 60)//只显示当前这一页的文字
           {
-            if (t == maxTrack[order] && Slot[curAccount][order].limit && Slot[curAccount][order].endNum > 0)
+            if (t == maxTrack[order] && slot[curAccount][order].limit && slot[curAccount][order].endNum > 0)
             {
-              if (Track[curAccount][order][t] == 1)
-                sprintf_s(SequenceString, "%d(%d)", times, Slot[curAccount][order].endNum);
+              if (track[curAccount][order][t] == 1)
+                sprintf_s(timesString, "%d(%d)", times, slot[curAccount][order].endNum);
               else
-                sprintf_s(SequenceString, "%d-%d(%d)", times - Track[curAccount][order][t] + 1, times, Slot[curAccount][order].endNum);
+                sprintf_s(timesString, "%d-%d(%d)", times - track[curAccount][order][t] + 1, times, slot[curAccount][order].endNum);
             }
             else
             {
-              if (Track[curAccount][order][t] == 1)
-                sprintf_s(SequenceString, "%d", times);
+              if (track[curAccount][order][t] == 1)
+                sprintf_s(timesString, "%d", times);
               else
-                sprintf_s(SequenceString, "%d-%d", times - Track[curAccount][order][t] + 1, times);
+                sprintf_s(timesString, "%d-%d", times - track[curAccount][order][t] + 1, times);
             }
 
             settextcolor(RGB(255, 255, 0));
-            outtextxy(trackX + (t - (page - 1) * 60) * trackWidth + 18, trackY + floor * trackHeight + 3, SequenceString);
+            outtextxy(trackX + (t - (page - 1) * 60) * trackWidth + 18, trackY + floor * trackHeight + 3, timesString);
 
             settextcolor(RGB(255, 255, 255));
-            if (t == maxTrack[order] && Slot[curAccount][order].limit && Slot[curAccount][order].endTime > 0)
+            if (t == maxTrack[order] && slot[curAccount][order].limit && slot[curAccount][order].endTime > 0)
             {
-              if (Slot[curAccount][order].endTime <= t)
+              if (slot[curAccount][order].endTime <= t)
                 settextcolor(RGB(255, 64, 0));
-              if (Moment[curAccount][order][times] % 10 == zero || Slot[curAccount][order].independent == zero)
-                sprintf_s(TimeString, "%03d-%03d", t, Slot[curAccount][order].endTime);
+              if (moment[curAccount][order][times] % 10 == zero || slot[curAccount][order].independent == zero)
+                sprintf_s(momentString, "%03d-%03d", t, slot[curAccount][order].endTime);
               else
-                sprintf_s(TimeString, "%03d.%d-%03d", t, Moment[curAccount][order][times] % 10, Slot[curAccount][order].endTime);
+                sprintf_s(momentString, "%03d.%d-%03d", t, moment[curAccount][order][times] % 10, slot[curAccount][order].endTime);
             }
             else
             {
-              if (Moment[curAccount][order][times] % 10 == zero || Slot[curAccount][order].independent == zero)
-                sprintf_s(TimeString, "%03d", t);
+              if (moment[curAccount][order][times] % 10 == zero || slot[curAccount][order].independent == zero)
+                sprintf_s(momentString, "%03d", t);
               else
-                sprintf_s(TimeString, "%03d.%d", t, Moment[curAccount][order][times] % 10);
+                sprintf_s(momentString, "%03d.%d", t, moment[curAccount][order][times] % 10);
             }
-            outtextxy(trackX + (t - (page - 1) * 60) * trackWidth + 18, trackY + floor * trackHeight + 24, TimeString);
+            outtextxy(trackX + (t - (page - 1) * 60) * trackWidth + 18, trackY + floor * trackHeight + 23, momentString);
           }
         }
     }
@@ -4772,7 +4980,7 @@ void ViewTopInfo()
     outtextxy(roleSlotX, 5, message);
     for (int account = 0; account < accountNum; account++)
     {
-      CountEnergy();//计算能量值
+      CountEnergyLimit();//计算能量值
       if (account == curAccount)
         settextcolor(RGB(255, 0, 0));
       else
@@ -4813,7 +5021,7 @@ void ViewBottomInfo()
     outtextxy(1150, wndHeight - tipHeight, message);
     if (state / 1000 == 1)
     {
-      sprintf_s(message, "深度%d", Map[curAccount][state % 100 / 10][state % 10].depthSelected[state % 1000 / 100]);
+      sprintf_s(message, "深度%d", map[curAccount][state % 100 / 10][state % 10].depthSelected[state % 1000 / 100]);
       outtextxy(1250, wndHeight - tipHeight, message);
     }
   }
@@ -4861,9 +5069,9 @@ int GetTip(int mode, int area, char(&tip)[200])
     return strcpy_s(tip, "单击移除2P轨道。");
   if (area >= 600 && area <= 611)
     return strcpy_s(tip, "按波变阵：在关卡到达指定波次后变换阵型，详见使用手册4.3。");
-  if (area == 700)
+  if (area == 90)
     return strcpy_s(tip, "撤销：返回上一步操作。");
-  if (area == 701)
+  if (area == 91)
     return strcpy_s(tip, "恢复：恢复被撤销的操作。");
 
   if (mode == 1)
@@ -4919,13 +5127,13 @@ int GetTip(int mode, int area, char(&tip)[200])
       if (area == 30 + account)
         return sprintf_s(tip, "%dP火苗计算值。", account + 1);
     if (area / 100 == 1)
-      return strcpy_s(tip, "卡槽：选中后可以使用上方箭头调节CD或移动轨道。双击可自动布轨。右击清空轨道。");
+      return strcpy_s(tip, "卡槽：选中后可以用左上角的箭头调节CD或移动轨道。双击可自动布轨。右击清空轨道。");
     if (area / 100 == 2)
       return strcpy_s(tip, "编号：单击开启轨道继承，详见使用手册4.3。");
     if (area / 100 == 3)
       return strcpy_s(tip, "独立计时：该卡片使用精确计时，适用于补云洞、放海盐等操作。");
     if (area / 100 == 4)
-      return strcpy_s(tip, "锁定轨道：令该卡不参与自动布轨。");
+      return strcpy_s(tip, "绝对优先：该卡片的放置无视放卡优先队列的限制。");
     if (area / 100 == 5)
       return strcpy_s(tip, "极限成阵：卡槽亮起时立即放置。按住Ctrl后单击可设置放卡条件。");
     if (area == 612)
@@ -4939,9 +5147,9 @@ int GetTip(int mode, int area, char(&tip)[200])
     if (area / 100 == 8)
       return strcpy_s(tip, "翻页：点击数字快速翻页。一页为一分钟。");
     if (area == 900 || area == 901)
-      return strcpy_s(tip, "左右箭头：点击进行翻页。选中卡槽后点击可整体平移轨道。");
+      return strcpy_s(tip, "左右箭头：1. 点击进行翻页。2. 选中卡槽后点击可整体平移轨道。");
     if (area == 902 || area == 903)
-      return strcpy_s(tip, "上下箭头：用于卡槽数≥14时滚动显示。选中卡槽后点击可调节CD。");
+      return strcpy_s(tip, "上下箭头：1. 用于卡槽数≥14时滚动显示。2. 选中卡槽后点击可调节CD。");
     if (area / 1000 == 2)
       return strcpy_s(tip, "时间轴：点击刻度查看对应时间的火苗计算值。");
     return strcpy_s(tip, "");
@@ -5025,7 +5233,7 @@ void ViewEditProduction()
   }
 }
 //显示防御卡编辑界面
-void ViewEditCommon()
+void ViewEditBag()
 {
   char option[9][13] = { "名称", "冷却", "层级", "耗能", "生产特性", "星级", "单朵产量", "火苗朵数", "" };
   int OptionValue[8] = { 0, bag[curAccount][bagMode].cd, 0, bag[curAccount][bagMode].cost, 0, bag[curAccount][bagMode].star, bag[curAccount][bagMode].sun, bag[curAccount][bagMode].sunNum };
@@ -5104,7 +5312,7 @@ void ViewEditCommon()
         isRightArrowRequired = false;
       if (bag[curAccount][bagMode].style >= 6 && i == 4)
         isRightArrowRequired = false;
-      if (bag[curAccount][bagMode].level >= 5 && i == 2)
+      if (bag[curAccount][bagMode].level == 6 && i == 2)
         isRightArrowRequired = false;
 
       if (isRightArrowRequired)
@@ -5140,7 +5348,7 @@ void ViewStack()//显示堆栈内容（选中层级各个深度的卡片）
   int t, order;
   for (depth = 0; depth < maxViewStack; depth++)
   {
-    if (depth == Map[curAccount][row][column].depthSelected[level])//空层级显示方框
+    if (depth == map[curAccount][row][column].depthSelected[level])//空层级显示方框
     {
       settextcolor(RGB(255, 0, 0));
       setlinecolor(RGB(255, 0, 0));
@@ -5149,12 +5357,12 @@ void ViewStack()//显示堆栈内容（选中层级各个深度的卡片）
     }
     else
       settextcolor(levelColor[level]);
-    if (depth < Map[curAccount][row][column].depth[level]) //对有卡片的深度才显示名称和次序
+    if (depth < map[curAccount][row][column].depth[level]) //对有卡片的深度才显示名称和次序
     {
       if (level == 6)
       {
         order = GetOrder(curAccount, "幻幻鸡");
-        t = GetTime(curAccount, order, Map[curAccount][row][column].times[level][depth]);//得到幻鸡这次种植的时刻t。如果没有轨道，返回MaxTime+1
+        t = GetTime(curAccount, order, map[curAccount][row][column].times[level][depth]);//得到幻鸡这次种植的时刻t。如果没有轨道，返回MaxTime+1
         if (t == zero)//如果本次幻幻鸡没有轨道
           CenterView("幻幻鸡", stackX + 40, stackY + (2 * depth + 1) * stackHeight / 2);//显示名称
         else//如果找到了幻幻鸡轨道
@@ -5163,15 +5371,15 @@ void ViewStack()//显示堆栈内容（选中层级各个深度的卡片）
           if (order == zero)//如果没有复制卡
             CenterView("幻幻鸡", stackX + 40, stackY + (2 * depth + 1) * stackHeight / 2);//显示名称
           else
-            CenterView(Slot[curAccount][order].name, stackX + 40, stackY + (2 * depth + 1) * stackHeight / 2);//显示名称
+            CenterView(slot[curAccount][order].name, stackX + 40, stackY + (2 * depth + 1) * stackHeight / 2);//显示名称
         }
       }
       else
-        CenterView(Map[curAccount][row][column].name[level][depth], stackX + 40, stackY + (2 * depth + 1) * stackHeight / 2);//显示名称
+        CenterView(map[curAccount][row][column].name[level][depth], stackX + 40, stackY + (2 * depth + 1) * stackHeight / 2);//显示名称
       size = GetFontSize();
       SetFontSize(18);
-      CenterView(Map[curAccount][row][column].times[level][depth], stackX + 79, stackY + (2 * depth + 1) * stackHeight / 2);//显示种植次序
-      if (Map[curAccount][row][column].depth[level] >= 2)//至少有两张卡，才显示下标
+      CenterView(map[curAccount][row][column].times[level][depth], stackX + 79, stackY + (2 * depth + 1) * stackHeight / 2);//显示种植次序
+      if (map[curAccount][row][column].depth[level] >= 2)//至少有两张卡，才显示下标
       {
         SetFontSize(12);
         CenterView(depth + 1, stackX + 93, stackY + (2 * depth + 1) * stackHeight / 2 + 4);
@@ -5224,7 +5432,7 @@ void RepaintMap()
   else
   {
     PaintGrid(14, 2, bagX, bagY, bagWidth, bagHeight);//防御卡编辑框
-    ViewEditCommon();//编辑内容
+    ViewEditBag();//编辑内容
   }
   ViewMode();//选项卡内容
   ViewMapButtons();
@@ -5238,7 +5446,7 @@ void RepaintMap()
   getimage(&imageBackup, 0, 0, (int)(wndWidth * ratio), (int)(wndHeight * ratio));
   setaspectratio(ratio, ratio);
 }
-void PaintTimeline()//绘制时间轴
+void ViewTimeline()//绘制时间轴
 {
   line(timelineX, timelineY, timelineX + (trackNum - 1) * timelineWidth, timelineY);//画轴线
   settextcolor(RGB(255, 255, 255));
@@ -5259,10 +5467,10 @@ void RepaintTrack()
 {
   BeginBatchDraw();
   solidrectangle(0, 0, wndWidth, wndHeight);
-  PaintTimeline();//绘制时间轴
-
+  ViewTimeline();//绘制时间轴
+  ViewQueue();//绘制优先队列
   ViewTrack();//轨道内容
-  solidrectangle(buttonX, trackY, wndWidth, trackY + 14 * trackHeight);//擦除出头的部分
+  solidrectangle(buttonX, trackY, wndWidth, trackY + (trackSlotNumPerPage + 1) * trackHeight);//擦除出头的部分
   ViewTrackSlotCard();//卡槽内容
   PaintGrid(2, 1, modeX, modeY, modeWidth, modeHeight);//选项卡框
   ViewMode();//选项卡内容
@@ -5308,7 +5516,7 @@ void AddConstraint(int order, int targetTime)
 {
   constraint[constraintNum].order = order;
   constraint[constraintNum].cost
-    = Slot[0][order].cost >= 1000 ? Slot[0][order].cost - 1000 : Slot[0][order].cost;
+    = slot[0][order].cost >= 1000 ? slot[0][order].cost - 1000 : slot[0][order].cost;
   constraint[constraintNum].maxTime = targetTime;
   constraint[constraintNum].maxControllableTime = GetMaxControllableTime(targetTime);
   constraintNum++;
@@ -5325,7 +5533,7 @@ int checkTimes;//检查次数
 void InitConstrainedAutoTrack()
 {
   checkTimes = 0;
-  CountEnergy();//先计算一遍能量
+  CountEnergyNormal();//先计算一遍能量
   memset(globalCollect, 0, sizeof(globalCollect));
   isConstraintsAchieved = false;//预设条件未达成
   endSearchTime = GetMaxControllableTime(maxProgrammingTime);//预设搜索结束时刻
@@ -5339,13 +5547,13 @@ void InitConstrainedAutoTrack()
       int slotOrder = GetOrder(account, producerName[order]);
       if (slotOrder > 0) //如果存在这个生产卡，进行记录
       {
-        SlotType &slot = Slot[account][slotOrder];
+        SlotType &slot0 = slot[account][slotOrder];
         opt.isEnabled = true;
         opt.order = slotOrder;
-        opt.cd = slot.cd;
-        opt.cost = slot.cost;
-        opt.period = 25 - slot.star;
-        opt.yield = slot.sunNum * (GetRoleNum() == 2 ? slot.sun * 3 / 5 : slot.sun);
+        opt.cd = slot0.cd;
+        opt.cost = slot0.cost;
+        opt.period = 25 - slot0.star;
+        opt.yield = slot0.sunNum * (GetRoleNum() == 2 ? slot0.sun * 3 / 5 : slot0.sun);
       }
     }
   //记录约束条件
@@ -5367,7 +5575,7 @@ void InitConstrainedAutoTrack()
   if (order > 0)
   {
     minCard.order = order;
-    minCard.cost = Slot[0][order].cost;
+    minCard.cost = slot[0][order].cost;
     minCard.minAchievingTime = maxProgrammingTime + 1;
   }
 
@@ -5696,32 +5904,32 @@ void ConstrainedAutoTrack()
 void MoveLevel(int account, int row0, int column0, int row, int column, int level0)//将层级移动到另一个空位
 {//需要搬迁Map中的信息，并修改卡片这一次的种植位置（Loc），无需修改Track
   int order;
-  if (Map[account][row][column].depth[level0] >= maxStack) return;//如果目标格同层级已经有9张卡了，那就搬不成
+  if (map[account][row][column].depth[level0] >= maxStack) return;//如果目标格同层级已经有9张卡了，那就搬不成
   /*修改Loc*/
-  int depth0 = Map[account][row0][column0].depthSelected[level0];//获取源层级的选中深度
-  order = GetOrder(account, Map[account][row0][column0].name[level0][depth0]);//获取被搬迁的卡片序号
-  Loc[account][order][Map[account][row0][column0].times[level0][depth0]] = row * 10 + column;//该卡该次种植的位置改成新位置
+  int depth0 = map[account][row0][column0].depthSelected[level0];//获取源层级的选中深度
+  order = GetOrder(account, map[account][row0][column0].name[level0][depth0]);//获取被搬迁的卡片序号
+  location[account][order][map[account][row0][column0].times[level0][depth0]] = row * 10 + column;//该卡该次种植的位置改成新位置
   /*搬Map*/
   /*把被搬深度添加到目标层级最高深度*/
-  int depth = Map[account][row0][column0].depth[level0];//获取目标层级的第一个空深度
-  strcpy_s(Map[account][row][column].name[level0][depth], Map[account][row0][column0].name[level0][depth0]);//添加名字
-  Map[account][row][column].times[level0][depth] = Map[account][row0][column0].times[level0][depth0];//添加次数
-  Map[account][row0][column0].depth[level0]++;//目标层级深度+1
+  int depth = map[account][row0][column0].depth[level0];//获取目标层级的第一个空深度
+  strcpy_s(map[account][row][column].name[level0][depth], map[account][row0][column0].name[level0][depth0]);//添加名字
+  map[account][row][column].times[level0][depth] = map[account][row0][column0].times[level0][depth0];//添加次数
+  map[account][row0][column0].depth[level0]++;//目标层级深度+1
   /*删除源层级被搬深度*/
-  if (depth0 == Map[account][row][column].depth[level0] - 1) //如果被搬深度是源层级的最高深度
+  if (depth0 == map[account][row][column].depth[level0] - 1) //如果被搬深度是源层级的最高深度
   {
-    strcpy_s(Map[account][row0][column0].name[level0][depth0], "");//删除名字
-    Map[account][row0][column0].times[level0][depth0] = 0;//删除次数
-    Map[account][row][column].depth[level0]--;//源层级深度-1
+    strcpy_s(map[account][row0][column0].name[level0][depth0], "");//删除名字
+    map[account][row0][column0].times[level0][depth0] = 0;//删除次数
+    map[account][row][column].depth[level0]--;//源层级深度-1
   }
   else //否则，选中深度赋值为最高深度，最高深度清空，源层级深度-1
   {
-    int MaxDepth = Map[account][row][column].depth[level0] - 1;
-    strcpy_s(Map[account][row0][column0].name[level0][depth0], Map[account][row0][column0].name[level0][MaxDepth]);//赋值名字
-    Map[account][row0][column0].times[level0][depth0] = Map[account][row0][column0].times[level0][MaxDepth];//赋值次数
-    strcpy_s(Map[account][row0][column0].name[level0][MaxDepth], "");//删除名字
-    Map[account][row0][column0].times[level0][MaxDepth] = 0;//删除次数
-    Map[account][row][column].depth[level0]--;//源层级深度-1
+    int MaxDepth = map[account][row][column].depth[level0] - 1;
+    strcpy_s(map[account][row0][column0].name[level0][depth0], map[account][row0][column0].name[level0][MaxDepth]);//赋值名字
+    map[account][row0][column0].times[level0][depth0] = map[account][row0][column0].times[level0][MaxDepth];//赋值次数
+    strcpy_s(map[account][row0][column0].name[level0][MaxDepth], "");//删除名字
+    map[account][row0][column0].times[level0][MaxDepth] = 0;//删除次数
+    map[account][row][column].depth[level0]--;//源层级深度-1
   }
 }
 //把第times0个位置插入到第times1个位置
@@ -5747,75 +5955,75 @@ void InsertLevel(int account, int row0, int column0, int depth0, int row1, int c
 {
   int times, row, column;
   int mLoc;
-  int order = GetOrder(account, Map[account][row0][column0].name[level0][depth0]);//选中卡片序号
+  int order = GetOrder(account, map[account][row0][column0].name[level0][depth0]);//选中卡片序号
 
   //如果两个格子同层级选中深度不是同名卡，不能执行插入
-  if (strcmp(Map[account][row0][column0].name[level0][depth0], Map[account][row1][column1].name[level0][depth1]) != zero)
+  if (strcmp(map[account][row0][column0].name[level0][depth0], map[account][row1][column1].name[level0][depth1]) != zero)
     return;
-  int times0 = Map[account][row0][column0].times[level0][depth0];//选中卡片次序
-  int times1 = Map[account][row1][column1].times[level0][depth1];//目标卡片次序
+  int times0 = map[account][row0][column0].times[level0][depth0];//选中卡片次序
+  int times1 = map[account][row1][column1].times[level0][depth1];//目标卡片次序
   if (times0 < times1)//如果选中次序小于目标次序（1[234]56，2插4，变成1[423]56）
   {
     /*修改Map中的次序*/
-    Map[account][row0][column0].times[level0][depth0] = times1;//先把海星2赋值为海星4
+    map[account][row0][column0].times[level0][depth0] = times1;//先把海星2赋值为海星4
     for (times = times0 + 1; times <= times1; times++)//对海星3-海星4，它们的数值都要减1
     {
-      row = Loc[account][order][times] / 10;
-      column = Loc[account][order][times] % 10;//查找海星times所在的格子
-      for (int d = 0; d < Map[account][row][column].depth[level0]; d++)//在该格子的海星层级内搜索每一个深度
-        if (GetOrder(account, Map[account][row][column].name[level0][d]) == order && Map[account][row][column].times[level0][d] == times)
+      row = location[account][order][times] / 10;
+      column = location[account][order][times] % 10;//查找海星times所在的格子
+      for (int d = 0; d < map[account][row][column].depth[level0]; d++)//在该格子的海星层级内搜索每一个深度
+        if (GetOrder(account, map[account][row][column].name[level0][d]) == order && map[account][row][column].times[level0][d] == times)
           //如果该深度的卡片正是海星times，说明要找的就是这个深度
         {
-          Map[account][row][column].times[level0][d]--;//该海星的次序号减1
+          map[account][row][column].times[level0][d]--;//该海星的次序号减1
           break;//无需再查找这一格的其他深度
         }
     }
     /*轮换Loc中的次序*/
-    mLoc = Loc[account][order][times0];
+    mLoc = location[account][order][times0];
     for (times = times0; times < times1; times++)
-      Loc[account][order][times] = Loc[account][order][times + 1];
-    Loc[account][order][times1] = mLoc;
+      location[account][order][times] = location[account][order][times + 1];
+    location[account][order][times1] = mLoc;
   }
   else//如果选中次序大于目标次序（1[234]56，4插2，变成1[342]56）times0=4，times1=2
   {
     /*修改Map中的次序*/
-    Map[account][row0][column0].times[level0][depth0] = times1;//先把海星4赋值为海星2
+    map[account][row0][column0].times[level0][depth0] = times1;//先把海星4赋值为海星2
     for (times = times0 - 1; times >= times1; times--)//对海星3~海星2，它们的数值都要加1
     {
-      row = Loc[account][order][times] / 10;
-      column = Loc[account][order][times] % 10;//查找海星times所在的格子
-      for (int d = 0; d < Map[account][row][column].depth[level0]; d++)//在该格子的海星层级内搜索每一个深度
-        if (GetOrder(account, Map[account][row][column].name[level0][d]) == order && Map[account][row][column].times[level0][d] == times)
+      row = location[account][order][times] / 10;
+      column = location[account][order][times] % 10;//查找海星times所在的格子
+      for (int d = 0; d < map[account][row][column].depth[level0]; d++)//在该格子的海星层级内搜索每一个深度
+        if (GetOrder(account, map[account][row][column].name[level0][d]) == order && map[account][row][column].times[level0][d] == times)
           //如果该深度的卡片正是海星times，说明要找的就是这个深度
         {
-          Map[account][row][column].times[level0][d]++;//该海星的次序号减1
+          map[account][row][column].times[level0][d]++;//该海星的次序号减1
           break;//无需再查找这一格的其他深度
         }
     }
     /*轮换Loc中的次序*/
-    mLoc = Loc[account][order][times0];
+    mLoc = location[account][order][times0];
     for (times = times0; times > times1; times--)
-      Loc[account][order][times] = Loc[account][order][times - 1];
-    Loc[account][order][times1] = mLoc;
+      location[account][order][times] = location[account][order][times - 1];
+    location[account][order][times1] = mLoc;
   }
 }
 void InsertLevel(int account, int row0, int column0, int row1, int column1, int level0)//同层级的卡位置插入。仅对选中深度执行插入
 {
-  InsertLevel(account, row0, column0, Map[account][row0][column0].depthSelected[level0], row1, column1, Map[account][row1][column1].depthSelected[level0], level0);
+  InsertLevel(account, row0, column0, map[account][row0][column0].depthSelected[level0], row1, column1, map[account][row1][column1].depthSelected[level0], level0);
 }
 void InsertTimes(int account, int order, int times0, int times1)//将卡片order的times0次种植插入到times1次之前
 {
   int row0, column0, depth0, row1, column1, depth1, level;
-  level = Slot[account][order].level;
-  row0 = Loc[account][order][times0] / 10;
-  column0 = Loc[account][order][times0] % 10;
-  for (depth0 = 0; depth0 < Map[account][row0][column0].depth[level]; depth0++)//遍历所有深度
-    if (order == GetOrder(account, Map[account][row0][column0].name[level][depth0]) && times0 == Map[account][row0][column0].times[level][depth0])
+  level = slot[account][order].level;
+  row0 = location[account][order][times0] / 10;
+  column0 = location[account][order][times0] % 10;
+  for (depth0 = 0; depth0 < map[account][row0][column0].depth[level]; depth0++)//遍历所有深度
+    if (order == GetOrder(account, map[account][row0][column0].name[level][depth0]) && times0 == map[account][row0][column0].times[level][depth0])
       break;//搜索order号卡第times0次种植在哪个深度
-  row1 = Loc[account][order][times1] / 10;
-  column1 = Loc[account][order][times1] % 10;
-  for (depth1 = 0; depth1 < Map[account][row1][column1].depth[level]; depth1++)//遍历所有深度
-    if (order == GetOrder(account, Map[account][row1][column1].name[level][depth1]) && times1 == Map[account][row1][column1].times[level][depth1])
+  row1 = location[account][order][times1] / 10;
+  column1 = location[account][order][times1] % 10;
+  for (depth1 = 0; depth1 < map[account][row1][column1].depth[level]; depth1++)//遍历所有深度
+    if (order == GetOrder(account, map[account][row1][column1].name[level][depth1]) && times1 == map[account][row1][column1].times[level][depth1])
       break;//搜索order号卡第times1次种植在哪个深度
   InsertLevel(account, row0, column0, depth0, row1, column1, depth1, level);
 }
@@ -5830,27 +6038,27 @@ void MoveTrack(int account, int order, int distance)
     return;
   if (distance > zero)//右移：轨道时间+1
   {
-    if (Track[account][order][maxTime] >= 1)
+    if (track[account][order][maxTime] >= 1)
       return;//右边顶满，不准移动
     for (int t = maxTime; t >= 1; t--)
-      Track[account][order][t] = Track[account][order][t - 1];
-    Track[account][order][0] = 0;
-    for (int times = 1; times < maxPlantTimes && Moment[account][order][times] > 0; times++)
-      Moment[account][order][times] = Moment[account][order][times] + 10;
+      track[account][order][t] = track[account][order][t - 1];
+    track[account][order][0] = 0;
+    for (int times = 1; times < maxPlantTimes && moment[account][order][times] > 0; times++)
+      moment[account][order][times] = moment[account][order][times] + 10;
     MoveTrack(account, order, distance - 1);
   }
   else if (distance < zero)//左移：轨道时间-10
   {
-    if (Track[account][order][minTime] >= 1)
+    if (track[account][order][minTime] >= 1)
       return;//左边顶满，不准移动
     for (int t = 0; t <= maxTime - 1; t++)
-      Track[account][order][t] = Track[account][order][t + 1];
-    Track[account][order][maxTime] = 0;
+      track[account][order][t] = track[account][order][t + 1];
+    track[account][order][maxTime] = 0;
     for (int times = 1; times < maxPlantTimes; times++)
     {
-      if (Moment[account][order][times] == zero)
+      if (moment[account][order][times] == zero)
         break;
-      Moment[account][order][times] = Moment[account][order][times] - 10;
+      moment[account][order][times] = moment[account][order][times] - 10;
     }
     MoveTrack(account, order, distance + 1);
   }
@@ -5863,7 +6071,7 @@ int GetLastSlot(int account, const char *slotName)
     return -1;//卡组中没有slotName，返回-1
   //向前查找第一个普通卡
   for (int order = slotOrder - 1; order >= 1; order--)
-    if (Slot[account][order].level <= 4)
+    if (slot[account][order].level <= 4)
       return order;
   return -1;//slotName前面没有普通卡，返回-1
 }
@@ -5881,46 +6089,44 @@ void MagicReturn(int account)
   {
     t = GetTime(account, magic, times);//获得幻幻鸡第times次种植的时刻
     GetMagicTarget(account, t, target, TargetTimes);//获得这个幻幻鸡复制目标的编号和种植次数。如果该幻鸡没有轨道，或此前没有卡片，则target=0
-    row = Loc[account][magic][times] / 10;
-    column = Loc[account][magic][times] % 10;//获得幻幻鸡所在行列
+    row = location[account][magic][times] / 10;
+    column = location[account][magic][times] % 10;//获得幻幻鸡所在行列
     DeleteFromGridLevel(account, row, column, 6);//从地图中删除这个幻幻鸡
     if (target > zero) //如果存在目标卡，在幻鸡所在格子添加复制目标本地，并插入到下一次种植
     {
       AddToGrid(account, target, row, column);//添加幻鸡目标卡到地图，自动识别层级，添加到最高深度
-      level = Slot[account][target].level;//获得目标卡层级
-      depth = Map[account][row][column].depth[level] - 1;//获得目标层级最高深度（即刚添加的卡所在深度）
-      if (Map[account][row][column].times[level][depth] != TargetTimes + 1) //如果新增目标本体的种植序号不是原目标序号+1，则需要调整顺序
-        InsertTimes(account, target, Map[account][row][column].times[level][depth], TargetTimes + 1);
+      level = slot[account][target].level;//获得目标卡层级
+      depth = map[account][row][column].depth[level] - 1;//获得目标层级最高深度（即刚添加的卡所在深度）
+      if (map[account][row][column].times[level][depth] != TargetTimes + 1) //如果新增目标本体的种植序号不是原目标序号+1，则需要调整顺序
+        InsertTimes(account, target, map[account][row][column].times[level][depth], TargetTimes + 1);
       //例如幻鸡复制的是海星20，现在新增的海星是海星26，26不等于21，故需要将海星26插入到海星21
     }
   }
-  memset(Track[account][magic], 0, sizeof(Track[account][magic]));
-  memset(Moment[account][magic], 0, sizeof(Moment[account][magic]));
+  memset(track[account][magic], 0, sizeof(track[account][magic]));
+  memset(moment[account][magic], 0, sizeof(moment[account][magic]));
 }
 void IceReturn(int account)//将冰激凌地图轨道全部删除
 {
-  int t, times;
-  int row, column, level, depth;
   int ice = GetOrder(account, "冰激凌");
   if (ice > zero)
   {
-    for (times = maxPlantTimes; times >= 1; times--)//删除冰激凌地图
-      if (Loc[account][ice][times] > zero)
+    for (int times = maxPlantTimes; times >= 1; times--)//删除冰激凌地图
+      if (location[account][ice][times] > zero)
       {
+        int row, column, level, depth;
         GetMapLoc(account, ice, times, row, column, level, depth);
         DeleteFromGrid(account, row, column, level, depth);
       }
-    for (t = 0; t <= maxTime; t++)//删除冰激凌轨道
-      Track[account][ice][t] = 0;
+    for (int t = 0; t <= maxTime; t++)//删除冰激凌轨道
+      track[account][ice][t] = 0;
   }
 }
 void SorbetReturn(int account)//将冰沙地图轨道全部删除
 {
-  int t;
   int sorbet = GetOrder(account, "冰沙");
   if (sorbet > zero)
-    for (t = maxTime; t >= zero; t--)//删除所有冰沙轨道
-      if (Track[account][sorbet][t] == 1)
+    for (int t = maxTime; t >= zero; t--)//删除所有冰沙轨道
+      if (track[account][sorbet][t] == 1)
         DeleteTrack(account, sorbet, t);
 }
 void IceMagicReturn(int account)//将地图中的幻幻鸡复原成复制目标本体，幻鸡冰沙冰激凌地图轨道全部删除
@@ -6188,7 +6394,8 @@ void GetGameState(int &entry, int &wave, int &box)
   else
     box = 0;
 }
-BOOL Click(int x, int y)//单击指定位置
+//单击指定位置
+BOOL Click(int x, int y)
 {
   int x1 = x * GameRect.right / 950;//坐标缩放修正
   int y1 = y * GameRect.bottom / 596;
@@ -6205,7 +6412,7 @@ void ScreenToClientWithDPI(HWND hWnd, POINT *lpt)//转化为窗口内坐标
 //重绘录制信息
 void RepaintRecord()
 {
-  char Message[100];//信息
+  char message[100];//信息
   char CardName[10];//卡片名称
   int LineY = textheight("小") / 2;
   int MaxPage = (recordNum - 1) / 20 + 1;//显示所需页数
@@ -6230,11 +6437,11 @@ void RepaintRecord()
   }
   else if (recordStage == 2) //成功放下人物后，显示人物位置和放卡信息
   {
-    sprintf_s(Message, "人物位置=%d  卡槽数=%d", roleLoc[curAccount], realSlotNum[curAccount]);
-    outtextxy(recordX, 70, Message);
+    sprintf_s(message, "人物位置=%d  卡槽数=%d", roleLoc[curAccount][1], realSlotNum[curAccount]);
+    outtextxy(recordX, 70, message);
 
-    sprintf_s(Message, "%d/%d", recordPage, MaxPage);
-    CenterView(Message, recordPageCX, recordPageCY);
+    sprintf_s(message, "%d/%d", recordPage, MaxPage);
+    CenterView(message, recordPageCX, recordPageCY);
 
     LOGFONT Font;
     int size = GetFontSize();
@@ -6264,7 +6471,7 @@ void RepaintRecord()
       {
         if (Record[RecordOrder].exist == 1)
         {
-          settextcolor(levelColor[Slot[curAccount][Record[RecordOrder].order].level]);
+          settextcolor(levelColor[slot[curAccount][Record[RecordOrder].order].level]);
           if (Record[RecordOrder].loc > zero)
             outtextxy(recordX + recordLength + 15, recordY + i * recordHeight, "×");
         }
@@ -6276,18 +6483,18 @@ void RepaintRecord()
         }
 
         /*显示序号*/
-        sprintf_s(Message, "%03d [ ", RecordOrder + 1);
-        outtextxy(recordX, recordY + i * recordHeight, Message);
+        sprintf_s(message, "%03d [ ", RecordOrder + 1);
+        outtextxy(recordX, recordY + i * recordHeight, message);
 
         /*显示位置时间*/
         if (Record[RecordOrder].loc == zero)
-          sprintf_s(Message, " ]");
+          sprintf_s(message, " ]");
         else
-          sprintf_s(Message, " ] %03d.%d|%d", Record[RecordOrder].time / 10, Record[RecordOrder].time % 10, Record[RecordOrder].loc);
-        outtextxy(recordX + headWidth + cardNameWidth, recordY + i * recordHeight, Message);
+          sprintf_s(message, " ] %03d.%d|%d", Record[RecordOrder].time / 10, Record[RecordOrder].time % 10, Record[RecordOrder].loc);
+        outtextxy(recordX + headWidth + cardNameWidth, recordY + i * recordHeight, message);
 
         /*显示名称*/
-        strcpy_s(CardName, Slot[curAccount][Record[RecordOrder].order].name);
+        strcpy_s(CardName, slot[curAccount][Record[RecordOrder].order].name);
         outtextxy(recordX + headWidth + (cardNameWidth - textwidth(CardName)) / 2, recordY + i * recordHeight, CardName);
       }
     }
@@ -6305,26 +6512,26 @@ void RecordRecoverPlant(int RecordOrder)
   int time = Record[RecordOrder].time;
   int loc = Record[RecordOrder].loc;
   for (times = 1; times <= maxPlantTimes; times++)
-    if (Moment[curAccount][order][times] > time || Moment[curAccount][order][times] == zero)
+    if (moment[curAccount][order][times] > time || moment[curAccount][order][times] == zero)
       break;
-  if (Moment[curAccount][order][times] == zero)//如果没有晚于time的种植，则插入到最后
+  if (moment[curAccount][order][times] == zero)//如果没有晚于time的种植，则插入到最后
   {
-    Loc[curAccount][order][times] = loc;
-    Moment[curAccount][order][times] = time;
+    location[curAccount][order][times] = loc;
+    moment[curAccount][order][times] = time;
     return;
   }
   int TargetTimes = times;//第一个晚于time的种植次数
   for (times = TargetTimes; times <= maxPlantTimes; times++)
-    if (Moment[curAccount][order][times] == zero)
+    if (moment[curAccount][order][times] == zero)
       break;
   int MaxTimes = times;//向后找到第一个空位
   for (times = MaxTimes; times >= TargetTimes + 1; times--)
   {
-    Loc[curAccount][order][times] = Loc[curAccount][order][times - 1];
-    Moment[curAccount][order][times] = Moment[curAccount][order][times - 1];
+    location[curAccount][order][times] = location[curAccount][order][times - 1];
+    moment[curAccount][order][times] = moment[curAccount][order][times - 1];
   }
-  Loc[curAccount][order][TargetTimes] = loc;
-  Moment[curAccount][order][TargetTimes] = time;
+  location[curAccount][order][TargetTimes] = loc;
+  moment[curAccount][order][TargetTimes] = time;
   SaveTrack();
   LoadTrack();
 }
@@ -6336,15 +6543,15 @@ void RecordDeletePlant(int RecordOrder)
   int order = Record[RecordOrder].order;
   int time = Record[RecordOrder].time;
   for (times = 1; times <= maxPlantTimes; times++)
-    if (Moment[curAccount][order][times] == time)
+    if (moment[curAccount][order][times] == time)
       break;
   //找到要删除的那次种植
   int TargetTimes = times;
   for (times = TargetTimes; times <= maxPlantTimes; times++)
   {
-    Loc[curAccount][order][times] = Loc[curAccount][order][times + 1];
-    Moment[curAccount][order][times] = Moment[curAccount][order][times + 1];
-    if (Moment[curAccount][order][times] == zero)
+    location[curAccount][order][times] = location[curAccount][order][times + 1];
+    moment[curAccount][order][times] = moment[curAccount][order][times + 1];
+    if (moment[curAccount][order][times] == zero)
       break;
   }
   SaveTrack();
@@ -6413,7 +6620,7 @@ void RecordTrack()
   memset(Times, 0, sizeof(Times));
 
   /*查找游戏窗口*/
-  while (1)
+  while (true)
   {
     Sleep(1);
     if (GetAsyncKeyState(VK_LBUTTON))//如果左键按下
@@ -6441,12 +6648,12 @@ void RecordTrack()
   }
   GetClientRect(hWnd, &GameRect);
 
-  /*进入关卡*/
+  //进入关卡
   int Entry, Wave, Box;
   int StartTick = GetTickCount();
   int CurrentTick;
   int iColor = 0;
-  while (1)
+  while (true)
   {
     Sleep(1);//每个循环等0.1秒
     if (GetAsyncKeyState(VK_LBUTTON))//如果左键按下
@@ -6474,7 +6681,7 @@ void RecordTrack()
       if (iColor % 10 == zero)
         if (Click(StartX, StartY) == false) //单击开始，如果点击失败则弹窗提示并返回轨道编辑界面
         {
-          MessageBox(hWndEditor, "权限不足，请尝试以管理员身份运行。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+          MessageBox(hWndEditor, "权限不足。请先关闭当前窗口，然后\n右键编辑器选择“以管理员身份运行”。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
           return RecoverTrackEdit(rect);
         }
     }
@@ -6485,19 +6692,19 @@ void RecordTrack()
   realSlotNum[curAccount] = GetSlotNum();//记录游戏中卡槽数量
   /*若轨道中卡槽数小于卡组数，增添cd7s的卡组*/
   char NewSlotName[7];
-  for (int order = SlotNum[curAccount] + 1; order <= realSlotNum[curAccount]; order++)
+  for (int order = slotNum[curAccount] + 1; order <= realSlotNum[curAccount]; order++)
   {
     sprintf_s(NewSlotName, "卡片%d", order);
     AddEmptyToSlot(curAccount, NewSlotName);
-    Slot[curAccount][order].cd = 7;
+    slot[curAccount][order].cd = 7;
   }
   /*所有卡槽打开独立计时，关闭索敌、补阵和极限成阵*/
   for (int order = 0; order <= realSlotNum[curAccount]; order++)
   {
-    Slot[curAccount][order].independent = 1;
-    Slot[curAccount][order].search = 0;
-    Slot[curAccount][order].repair = 0;
-    Slot[curAccount][order].limit = 0;
+    slot[curAccount][order].independent = 1;
+    slot[curAccount][order].search = 0;
+    slot[curAccount][order].repair = 0;
+    slot[curAccount][order].limit = 0;
   }
   if (realSlotNum[curAccount] <= 12)//根据卡槽数量确定卡槽左端位置
     SlotX = 213;
@@ -6624,8 +6831,8 @@ void RecordTrack()
             if (CurrentTime < 20)
               CurrentTime = 20;//放卡时间至少为第2秒
             Times[SlotSelected]++;
-            Loc[curAccount][SlotSelected][Times[SlotSelected]] = GameArea;
-            Moment[curAccount][SlotSelected][Times[SlotSelected]] = CurrentTime;
+            location[curAccount][SlotSelected][Times[SlotSelected]] = GameArea;
+            moment[curAccount][SlotSelected][Times[SlotSelected]] = CurrentTime;
             SaveTrack();
             LoadTrack();
             RecordPlantCard(CurrentTime, GameArea);//记录放卡
@@ -6716,7 +6923,7 @@ int GrabMap()
     hWndGame = GetGameWindowFromServer(hWndPointed);
   else //不是游戏窗口则返回0
     return 0;
-  WindowToBitmap(hWndGame, "用户参数\\地图.png", 304, 111, 536, 451);//截取地图
+  WindowToBitmap(hWndGame, "用户参数\\地图.png", 304, 111, 536, 451, 0);//截取地图
   isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
   return 1;
 }
@@ -6788,7 +6995,7 @@ void EditWave(int buttons, int &area, int minArea, int maxArea)
 }
 int AdjustZoom()
 {
-  if (Adjust(zoom, 50, 100, 10, 702, 703))//缩放比例
+  if (Adjust(zoom, 50, 100, 10, 92, 93))//缩放比例
   {
     solidrectangle(0, 0, wndWidth, wndHeight);//清屏
     ratio = originRatio * zoom / 100;//改变窗口尺寸和显示比例，不影响点击位置判定
@@ -6899,14 +7106,14 @@ void MakeErrorFile()
 bool AddNewToSlot(int account, int level)
 {
   //卡槽已满或背包已满则不允许添加
-  if (SlotNum[account] >= maxSlotNum || bagNum[account] >= maxCommonNum)
+  if (slotNum[account] >= maxSlotNum || bagNum[account] >= maxCommonNum)
     return false;
 
   //记录所有存在的"卡片i"
   bool isCodeUsed[maxSlotNum + 1] = {};//"卡片i"是否已存在
   int code = 0;
-  for (int order = 1; order <= SlotNum[account]; order++)
-    if (sscanf_s(Slot[account][order].name, "卡片%d", &code) == 1 && code >= 1 && code <= 21)
+  for (int order = 1; order <= slotNum[account]; order++)
+    if (sscanf_s(slot[account][order].name, "卡片%d", &code) == 1 && code >= 1 && code <= 21)
       isCodeUsed[code] = true;
 
   //记录要添加的卡片名称
@@ -7167,12 +7374,12 @@ void EditMap()
         }
         if (area / 100 == 4)//点击卡片右上角：补阵模式
         {
-          Slot[curAccount][area - 400].repair = 1 - Slot[curAccount][area - 400].repair;
+          slot[curAccount][area - 400].repair = !slot[curAccount][area - 400].repair;
           state = 0;
         }
         if (area / 100 == 5)//点击卡片右上角：索敌模式
         {
-          Slot[curAccount][area - 500].search = 1 - Slot[curAccount][area - 500].search;
+          slot[curAccount][area - 500].search = !slot[curAccount][area - 500].search;
           state = 0;
         }
         EditWave(buttons, area, 600, 613);
@@ -7185,10 +7392,10 @@ void EditMap()
           if (FileExist("用户参数\\地图.png"))
             remove("用户参数\\地图.png");
         }
-        if (area == 700)//撤销按钮
+        if (area == 90)//撤销按钮
           if (IsUndoAllowed())
             Undo();
-        if (area == 701)//恢复按钮
+        if (area == 91)//恢复按钮
           if (IsRepeatAllowed())
             Repeat();
 
@@ -7203,14 +7410,14 @@ void EditMap()
             int row0 = state % 100 / 10;
             int column0 = state % 10;
             if (area <= 808)
-              Map[curAccount][row0][column0].depthSelected[level0] = min(area - 800, Map[curAccount][row0][column0].depth[level0]);
+              map[curAccount][row0][column0].depthSelected[level0] = min(area - 800, map[curAccount][row0][column0].depth[level0]);
             else
               SelectDepth(row0, column0, level0, area - 809);
           }
           else if (area >= 809 || area <= 811)//“底”“顶”“空”深度调整
           {
             if (state / 100 == 1) //选中卡槽
-              SelectDepth(Slot[curAccount][state - 100].level, area - 809);
+              SelectDepth(slot[curAccount][state - 100].level, area - 809);
             else //无选中
               SelectDepth(area - 809);
           }
@@ -7300,7 +7507,7 @@ void EditMap()
             bag[curAccount][bagMode].cd = min(320, bag[curAccount][bagMode].cd + 1);
             break;
           case 2:
-            if (bag[curAccount][bagMode].level < 4)
+            if (bag[curAccount][bagMode].level < 5)
               bag[curAccount][bagMode].level++;
             break;
           case 3:
@@ -7368,7 +7575,7 @@ void EditMap()
               bag[curAccount][bagMode].cd--;
             break;
           case 2:
-            if (bag[curAccount][bagMode].level > 1 && bag[curAccount][bagMode].level <= 4)
+            if (bag[curAccount][bagMode].level > 1 && bag[curAccount][bagMode].level <= 5)
               bag[curAccount][bagMode].level--;
             break;
           case 3:
@@ -7477,15 +7684,15 @@ void EditMap()
           if (GetAsyncKeyState(VK_CONTROL))
           {
             //如果普通层无卡，增加普通卡
-            if (Map[curAccount][row][column].depth[3] == 0)
+            if (map[curAccount][row][column].depth[3] == 0)
             {
               if (AddNewToSlot(curAccount, 3))//向卡槽添加普通层"卡片i"
-                AddToGrid(curAccount, SlotNum[curAccount], row, column);//放置在本格
+                AddToGrid(curAccount, slotNum[curAccount], row, column);//放置在本格
             }
-            else if (Map[curAccount][row][column].depth[4] == 0)
+            else if (map[curAccount][row][column].depth[4] == 0)
             {
               if (AddNewToSlot(curAccount, 4))//向卡槽添加升级层"卡片i"
-                AddToGrid(curAccount, SlotNum[curAccount], row, column);//放置在本格
+                AddToGrid(curAccount, slotNum[curAccount], row, column);//放置在本格
             }
             state = 0;
           }
@@ -7493,7 +7700,7 @@ void EditMap()
           {
             if (state == zero)//无选中状态：选中卡片/人物
             {
-              if (Map[curAccount][row][column].depth[level] > zero)
+              if (map[curAccount][row][column].depth[level] > zero)
                 state = area; //该层级有卡片：选中卡片
               else
               {
@@ -7506,18 +7713,18 @@ void EditMap()
             else if (state / 100 == 1)//已选中卡槽：点击空格则放置卡片，否则选中所点击的层级
             {
               int order = state - 100;
-              int level0 = Slot[curAccount][order].level;//记录选中卡片的层级
+              int level0 = slot[curAccount][order].level;//记录选中卡片的层级
               if (order == GetOrder(curAccount, "冰沙"))
                 MessageBox(hWndEditor, "冰沙无需设置放卡位置。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
-              else if (Map[curAccount][row][column].depthSelected[level0] == Map[curAccount][row][column].depth[level0])
+              else if (map[curAccount][row][column].depthSelected[level0] == map[curAccount][row][column].depth[level0])
               {
                 //如果目标层级选中了空深度
-                if (curTotalWave[curAccount] > 0 && Slot[curAccount][order].retain)
+                if (curTotalWave[curAccount] > 0 && slot[curAccount][order].retain)
                   MessageBox(hWndEditor, "启用继承的卡无法放置。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
                 else
                   AddToGrid(curAccount, order, area % 100 / 10, area % 10);
               }
-              else if (Map[curAccount][row][column].depth[level] > zero)
+              else if (map[curAccount][row][column].depth[level] > zero)
                 state = 1000 + level * 100 + row * 10 + column;//否则改为选中点击的层级
             }
             else if (state / 100 == 3) //选中人物槽或地图中的人物(300-319)
@@ -7540,13 +7747,13 @@ void EditMap()
               int column0 = state % 10;
               if (state != area)//如果点的是其他格子，或本格的其他层级
               {
-                if (Map[curAccount][row0][column0].depthSelected[level0] < Map[curAccount][row0][column0].depth[level0]//选中层级选中的是有卡深度
-                  && Map[curAccount][row][column].depthSelected[level0] == Map[curAccount][row][column].depth[level0])//且目标格同层级选中的是空深度
+                if (map[curAccount][row0][column0].depthSelected[level0] < map[curAccount][row0][column0].depth[level0]//选中层级选中的是有卡深度
+                  && map[curAccount][row][column].depthSelected[level0] == map[curAccount][row][column].depth[level0])//且目标格同层级选中的是空深度
                 {
                   MoveLevel(curAccount, row0, column0, row, column, level0);//移动层级
                   state = 0;
                 }
-                else if (Map[curAccount][row][column].depth[level] > zero)//如果不能执行移动，且点的位置有卡
+                else if (map[curAccount][row][column].depth[level] > zero)//如果不能执行移动，且点的位置有卡
                   state = 1000 + level * 100 + row * 10 + column;//选中点击的层级
                 else //如果点的位置没有卡
                   state = 0;//取消选中
@@ -7634,12 +7841,12 @@ void EditMap()
             int level0 = state % 1000 / 100;
             int row0 = state % 100 / 10;
             int column0 = state % 10;
-            int depth0 = Map[curAccount][row0][column0].depthSelected[level0];//选中层级的行列和选中深度
-            int depth = Map[curAccount][row][column].depthSelected[level0];//目标层级的行列和选中深度
+            int depth0 = map[curAccount][row0][column0].depthSelected[level0];//选中层级的行列和选中深度
+            int depth = map[curAccount][row][column].depthSelected[level0];//目标层级的行列和选中深度
             if (row0 != row || column0 != column)//如果右击的是另一个格子
             {
-              if (depth0 < Map[curAccount][row0][column0].depth[level0] && depth < Map[curAccount][row][column].depth[level0])//两格选中深度均小于空深度
-                if (strcmp(Map[curAccount][row0][column0].name[level0][depth0], Map[curAccount][row][column].name[level0][depth]) == zero) //且两格同层级选中深度为同名卡
+              if (depth0 < map[curAccount][row0][column0].depth[level0] && depth < map[curAccount][row][column].depth[level0])//两格选中深度均小于空深度
+                if (strcmp(map[curAccount][row0][column0].name[level0][depth0], map[curAccount][row][column].name[level0][depth]) == zero) //且两格同层级选中深度为同名卡
                   InsertLevel(curAccount, row0, column0, row, column, level0);//执行插队
               state = 0;
             }
@@ -7648,7 +7855,7 @@ void EditMap()
               if (level == level0)//右击的是本层级，执行删除，如果删空了就取消选中状态
               {
                 DeleteFromGridLevel(curAccount, row, column, level);
-                if (Map[curAccount][row][column].depth[level] == zero)
+                if (map[curAccount][row][column].depth[level] == zero)
                   state = 0;
               }
               else
@@ -7701,21 +7908,17 @@ void EditMap()
 int isTrackEmpty()
 {
   for (int account = 0; account < accountNum; account++)
-    for (int order = 0; order <= SlotNum[account]; order++)
-      if (Moment[account][order][1] > 0)
+    for (int order = 0; order <= slotNum[account]; order++)
+      if (moment[account][order][1] > 0)
         return false;
   return true;
-}
-void EnableLimit(int account, int order)
-{
-  Slot[account][order].limit = 1;
 }
 void EditTrack()//模块二：编辑轨道
 {
   int xPos, yPos, buttons;//鼠标按下
 
   RepaintTrack();
-  while (1)
+  while (true)
   {
     if (lastClickMessage > zero) //检测到鼠标按下
     {
@@ -7727,10 +7930,7 @@ void EditTrack()//模块二：编辑轨道
       if (buttons == 1)//如果按下的是左键
       {
         if (area == zero || area == 1)
-        {
-          state = 0;
-          trackSlotSelected = 0;
-        }
+          state = queueSelected = trackSlotSelected = 0;
         if (area == 1) //点击阵型编辑按钮：切换到阵型编辑模式
         {
           mode = 1;
@@ -7746,7 +7946,6 @@ void EditTrack()//模块二：编辑轨道
             if (account != curAccount)
               SwitchToAccount(account);
           }
-          trackSlotSelected = 0;
         }
         //添加2P轨道
         if (area == 40)
@@ -7768,30 +7967,39 @@ void EditTrack()//模块二：编辑轨道
         }
         if (area / 100 == 1) //点击卡槽：选中卡槽
         {
-          if (trackSlotSelected == area)//取消选中
+          if (trackSlotSelected == area) //已选中本卡槽：取消选中
           {
             if (GetTickCount() - trackSlotSelectionTick < 300) //双击
             {
               int order = trackSlotSelected - 100;
               AutoTrack(curAccount, order, GetLocTimes(curAccount, order) - GetMomentTimes(curAccount, order, maxTime));
             }
-            trackSlotSelected = 0;
             trackSlotSelectionTick = 0;
           }
-          else //选中
+          else //未选中本卡槽
           {
-            trackSlotSelected = area;
-            trackSlotSelectionTick = GetTickCount();
+            //如果选中了队列标题，加入队列
+            if (queueSelected == 712)
+            {
+              isQueueSelectionRetained = true;
+              AddQueue(curAccount, area - 100);
+            }
+            else //否则选中点击的卡槽
+            {
+              isTrackSlotSelectionRetained = true;
+              trackSlotSelected = area;
+              trackSlotSelectionTick = GetTickCount();
+            }
           }
         }
         if (area / 100 == 2) //点击卡槽左上角：继承模式
         {
           int order = area - 200;
-          if (Slot[curAccount][order].retain)
-            Slot[curAccount][order].retain = 0;
+          if (slot[curAccount][order].retain)
+            slot[curAccount][order].retain = false;
           else
           {
-            Slot[curAccount][order].retain = 1;
+            slot[curAccount][order].retain = true;
             if (curTotalWave[curAccount] == 0)
               DeleteTrack(curAccount, order);//清空轨道
             else
@@ -7801,14 +8009,12 @@ void EditTrack()//模块二：编辑轨道
         if (area / 100 == 3) //点击卡槽左下角：独立计时
         {
           int order = area - 300;
-          Slot[curAccount][order].independent = 1 - Slot[curAccount][order].independent;
-          trackSlotSelected = 0;
+          slot[curAccount][order].independent = !slot[curAccount][order].independent;
         }
-        if (area / 100 == 4) //点击卡槽右上角：锁定轨道
+        if (area / 100 == 4) //点击卡槽右上角：绝对优先
         {
           int order = area - 400;
-          Slot[curAccount][order].lock = 1 - Slot[curAccount][order].lock;
-          trackSlotSelected = 0;
+          slot[curAccount][order].prior = !slot[curAccount][order].prior;
         }
         if (area / 100 == 5) //点击卡槽右下角：极限成阵（按住Ctrl编辑条件）
         {
@@ -7817,18 +8023,17 @@ void EditTrack()//模块二：编辑轨道
           if (GetAsyncKeyState(VK_CONTROL)) //按住Ctrl点极限成阵：编辑条件
           {
             EditCondition(curAccount, order);
-            EnableLimit(curAccount, order);
-            if (Moment[curAccount][order][1] == 0 && (Slot[curAccount][order].endNum > 0 || Slot[curAccount][order].endTime > 0))
+            slot[curAccount][order].limit = true;
+            if (moment[curAccount][order][1] == 0 && (slot[curAccount][order].endNum > 0 || slot[curAccount][order].endTime > 0))
               AddTrack(curAccount, order, 1); //无轨道时设置了终止条件，则新增一个轨道
           }
           else
           {
-            if (Slot[curAccount][order].limit == 0)
-              EnableLimit(curAccount, order);
+            if (!slot[curAccount][order].limit)
+              slot[curAccount][order].limit = true;
             else
-              Slot[curAccount][order].limit = 0;
+              slot[curAccount][order].limit = false;
           }
-          trackSlotSelected = 0;
         }
         if (area == 612)//录制轨道按钮
         {
@@ -7838,10 +8043,10 @@ void EditTrack()//模块二：编辑轨道
           if (RecordMessage == IDOK)
           {
             //清空地图、轨道，保留卡组
-            memset(Loc[curAccount], 0, sizeof(Loc[curAccount]));
-            memset(Moment[curAccount], 0, sizeof(Moment[curAccount]));
-            memset(Map[curAccount], 0, sizeof(Map[curAccount]));
-            memset(Track[curAccount], 0, sizeof(Track[curAccount]));
+            memset(location[curAccount], 0, sizeof(location[curAccount]));
+            memset(moment[curAccount], 0, sizeof(moment[curAccount]));
+            memset(map[curAccount], 0, sizeof(map[curAccount]));
+            memset(track[curAccount], 0, sizeof(track[curAccount]));
             //清空人物位置，再添加1个人物位置
             roleLocNum[curAccount] = 0;
             AddRole(curAccount);
@@ -7869,7 +8074,10 @@ void EditTrack()//模块二：编辑轨道
             if (trackSlotSelected == zero)//全局布轨
               AutoTrack();
             else
+            {
               AutoTrack(curAccount, trackSlotSelected - 100, 1);//选中了卡槽，就布轨一个
+              isTrackSlotSelectionRetained = true;
+            }
           }
           state = 0;
         }
@@ -7880,18 +8088,32 @@ void EditTrack()//模块二：编辑轨道
           InputNum(&quitTime[curAccount], 0, 960,
             "到达指定时间（1~960秒）后主动退出关卡，仅高级任务有效。\n输入0表示不主动退出。", "退出时间");
 
-        if (area == 700)//撤销按钮
+        if (area == 90)//撤销按钮
           if (IsUndoAllowed())
             Undo();
-        if (area == 701)//恢复按钮
+        if (area == 91)//恢复按钮
           if (IsRepeatAllowed())
             Repeat();
 
-        if (AdjustZoom())
+        if (AdjustZoom()) //92-93：缩放
           SaveParameter();
+
+        //单击队列标题/队列卡：切换或取消选中
+        if (area / 100 == 7)
+        {
+          if (queueSelected != area)
+          {
+            if (area == 712 || area - 700 < queueSize[curAccount])
+            {
+              isQueueSelectionRetained = true;
+              queueSelected = area;
+            }
+          }
+        }
 
         if (area / 100 == 8) //点击翻页按钮：切换页数
         {
+          isTrackSlotSelectionRetained = true;
           if (area - 800 <= 16)
             page = area - 800;
         }
@@ -7899,6 +8121,7 @@ void EditTrack()//模块二：编辑轨道
         {
           if (trackSlotSelected > zero)//如果选中了卡片
           {
+            isTrackSlotSelectionRetained = true;
             int order = trackSlotSelected - 100;
             if (area == 900)//左右：移动轨道
               MoveTrack(curAccount, order, -1);
@@ -7907,16 +8130,16 @@ void EditTrack()//模块二：编辑轨道
             else if (area == 902)//上下：调节冷却
             {
               if (order == maxSlotNum + 1)
-                Slot[curAccount][order].cd = min(320, Slot[curAccount][order].cd + 5);
+                slot[curAccount][order].cd = min(320, slot[curAccount][order].cd + 5);
               else
-                Slot[curAccount][order].cd = min(320, Slot[curAccount][order].cd + 1);
+                slot[curAccount][order].cd = min(320, slot[curAccount][order].cd + 1);
             }
             else if (area == 903)
             {
               if (order == maxSlotNum + 1)
-                Slot[curAccount][order].cd = max(60, Slot[curAccount][order].cd - 5);
-              else if ((order == zero && Slot[curAccount][0].cd > zero) || Slot[curAccount][order].cd > 2)
-                Slot[curAccount][order].cd--;
+                slot[curAccount][order].cd = max(60, slot[curAccount][order].cd - 5);
+              else if ((order == zero && slot[curAccount][0].cd > zero) || slot[curAccount][order].cd > 2)
+                slot[curAccount][order].cd--;
             }
           }
           else//如果没有选中卡片
@@ -7933,12 +8156,12 @@ void EditTrack()//模块二：编辑轨道
             }
             else if (area == 902)//上下：上下滚动显示的内容
             {
-              if (firstTrackSlot > zero)
+              if (firstTrackSlot > -1)
                 firstTrackSlot--;
             }
             else if (area == 903)
             {
-              if (firstTrackSlot + trackSlotNumPerPage < SlotNum[curAccount])
+              if (firstTrackSlot + trackSlotNumPerPage < slotNum[curAccount])
                 firstTrackSlot++;
             }
           }
@@ -7951,7 +8174,7 @@ void EditTrack()//模块二：编辑轨道
           int t = area % 1000 + (page - 1) * 60;
           if (t != (page - 1) * 60)//点击每页非第0秒，添加轨道。
           {
-            if (Slot[curAccount][order].retain == 0) //没开启继承才能添加轨道
+            if (slot[curAccount][order].retain == 0) //没开启继承才能添加轨道
               AddTrack(curAccount, order, t);
             else
             {
@@ -7963,7 +8186,7 @@ void EditTrack()//模块二：编辑轨道
           }
           else if (order > zero) //点击第0秒，自动补满所有轨道
           {
-            if (Slot[curAccount][order].retain == 0) //没开启继承才能添加轨道
+            if (slot[curAccount][order].retain == 0) //没开启继承才能添加轨道
             {
               int MaxTrack = GetMaxTrack(curAccount, order);//获得order的最大轨道时间
               if (MaxTrack == zero)
@@ -7971,7 +8194,7 @@ void EditTrack()//模块二：编辑轨道
                 AddTrack(curAccount, order, 1);
                 MaxTrack = 1;
               }
-              for (t = MaxTrack + Slot[curAccount][order].cd; t <= maxTime; t = t + Slot[curAccount][order].cd)
+              for (t = MaxTrack + slot[curAccount][order].cd; t <= maxTime; t = t + slot[curAccount][order].cd)
                 AddTrack(curAccount, order, t);
             }
             else
@@ -7992,10 +8215,25 @@ void EditTrack()//模块二：编辑轨道
             int order = area - 100;
             DeleteTrack(curAccount, order);
           }
-          else
-            trackSlotSelected = 0;
         }
+
         EditWave(buttons, area, 600, 611);
+
+        //右击队列标题/队列卡：切换或取消选中
+        if (area / 100 == 7)
+        {
+          if (area == 712) //右击标题
+            queueSize[curAccount] = 0;
+          else if (area < 700 + queueSize[curAccount]) //右击队列卡
+          {
+            //如果已经选中一张队列卡，执行插入
+            if (queueSelected >= 700 && queueSelected < 700 + queueSize[curAccount])
+              InsertQueue(curAccount, queueSelected - 700, area - 700);
+            else //没有选中队列卡，则删除右击的队列卡
+              DeleteQueue(curAccount, area - 700);
+          }
+        }
+
         if (area / 100000 == 1)//右键点击轨道：删除轨道
         {
           int order = (area - 100000) / 1000;
@@ -8003,6 +8241,16 @@ void EditTrack()//模块二：编辑轨道
           DeleteTrack(curAccount, order, t);
         }
       }
+
+      if (!isTrackSlotSelectionRetained)
+        trackSlotSelected = 0;
+      isTrackSlotSelectionRetained = false;
+
+      if (!isQueueSelectionRetained)
+        queueSelected = 0;
+      isQueueSelectionRetained = false;
+
+
       SaveTrack();
       LoadTrack();
       RepaintTrack();
@@ -8100,93 +8348,113 @@ void CreateBackupFolder()
   CreatePath(backupPath);//创建本次自动备份文件夹
   sprintf_s(tempTrackForSave, "自动备份\\轨道文件\\%s\\temp.txt", runTimeString);
 }
-/*
-char fewTrack[100][maxPath];
-int fewTrackNum;
-char waterTrack[100][maxPath];
-int waterTrackNum;
+
+char specialTrack[100][maxPath];
+int specialTrackNum;
 const int maxFileNum = 128;
 char fileList[maxFileNum][maxPath];
-//重排文件夹folder内的轨道卡组
-void RearrangeDeck(const char *folder)
+
+//重排特定轨道
+void RemakeTrack(const char *track)
 {
-  if (!PathFileExistsA(folder))
+  int account = 0;
+  //2P轨道判据：2槽是木盘子
+  isCupUsed = false;
+  OpenTrackWithChoice(track, ID_1P);//打开轨道并检查每一波
+  if (strcmp(slot[account][2].name, "木盘子") != 0) //2槽不是木盘子，退出
+    return;
+  bool maltoseExist = false;
+  for (int order = 1; order <= slotNum[account]; order++)
+    if (strcmp(slot[account][order].name, "麦芽糖") == 0 || strcmp(slot[account][order].name, "棉花糖") == 0)
+      maltoseExist = true;
+  //如果携带了麦芽糖/棉花糖或使用了酒杯灯，记录并退出
+  if (maltoseExist || isCupUsed)
+  {
+    strcpy_s(specialTrack[specialTrackNum++], track);
+    return;
+  }
+  //进行调整：1. 删除4酒杯灯 2. 木盘子2插入到冰激凌4 3. 插入麦芽糖到6号位置
+  DeleteFromSlot_File(account, 4);
+  InsertSlot_File(account, 2, 4);
+  AddToSlot_File(account, 14);
+  InsertSlot_File(account, slotNum[account], 5);
+  SaveTrack();
+}
+//棉花糖换麦芽糖
+void CottonToMaltose(const char *track)
+{
+  int account = 0;
+  //2P轨道判据：2槽是木盘子
+  isCupUsed = false;
+  OpenTrackWithChoice(track, ID_1P);//打开轨道并检查每一波
+  bool cottonExist = false;
+  bool maltoseExist = false;
+  int cottonOrder = -1;
+  for (int order = 1; order <= slotNum[account]; order++)
+  {
+    if (strcmp(slot[account][order].name, "棉花糖") == 0)
+    {
+      cottonExist = true;
+      cottonOrder = order;
+    }
+    if (strcmp(slot[account][order].name, "麦芽糖") == 0)
+      maltoseExist = true;
+  }
+  bool onlyCotton = cottonExist && !maltoseExist;
+  if (!onlyCotton)
+  {
+    strcpy_s(specialTrack[specialTrackNum++], track);
+    return;
+  }
+  //进行调整：1. 棉花糖替换为麦芽糖
+  ChangeSlot_File(account, cottonOrder, 14);
+  SaveTrack();
+}
+
+//重排文件夹folder内的轨道卡组
+void RemakeFolder(const char *folder)
+{
+  if (!FileExist(folder))
     return;
   char searchPath[maxPath] = {};
   sprintf_s(searchPath, "%s\\*.txt", folder);
 
-  char trackPath[maxPath] = {};
   int filesNum = GetFileList(searchPath, fileList, maxFileNum);//查找所有txt文件
-
+  char track[maxPath] = {};
   for (int i = 0; i < filesNum; i++)
   {
-    sprintf_s(trackPath, "%s\\%s", folder, fileList[i]);
-    int expectedSlotNum = 13;
-    if (strcmp(fileList[i] + strlen(fileList[i]) - 5, "+.txt") == 0)
-      expectedSlotNum = 10;
-    if (PathFileExistsA(trackPath)) //如果文件存在
-    {
-      isWaterUsed = false;
-      isPuddingUsed = false;
-      isPuddingInSlot12 = false;
-      OpenTrackWithChoice(trackPath, ID_1P);//打开轨道并检查每一波
-      bool isThisTrackWaterUsed = isWaterUsed;//本轨道是否使用了开水
-      bool isPuddingDeleteRequired = isPuddingInSlot12 && !isPuddingUsed;//是否需要删除布丁
-
-      //if (SlotNum[0] == expectedSlotNum - 1) //卡槽数12：增加一张咖啡粉
-      //  AddToSlot_File(0, 23); //增加一张咖啡粉
-      //else if (SlotNum[0] < expectedSlotNum - 1) //卡槽数不足12：记录并跳过
-      //{
-      //  strcpy_s(fewTrack[fewTrackNum++], trackPath);
-      //  continue;
-      //}
-      //ExchangeSlot_File(0, expectedSlotNum, expectedSlotNum - 4);
-      //for (int i = expectedSlotNum - 4; i >= 2; i--)
-      //  ExchangeSlot_File(0, i, i - 1);
-      //
-      ////开水无用删开水
-      //if (isThisTrackWaterUsed)
-      //  strcpy_s(waterTrack[waterTrackNum++], trackPath);
-      //else
-      //  DeleteFromSlot_File(0, expectedSlotNum);
-
-      if (isPuddingDeleteRequired && SlotNum[0] == 12)
-        DeleteFromSlot_File(0, 12);
-      else
-        strcpy_s(waterTrack[waterTrackNum++], trackPath);
-
-      SaveTrack();
-    }
+    sprintf_s(track, "%s\\%s", folder, fileList[i]);
+    CottonToMaltose(track);
   }
 }
-const int maxTypeNum = 128;
-char typeList[maxTypeNum][maxPath];
-void RearrangeDeck()
+const int maxFolderNum = 128;
+char folderList[maxFolderNum][maxPath];
+void RemakeBigFolder(const char *bigFolder)
 {
-  char folder[] = "预制轨道\\通用轨道";
   char searchPath[maxPath] = {};
-  sprintf_s(searchPath, "%s\\*", folder);
-  int typesNum = GetFileList(searchPath, typeList, maxTypeNum);//查找所有文件夹
-  char typePath[maxPath] = {};
-  for (int i = 0; i < typesNum; i++)
+  sprintf_s(searchPath, "%s\\*", bigFolder);
+  int folderNum = GetFileList(searchPath, folderList, maxFolderNum);//查找所有文件夹
+  char folder[maxPath] = {};
+  for (int i = 0; i < folderNum; i++)
   {
-    sprintf_s(typePath, "%s\\%s", folder, typeList[i]);
-    RearrangeDeck(typePath);
+    sprintf_s(folder, "%s\\%s", bigFolder, folderList[i]);
+    RemakeFolder(folder);
   }
-  RearrangeDeck("预制轨道\\公会任务");
-
-  FILE *f;
-  fopen_s(&f, "预制轨道\\少卡槽轨道.txt", "w");
-  for (int i = 0; i < fewTrackNum; i++)
-    fprintf(f, "%s\n", fewTrack[i]);
-  fclose(f);
-
-  fopen_s(&f, "预制轨道\\用开水轨道.txt", "w");
-  for (int i = 0; i < waterTrackNum; i++)
-    fprintf(f, "%s\n", waterTrack[i]);
-  fclose(f);
 }
-*/
+//重排通用轨道、美食大赛和公会任务
+void RemakeAllTrack()
+{
+  RemakeBigFolder("预制轨道\\通用轨道");
+  //RemakeBigFolder("预制轨道\\美食大赛");
+  //RemakeFolder("预制轨道\\公会任务");
+  char message[10000] = {};
+  for (int i = 0; i < specialTrackNum; i++)
+  {
+    strcat_s(message, specialTrack[i]);
+    strcat_s(message, "\n");
+  }
+  PopMessage(nullptr, message);
+}
 int main(int argc, char *argv[])
 {
   DPI = SetDPIAware();//设置DPI感知并获取DPI
@@ -8248,7 +8516,7 @@ int main(int argc, char *argv[])
       for (int account = 0; account < editor[order].accountNum; account++)
         if (strcmp(fullTrackPath[0], editor[order].trackPath[account]) == 0)
         {
-          RecoverWindow(editor[order].hWnd);
+          CenterShow(editor[order].hWnd);
           SetForegroundWindow(editor[order].hWnd);
           MessageBox(editor[order].hWnd, "不能重复打开同一轨道文件。", "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
           return 0;
@@ -8263,7 +8531,7 @@ int main(int argc, char *argv[])
         if (editor[order].accountNum == 1 && strcmp(editor[order].trackPath[0], trackPath1P) == 0)
         {
           LeftClick(editor[order].hWnd, 9999, 9998);//发送“添加2P轨道”点击消息
-          RecoverWindow(editor[order].hWnd);
+          CenterShow(editor[order].hWnd);
           SetForegroundWindow(editor[order].hWnd);
           return 0;
         }
@@ -8287,6 +8555,9 @@ int main(int argc, char *argv[])
   SaveCommonCard();
   SaveProduction();
 
+  //RemakeAllTrack();
+  //return 114514;
+
   //ExchangeGeneralDeck();
   //return 114;
 
@@ -8300,9 +8571,7 @@ int main(int argc, char *argv[])
   }
   isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
 
-  if (FileExist("用户参数\\按波变阵已使用.txt")) //存在文件，说明按波变阵已使用
-    isWaveUsed = 1;
-
+  PopUpdateNotice();//弹出更新公告
   OpenGraph_Fit();
   hWndEditor = GetHWnd();
   LoadTrack();//重新读取第0波轨道
@@ -8312,7 +8581,7 @@ int main(int argc, char *argv[])
 
   EnableDragDropForHighIntegrity(hWndEditor);
   DragAcceptFiles(hWndEditor, TRUE);//允许窗口接收文件
-  RecoverWindow(hWndEditor);
+  CenterShow(hWndEditor);
   SetForegroundWindow(hWndEditor);
   SetWindowText(hWndEditor, wndTitle);
 
@@ -8338,7 +8607,7 @@ int main(int argc, char *argv[])
   tailWidth = textwidth(" ] 002.3|22");
   recordLength = headWidth + cardNameWidth + tailWidth;
 
-  while (1)
+  while (true)
     if (mode == 1)
       EditMap();
     else if (mode == 2)

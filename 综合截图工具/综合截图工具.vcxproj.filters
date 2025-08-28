@@ -20,5 +20,11 @@
     <ClInclude Include="..\track.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="综合截图工具.rc" />
   </ItemGroup>
 </Project>

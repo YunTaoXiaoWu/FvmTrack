@@ -1,0 +1,13 @@
+﻿  综合截图工具.cpp
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(53): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(54): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(69): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(336): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(449): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(1291): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(1292): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(1731): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(1738): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+d:\users\dell\documents\visual studio 2012\projects\轨道编辑器\综合截图工具\..\\track.h(1952): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+综合截图工具.cpp(490): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+  综合截图工具.vcxproj -> D:\Users\Dell\Documents\Visual Studio 2012\Projects\轨道编辑器\x64\Debug\综合截图工具.exe
