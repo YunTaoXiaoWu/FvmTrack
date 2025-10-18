@@ -10,17 +10,20 @@
 #include <type_traits>
 #include <Windows.h> 
 #include <windowsx.h> //组合框控件操作宏
+#include <commctrl.h>
 #include <direct.h>   //获取和修改工作目录
 #include <winhttp.h>
 #include <gdiplus.h>
 #include <graphics.h> //EasyX库
+
+#pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "wininet.lib")
 extern "C" BOOL WINAPI DeleteUrlCacheEntryA(LPCSTR lpszUrlName);
 
-const char version[] = "v4.9.7";//版本号
+const char version[] = "v5.0.2";//版本号
 const int zero = 0;//整数的0
 const int maxPath = 260;//最大文件路径长度
 const int gameWidth = 950, gameHeight = 596;//游戏窗口尺寸
@@ -38,13 +41,17 @@ const int minRequiredSimilarity = 10, maxRequiredSimilarity = 500;
 
 int DPI = 96; //DPI缩放，用于校正点击位置
 int area;//记录最近一次点击的区域
-HWND *pHWndExit;//不为nullptr时，ExitMessage必须在窗口*pHWndExit上弹窗
 bool isExitMessagePopped;//是否已触发ExitMessage
+HWND *pHWndExit;//不为nullptr时，ExitMessage必须在窗口*pHWndExit上弹窗
+bool banMessage;//是否禁用弹窗
+HWND *pHWndActuator;//执行器窗口句柄指针，用于决定PopMessage是否弹窗
 
-//弹出消息框
+//在指定窗口上弹出消息框（forced：是否无视banMessage强制弹窗）
 void PopMessage(HWND hWnd, const char *message, const char *title = "提示")
 {
-  MessageBox(hWnd, message, title, MB_ICONINFORMATION | MB_SYSTEMMODAL);
+  //非执行器调用必弹窗；未勾选banMessage必弹窗；执行器窗口不存在时必弹窗；执行器窗口显示时必弹窗
+  if (!pHWndActuator || !banMessage || !(*pHWndActuator) || IsWindowVisible(*pHWndActuator))
+    MessageBox(hWnd, message, title, MB_ICONINFORMATION | MB_SYSTEMMODAL);
 }
 //弹出消息框并退出进程（填写pHwnd时，必须等到*pHWnd不为0才弹窗）
 void ExitMessage(const char *message)
@@ -193,7 +200,8 @@ void SetFontSize(int size)
 void CenterView(const char *s, int x, int y)
 {
   outtextxy(x - textwidth(s) / 2, y - textheight(s) / 2, s);
-}//给定中心坐标(x,y)显示文字s
+}
+//给定中心坐标(x,y)显示文字s
 void CenterView(char c, int x, int y)
 {
   if (c == 0)
@@ -534,13 +542,6 @@ void RemoveBlank(char(&source)[size])
   }
   strcpy_s(source, dest);//将dest拷贝到source
 }
-//向指定窗口输入一段字符串（仅限ASCII字符）
-void StringToWindow(const char *str, HWND hWnd)
-{
-  int length = strlen(str);
-  for (int i = 0; i < length; i++)// 逐个字符发送到窗口
-    PostMessageA(hWnd, WM_CHAR, str[i], 0);
-}
 //将ANSI字符串转化为UTF-16字符串
 template <size_t size>
 int AnsiToUtf16(const char *str, wchar_t(&wstr)[size])
@@ -565,11 +566,12 @@ template <size_t width, size_t height>
 bool ColorToBitmap(COLORREF(&color)[height][width], const char *path,
   int x0 = 0, int y0 = 0, int bmpWidth = 0, int bmpHeight = 0)
 {
-  // 当bmp尺寸缺省时计算尺寸
-  if (bmpWidth == 0)
+  // 当bmp尺寸缺省或过大时，设为最大尺寸
+  if (bmpWidth == 0 || bmpWidth > (int)width - x0)
     bmpWidth = width - x0;
-  if (bmpHeight == 0)
+  if (bmpHeight == 0 || bmpHeight > (int)height - y0)
     bmpHeight = height - y0;
+
   Gdiplus::Bitmap bitmap(bmpWidth, bmpHeight);
 
   // 锁定位图内存
@@ -592,15 +594,47 @@ bool ColorToBitmap(COLORREF(&color)[height][width], const char *path,
   SaveBitmap(bitmap, path);
   return true;
 }
+//将指定尺寸的COLORREF数组保存为位图
+bool ColorToBitmap(COLORREF *color, int width, int height, const char *path,
+  int x0 = 0, int y0 = 0, int bmpWidth = 0, int bmpHeight = 0)
+{
+  // 当bmp尺寸缺省或过大时，设为最大尺寸
+  if (bmpWidth == 0 || bmpWidth > (int)width - x0)
+    bmpWidth = width - x0;
+  if (bmpHeight == 0 || bmpHeight > (int)height - y0)
+    bmpHeight = height - y0;
+
+  Gdiplus::Bitmap bitmap(bmpWidth, bmpHeight);
+
+  // 锁定位图内存
+  Gdiplus::BitmapData bmpData;
+  Gdiplus::Rect rect(0, 0, bmpWidth, bmpHeight);
+  bitmap.LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bmpData);
+
+  // 写入颜色数据
+  for (int y = 0; y < bmpHeight; y++)
+  {
+    COLORREF *row = (COLORREF *)bmpData.Scan0 + y * bmpData.Stride / 4;
+    for (int x = 0; x < bmpWidth; x++)
+      row[x] = color[(y0 + y) * width + (x0 + x)] | 0xff000000;
+  }
+
+  // 解锁
+  bitmap.UnlockBits(&bmpData);
+
+  // 保存
+  SaveBitmap(bitmap, path);
+  return true;
+}
 //获得窗口尺寸（大厅、选服窗口要缩放，游戏窗口固定950*596）
 bool GetWindowSize(HWND hWnd, int *pWidth, int *pHeight)
 {
   if (!IsWindow(hWnd))
     return false;
-  RECT WindowRect;
-  GetWindowRect(hWnd, &WindowRect);//获取窗口尺寸
-  *pWidth = (WindowRect.right - WindowRect.left) * 96 / DPI;//获取窗口尺寸的宽高
-  *pHeight = (WindowRect.bottom - WindowRect.top) * 96 / DPI;
+  RECT windowRect;
+  GetWindowRect(hWnd, &windowRect);//获取窗口尺寸
+  *pWidth = (windowRect.right - windowRect.left) * 96 / DPI;//获取窗口尺寸的宽高
+  *pHeight = (windowRect.bottom - windowRect.top) * 96 / DPI;
   char ClassName[256];
   GetClassNameA(hWnd, ClassName, 256);//获取窗口类名
   //游戏窗口尺寸固定为950x596
@@ -737,7 +771,7 @@ bool IsGameWindowVisible(HWND hWnd)
 {
   return IsWindowVisible(hWnd) && !IsIconic(GetHallWindow(hWnd));//窗口可见且大厅没有最小化
 }
-//多次调用PrintWindow直到左上角不是黑色，成功返回1，一直是黑色返回0
+//多次调用PrintWindow直到左上角不是黑色，成功返回true
 bool MultiPrintWindow(HWND hWnd, HDC hMemDC, int times)
 {
   int counter = 0;
@@ -906,11 +940,27 @@ void ReportLastError()
     NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), message, sizeof(message), NULL);
   MessageBox(NULL, message, "", MB_ICONINFORMATION | MB_SYSTEMMODAL);
 }
+//向指定窗口输入一段字符串（仅限ASCII字符）
+void StringToWindow(const char *str, HWND hWnd)
+{
+  int length = strlen(str);
+  for (int i = 0; i < length; i++)// 逐个字符发送到窗口
+    PostMessageA(hWnd, WM_CHAR, str[i], 0);
+
+  //char tip[1000] = {};
+  //sprintf_s(tip, "在窗口%d内输入了%s", (int)hWnd, str);
+  //PopMessage(nullptr, tip);
+}
 //在窗口hWnd内点击，返回是否成功
 BOOL LeftClick(HWND hWnd, int x, int y)
 {
   BOOL result = PostMessage(hWnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
   PostMessage(hWnd, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+
+  //char tip[1000] = {};
+  //sprintf_s(tip, "在窗口%d内点击了(%d,%d)", (int)hWnd, x, y);
+  //PopMessage(nullptr, tip);
+
   return result;
 }
 //在窗口hWnd内点击，返回是否成功
@@ -924,6 +974,26 @@ BOOL RightClick(HWND hWnd, int x, int y)
 BOOL MouseMove(HWND hWnd, int x, int y)
 {
   return PostMessage(hWnd, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+}
+//将整数坐标乘DPI
+int MultDPI(int x)
+{
+  return int(double(x) * DPI / 96 + 0.5);
+}
+//将整数坐标除以DPI
+int DivDPI(int x)
+{
+  return int(double(x) * 96 / DPI + 0.5);
+}
+//将矩形区域按DPI缩放还原
+RECT DivDPI(RECT &rect)
+{
+  int x = DivDPI(rect.left);
+  int y = DivDPI(rect.top);
+  int width = DivDPI(rect.right - rect.left);
+  int height = DivDPI(rect.bottom - rect.top);
+  RECT newRect = { x, y, x + width, y + height };
+  return newRect;
 }
 //在窗口hWnd内点击，位置进行DPI换算，返回是否成功
 BOOL LeftClickDPI(HWND hWnd, int x, int y)
@@ -945,6 +1015,18 @@ BOOL MouseMoveDPI(HWND hWnd, int x, int y)
   int x1 = int(double(x) * DPI / 96 + 0.5);
   int y1 = int(double(y) * DPI / 96 + 0.5);
   return MouseMove(hWnd, x1, y1);
+}
+BOOL LeftClickDPI(HWND hWnd, POINT point)
+{
+  return LeftClickDPI(hWnd, point.x, point.y);
+}
+BOOL RightClickDPI(HWND hWnd, POINT point)
+{
+  return RightClickDPI(hWnd, point.x, point.y);
+}
+BOOL MouseMoveDPI(HWND hWnd, POINT point)
+{
+  return MouseMoveDPI(hWnd, point.x, point.y);
 }
 //后台模拟按键
 BOOL PressKey(HWND hWnd, int KeyCode)
@@ -1152,16 +1234,6 @@ bool IsBitmapCovering(COLORREF(&color0)[height0][width0], COLORREF(&color1)[heig
         return false;
   return true;
 }
-
-//位图color0从(x0,y0)开始的cx*cy区域是否全部满足颜色要求requirement
-bool IsBitmapFit(bool requirement(COLORREF, int), COLORREF *(&color0)[4320], int platform, int cx, int cy, int x0 = 0, int y0 = 0, int step = 1)
-{
-  for (int x = cx - 1; x >= 0; x -= step)
-    for (int y = 0; y < cy; y += step)
-      if (!requirement(color0[y0 + y][x0 + x], platform))
-        return false;
-  return true;
-}
 //检索路径符合表达式searchPath（例如"图片\\*.png"）的所有文件（夹），返回文件数量
 int GetFileList(char *searchPath, char(*fileList)[maxPath], int maxFileNum)
 {
@@ -1284,61 +1356,85 @@ bool IsAnsiAndUnicodeEqual(const char *ansiStr, const wchar_t *unicodeStr)
   //先把Unicode转Ansi，然后比较
   int ansiSize = WideCharToMultiByte(CP_ACP, 0, unicodeStr, -1, NULL, 0, NULL, NULL);//计算ANSI编码文本所需的缓冲区大小
   char *ansiText = (char *)malloc(ansiSize);//分配ANSI编码文本的缓冲区
+  if (!ansiText)
+    return false;
   WideCharToMultiByte(CP_ACP, 0, unicodeStr, -1, ansiText, ansiSize, NULL, NULL);//将UTF-16编码的文本转换为ANSI编码
-  bool result = strcmp(ansiText, ansiStr) == 0;
+  bool equal = strcmp(ansiText, ansiStr) == 0;
   free(ansiText);
-  return result;
+  return equal;
 }
 //若剪贴板中缺少ANSI或Unicode中的一种，补全另一种
 void CompleteClipboard()
 {
   if (!OpenClipboard(NULL))//打开剪贴板，打不开就结束
     return;
-  if (GetClipboardData(CF_TEXT) != NULL)//检查剪贴板中是否有文本，如果有
+
+  HGLOBAL hAnsi = GetClipboardData(CF_TEXT);//获取剪贴板中CF_TEXT文本的句柄
+  HGLOBAL hUnicode = GetClipboardData(CF_UNICODETEXT);//获取剪贴板中CF_UNICODETEXT文本的句柄
+
+  //如果剪贴板中有文本
+  if (hAnsi && hUnicode)
   {
-    HGLOBAL ansiClipBuffer = GetClipboardData(CF_TEXT);//获取剪贴板中CF_TEXT文本的句柄
-    HGLOBAL unicodeClipBuffer = GetClipboardData(CF_UNICODETEXT);//获取剪贴板中CF_UNICODETEXT文本的句柄
-    char *ansiBuffer = (char *)GlobalLock(ansiClipBuffer);//锁定剪贴板Ansi文本的内存
-    wchar_t *unicodeBuffer = (wchar_t *)GlobalLock(unicodeClipBuffer);//锁定剪贴板Ansi文本的内存
+    char *ansiBuffer = (char *)GlobalLock(hAnsi);//锁定剪贴板Ansi文本的内存
+    wchar_t *unicodeBuffer = (wchar_t *)GlobalLock(hUnicode);//锁定剪贴板Ansi文本的内存
     if (IsAnsiAndUnicodeEqual(ansiBuffer, unicodeBuffer)) //如果两者相等，说明两者都有，直接退出
     {
-      GlobalUnlock(ansiClipBuffer);//解锁剪贴板Ansi内存块
-      GlobalUnlock(unicodeClipBuffer);//解锁剪贴板Unicode内存块
+      GlobalUnlock(hAnsi);//解锁剪贴板Ansi内存块
+      GlobalUnlock(hUnicode);//解锁剪贴板Unicode内存块
       CloseClipboard();//关闭剪贴板
       return;
     }
     //运行到这里，说明Ansi和Unicode不相等，必然缺少其中一种
-    if (strchr(ansiBuffer, '?') != NULL)//如果AnsiBuffer中有'?'，说明剪贴板中缺少CF_TEXT文本，需补齐CF_TEXT文本
+
+    //如果ansiBuffer中有'?'，说明剪贴板中缺少CF_TEXT文本，需补齐CF_TEXT文本
+    if (strchr(ansiBuffer, '?'))
     {
-      GlobalUnlock(ansiClipBuffer);//解锁剪贴板Ansi内存块
-      int AnsiSize = WideCharToMultiByte(CP_ACP, 0, unicodeBuffer, -1, NULL, 0, NULL, NULL);//计算ANSI编码文本所需的缓冲区大小
-      char *AnsiText = (char *)malloc(AnsiSize * sizeof(char));//分配ANSI编码文本的缓冲区
-      WideCharToMultiByte(CP_ACP, 0, unicodeBuffer, -1, AnsiText, AnsiSize, NULL, NULL);//将UTF-16编码的文本转换为ANSI编码
-      GlobalUnlock(unicodeBuffer);//解锁剪贴板Unicode内存块
-      //Unicode文本已转换为CF_TEXT文本存入AnsiText，接下来把AnsiText写入剪贴板
-      HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, (AnsiSize + 1) * sizeof(char));//分配用于储存写入剪贴板内容的空间
+      GlobalUnlock(hAnsi);//解锁剪贴板Ansi内存块
+      int ansiSize = WideCharToMultiByte(CP_ACP, 0, unicodeBuffer, -1, NULL, 0, NULL, NULL);//计算ANSI文本大小
+      char *ansiText = (char *)malloc(ansiSize * sizeof(char));//分配ANSI文本缓冲区
+      if (!ansiText)
+      {
+        GlobalUnlock(hUnicode);//解锁剪贴板Unicode内存块
+        CloseClipboard();//关闭剪贴板
+        return;
+      }
+      WideCharToMultiByte(CP_ACP, 0, unicodeBuffer, -1, ansiText, ansiSize, NULL, NULL);//将UTF-16文本转换为ANSI
+      GlobalUnlock(hUnicode);//解锁剪贴板Unicode内存块
+
+      //至此，剪贴板中的Unicode文本已转换为Ansi文本存入ansiText，接下来把ansiText写入剪贴板
+      HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, ansiSize * sizeof(char));
       char *buffer = (char *)GlobalLock(hMem);//锁定全局内存对象并获取指向其数据的指针
-      strcpy_s(buffer, AnsiSize + 1, AnsiText);
+      strcpy_s(buffer, ansiSize, ansiText);
       GlobalUnlock(hMem);
       SetClipboardData(CF_TEXT, hMem);//向剪贴板添加ANSI文本
+
       CloseClipboard();//关闭剪贴板
-      free(AnsiText);//释放内存并解锁剪贴板数据
+      free(ansiText);//释放内存并解锁剪贴板数据
     }
-    else//如果AnsiBuffer中没有'?'，说明剪贴板中缺少CF_UNICODETEXT文本，需补齐CF_UNICODETEXT文本
+    //如果AnsiBuffer中没有'?'，说明剪贴板中缺少CF_UNICODETEXT文本，需补齐CF_UNICODETEXT文本
+    else
     {
-      GlobalUnlock(unicodeBuffer);//解锁剪贴板Unicode内存块
-      int UnicodeSize = MultiByteToWideChar(CP_ACP, 0, ansiBuffer, -1, NULL, 0);
-      wchar_t *UnicodeText = (wchar_t *)malloc(UnicodeSize * sizeof(wchar_t));
-      MultiByteToWideChar(CP_ACP, 0, ansiBuffer, -1, UnicodeText, UnicodeSize);//Ansi转换为Unicode
-      GlobalUnlock(ansiClipBuffer);//解锁剪贴板Ansi内存块
-      //Ansi文本已转换为Unicode文本存入UnicodeText，接下来把UnicodeText写入剪贴板
-      HGLOBAL hMem = GlobalAlloc(GMEM_DDESHARE, (UnicodeSize + 1) * sizeof(wchar_t));
+      GlobalUnlock(hUnicode);//解锁剪贴板Unicode内存块
+      int unicodeSize = MultiByteToWideChar(CP_ACP, 0, ansiBuffer, -1, NULL, 0);
+      wchar_t *unicodeText = (wchar_t *)malloc(unicodeSize * sizeof(wchar_t));
+      if (!unicodeText)
+      {
+        GlobalUnlock(hAnsi);//解锁剪贴板Ansi内存块
+        CloseClipboard();//关闭剪贴板
+        return;
+      }
+      MultiByteToWideChar(CP_ACP, 0, ansiBuffer, -1, unicodeText, unicodeSize);//Ansi转换为Unicode
+      GlobalUnlock(hAnsi);//解锁剪贴板Ansi内存块
+
+      //至此，剪贴板中的Ansi文本已转换为Unicode文本存入unicodeText，接下来把UnicodeText写入剪贴板
+      HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, unicodeSize * sizeof(wchar_t));
       wchar_t *wbuffer = (wchar_t *)GlobalLock(hMem);
-      wcscpy_s(wbuffer, UnicodeSize + 1, UnicodeText);
+      wcscpy_s(wbuffer, unicodeSize, unicodeText);
       GlobalUnlock(hMem);
       SetClipboardData(CF_UNICODETEXT, hMem);
+
       CloseClipboard();//关闭剪贴板
-      free(UnicodeText);//释放内存并解锁剪贴板数据
+      free(unicodeText);//释放内存并解锁剪贴板数据
     }
   }
   else //如果连文本都没有，直接关闭剪贴板，结束函数
@@ -1347,7 +1443,37 @@ void CompleteClipboard()
     return;
   }
 }
-//获取剪贴板文本
+//修复输入框复制、剪切、粘贴、全选功能的过程函数
+LRESULT CALLBACK RepairEditProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+  UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+  //处理粘贴消息时，先补全剪贴板，再执行默认粘贴
+  if (uMsg == WM_PASTE)
+  {
+    CompleteClipboard();
+    return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+  }
+  //处理复制或剪切消息时，先执行默认的复制或剪切，再补全剪贴板
+  else if (uMsg == WM_COPY || uMsg == WM_CUT)
+  {
+    LRESULT defResult = DefSubclassProc(hWnd, uMsg, wParam, lParam);
+    CompleteClipboard();
+    return defResult;
+  }
+  //全选功能
+  else if (uMsg == WM_KEYDOWN)
+  {
+    if (wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000))
+      SendMessage(hWnd, EM_SETSEL, 0, -1);
+  }
+  return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+//修复输入框的复制、剪切、粘贴、全选功能
+void RepairEdit(HWND hEdit)
+{
+  SetWindowSubclass(hEdit, RepairEditProc, 1, 0);
+}
+//获取剪贴板中的文本
 template<size_t size>
 bool GetClipboardString(char(&dest)[size])
 {
@@ -1570,50 +1696,6 @@ int RegionalMapShot(HWND hWnd, COLORREF(&color)[height][width], int x0 = 0, int 
   ReleaseDC(NULL, hScreenDC);
   return result;
 }
-//对大厅进行截图，存入一维数组hall并返回，记录大厅宽高
-int HallShot(HWND hWnd, COLORREF *&color, int *pWidth, int *pHeight, int times)
-{
-  if (!IsWindowVisible(hWnd))
-    return 0;
-
-  int width = 0, height = 0;
-  GetWindowSize(hWnd, &width, &height);//获取窗口宽高
-  if (pWidth)
-    *pWidth = width;
-  if (pHeight)
-    *pHeight = height;
-  if (color)//如果pHall内存还没释放，则释放内存
-    free(color);
-  color = (COLORREF *)malloc(width * height * sizeof(COLORREF));//分配内存
-  if (!color) //分配失败则返回0
-    return 0;
-
-  HDC hScreenDC = GetDC(hWnd);
-  HDC hMemDC = CreateCompatibleDC(hScreenDC);
-  HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);//创建位图
-  SelectObject(hMemDC, hBitmap);
-
-  for (int i = 0; i < times; i++)
-    PrintWindow(hWnd, nullptr, NULL);//多次截图促进画面更新
-  Sleep(1);
-  PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
-  InvalidateRect(hWnd, NULL, false);//重画
-
-  BITMAPINFO bmi = { 0 };
-  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);//设置BITMAPINFO结构
-  bmi.bmiHeader.biWidth = width;
-  bmi.bmiHeader.biHeight = -height;
-  bmi.bmiHeader.biPlanes = 1;
-  bmi.bmiHeader.biBitCount = 32; // 32位色深
-  GetDIBits(hMemDC, hBitmap, 0, height, color, &bmi, DIB_RGB_COLORS);//获取位图的像素数据
-  for (int i = 0; i < width * height; i++)
-    color[i] &= 0x00ffffff;
-
-  DeleteObject(hBitmap);
-  DeleteDC(hMemDC);
-  ReleaseDC(NULL, hScreenDC);
-  return 1;
-}
 // 允许WM_DROPFILES消息通过UAC过滤器
 void EnableDragDropForHighIntegrity(HWND hwnd)
 {
@@ -1638,7 +1720,7 @@ void PaintCheckBox(int x, int y, int width, int height, int offsetX)
 //在给定的格子内画勾选框的√，offsetX为勾选框偏离格子中线的距离
 void PaintCheck(int x, int y, int width, int height, int offsetX)
 {
-  int dx = offsetX + 1, dy = 3;
+  int dx = offsetX, dy = 3;
   CenterView("√", x + width / 2 + dx, y + height / 2 + dy);
 }
 //检查图片尺寸。返回0=检查合格；-1=itemMode模式下遇到"背景.png"；-2=不合格，需要报错
@@ -1930,6 +2012,114 @@ struct Monitor
   {
     MoveToEx(hDCUsed, x1, y1, nullptr);
     LineTo(hDCUsed, x2, y2);
+  }
+  void rectangle(int x1, int y1, int x2, int y2) const
+  {
+    line(x1, y1, x2, y1);
+    line(x1, y2, x2, y2);
+    line(x1, y1, x1, y2);
+    line(x2, y1, x2, y2);
+  }
+};
+
+// 位图窗口类型
+struct BitmapWindow
+{
+  int width, height;//窗口尺寸
+  COLORREF *pColor;//位图左上角地址
+  HDC hDC;//设备环境
+  HBITMAP hBmp;//位图
+  //申请位图空间
+  BitmapWindow(int bmpWidth, int bmpHeight)
+  {
+    //申请位图空间
+    pColor = (COLORREF *)MallocColor(bmpWidth, bmpHeight, &hDC, &hBmp);
+    HFONT hFont = CreateFont(16, 0, 0, 0, 1000, FALSE, FALSE, FALSE, //创建16号等线字体
+      ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+      ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, "等线");
+    HPEN hPen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+
+    SelectObject(hDC, hFont);//设置字体
+    SelectObject(hDC, hPen);//设置画笔
+    SetTextColor(hDC, RGB(255, 255, 255)); //设置字体颜色
+    SetBkColor(hDC, RGB(0, 0, 0));//设置背景颜色
+
+    SetGraphicsMode(hDC, GM_ADVANCED);
+  }
+  void setaspectratio(float ratio) const
+  {
+    // 创建变换矩阵
+    XFORM xForm = {};
+    xForm.eM11 = ratio;  // X 轴缩放
+    xForm.eM12 = 0;               // 无扭曲
+    xForm.eM21 = 0;               // 无扭曲
+    xForm.eM22 = ratio;  // Y 轴缩放
+    xForm.eDx = 0;                // 无平移
+    xForm.eDy = 0;                // 无平移
+
+    // 设置变换矩阵
+    SetWorldTransform(hDC, &xForm);
+  }
+  //修改字体大小
+  void settextsize(int size) const
+  {
+    HFONT hFontOld = (HFONT)GetCurrentObject(hDC, OBJ_FONT); //获取旧字体
+    LOGFONT logFont = {};
+    GetObject(hFontOld, sizeof(LOGFONT), &logFont); // 获取字体属性
+    logFont.lfHeight = -size; // 设置新的字体高度
+    HFONT hFont = CreateFontIndirect(&logFont);// 创建新的字体
+    SelectObject(hDC, hFont); // 选择新字体
+    DeleteObject(hFontOld); //删除旧字体
+  }
+  //设置字体颜色
+  void settextcolor(COLORREF color) const
+  {
+    SetTextColor(hDC, color);
+  }
+  //设置背景颜色
+  void SetBackgroundColor(COLORREF color) const
+  {
+    SetBkColor(hDC, color);
+  }
+  //输出文字
+  void outtextxy(const char *text, int x, int y) const
+  {
+    TextOutA(hDC, x, y, text, strlen(text));
+  }
+  //输出数字
+  void outtextxy(int num, int x, int y) const
+  {
+    char text[20];
+    sprintf_s(text, "%d", num);
+    TextOutA(hDC, x, y, text, strlen(text));
+  }
+  // 获取文本宽度
+  int textwidth(const char *text) const
+  {
+    SIZE size;
+    if (GetTextExtentPoint32A(hDC, text, lstrlenA(text), &size))
+      return size.cx;
+    return 0;
+  }
+  // 获取文本高度
+  int textheight(const char *text) const
+  {
+    SIZE size;
+    if (GetTextExtentPoint32A(hDC, text, lstrlenA(text), &size))
+      return size.cy;
+    return 0;
+  }
+  //给定中心坐标(x,y)显示文字s
+  void CenterView(const char *s, int x, int y)
+  {
+    outtextxy(s, x - textwidth(s) / 2, y - textheight(s) / 2);
+  }
+
+  //画线
+  void line(int x1, int y1, int x2, int y2) const
+  {
+    MoveToEx(hDC, x1, y1, nullptr);
+    LineTo(hDC, x2, y2);
   }
 };
 // 创建透明窗口并进行消息循环
@@ -2252,14 +2442,25 @@ void GetKeyValue(int &value, const char *text, const char *keyword)
     value = atoi(keyString + length);
   }
 }
-//勾选框idItem是否选中，是返回1，否返回0
-int GetItemCheck(HWND hDlg, int idItem)
+//勾选框idItem是否选中
+bool GetCheck(HWND hDlg, int idItem)
 {
   UINT checkState = SendMessage(GetDlgItem(hDlg, idItem), BM_GETCHECK, 0, 0);
-  if (checkState == BST_CHECKED)
-    return 1;
-  else
-    return 0;
+  return checkState == BST_CHECKED;
+}
+//获取选中的单选按钮id
+int GetCheckedRadio(HWND hDlg, int idBegin, int idEnd)
+{
+  for (int id = idBegin; id <= idEnd; id++)
+    if (IsDlgButtonChecked(hDlg, id) == BST_CHECKED)
+      return id;
+  return 0;
+}
+
+//设置勾选框状态
+void SetCheck(HWND hDlg, int idItem, bool checked)
+{
+  CheckDlgButton(hDlg, idItem, checked ? BST_CHECKED : BST_UNCHECKED);
 }
 //对话框位置居中
 void CenterDialog(HWND hDlg)
@@ -2270,4 +2471,75 @@ void CenterDialog(HWND hDlg)
   int xPos = (desktop.left + desktop.right - (dialog.right - dialog.left)) / 2;
   int yPos = (desktop.top + desktop.bottom - (dialog.bottom - dialog.top)) / 2;
   SetWindowPos(hDlg, HWND_TOP, xPos, yPos, 0, 0, SWP_NOSIZE);
+}
+//获取管理员权限
+void ClaimAdministratorPower()
+{
+  // 判断自己是否是管理员
+  BOOL isAdmin = FALSE;
+  PSID adminGroup = NULL;
+  SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+
+  if (AllocateAndInitializeSid(&ntAuthority, 2,
+    SECURITY_BUILTIN_DOMAIN_RID,
+    DOMAIN_ALIAS_RID_ADMINS,
+    0, 0, 0, 0, 0, 0,
+    &adminGroup))
+  {
+    CheckTokenMembership(NULL, adminGroup, &isAdmin);
+    FreeSid(adminGroup);
+  }
+
+  // 如果不是管理员，重新启动自己请求提升权限
+  if (!isAdmin)
+  {
+    TCHAR szPath[MAX_PATH];
+    GetModuleFileName(NULL, szPath, MAX_PATH);
+    ShellExecute(NULL, "runas", szPath, NULL, NULL, SW_SHOWNORMAL);
+    exit(0); // 退出当前进程
+  }
+}
+//将游戏窗口hwndGame截图保存到game，截图成功返回1
+int GameShot(HWND hwndGame, Map &game, HDC &hdcGame)
+{
+  if (!IsWindow(hwndGame))
+    return 0;
+  if (!IsGameWindowVisible(hwndGame))
+    return 0;
+
+  int result = MultiPrintWindow(hwndGame, hdcGame, 5);//截图5次直到成功，记录结果
+  InvalidateRect(hwndGame, NULL, false);//重画
+
+  //不考虑偏移，原位删除首字节
+  for (int y = 0; y < gameHeight; y++)
+    for (int x = 0; x < gameWidth; x++)
+      game[y][x] &= 0x00ffffff;
+
+  return result;
+}
+//置顶窗口
+void SetWindowTopMost(HWND hWnd)
+{
+  SetWindowPos(
+    hWnd,               // 目标窗口
+    HWND_TOPMOST,       // 插入到置顶层
+    0, 0, 0, 0,         // 位置和大小（忽略）
+    SWP_NOMOVE | SWP_NOSIZE // 保持原位置和大小
+  );
+}
+//取消置顶窗口
+void CancelWindowTopMost(HWND hWnd)
+{
+  SetWindowPos(
+    hWnd,
+    HWND_NOTOPMOST,     // 移出置顶层
+    0, 0, 0, 0,
+    SWP_NOMOVE | SWP_NOSIZE
+  );
+}
+//判断窗口是否置顶
+bool IsWindowTopMost(HWND hWnd)
+{
+  LONG exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+  return (exStyle & WS_EX_TOPMOST) != 0;
 }

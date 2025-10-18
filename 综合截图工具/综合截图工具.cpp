@@ -15,8 +15,8 @@ white = RGB(255, 255, 255), black = RGB(30, 30, 30);
 //标签
 const int tagNum = 5;
 const int tagX = 0, tagY = 0, tagWidth = 90, tagHeight = 36;//标签栏
-const int QQ_HEAD = 0, TRASH = 1, CUSTOM = 2, IMAGES = 3, ROLE = 4;//QQ头像 可删物品 自定卡槽 自定图像 角色名
-const char tagsName[tagNum][20] = { "QQ头像", "可删物品", "自定卡槽", "自定图像", "角色名" };
+const int QQ_HEAD = 0, TRASH = 1, CUSTOM = 2, IMAGES = 3, ROLE = 4;//QQ头像 清理背包 自定卡槽 自定图像 角色名
+const char tagsName[tagNum][20] = { "QQ头像", "清理背包", "自定卡槽", "自定图像", "角色名" };
 const int RECOGNITION = 1, SHOT = 2;//识别和截图
 
 //自定卡槽标签参数
@@ -24,7 +24,7 @@ const int customX = 10, customY = 20, customCoreWidth = 25, customCoreHeight = 1
 const int bagX = 382, customWidth = 49, customHeight = 57;
 int bagY;//防御卡背包Y：不同任务可能有不同的值
 const int bagY1 = 179, bagY2 = 407;//确定bagY的范围
-//可删物品标签参数
+//清理背包标签参数
 const int propX = 468, propWidth = 49, propHeight = 49;//道具背包
 int propY;
 const int propY1 = 89, propY2 = 89 + propHeight + 10;//确定bagY的范围
@@ -32,7 +32,7 @@ const int propY1 = 89, propY2 = 89 + propHeight + 10;//确定bagY的范围
 const int tutorWidth = wndWidth, tutorHeight = wndHeight - tagHeight;//确定bagY的范围
 COLORREF tutor[tagNum - 1][tutorHeight][tutorWidth];
 
-int tag;//0=QQ头像 1=可删物品 2=自定卡槽 3=自定图像
+int tag;//0=QQ头像 1=清理背包 2=自定卡槽 3=自定图像
 int mode;//1=识别模式；2=截图模式
 bool isCardTemplate;//当前模板是否为卡片（截图卡片成功时设为true，截图物件或更换模板成功时设为false）
 bool isExited;//是否点击了关闭
@@ -184,14 +184,14 @@ int trashNum;//可删物品数量
 //载入可删物品
 void LoadTrash()
 {
-  if (!FileExist("可删物品"))
+  if (!FileExist("清理背包"))
     return;
-  int filesNum = GetFileList("可删物品\\*.png", trashList, maxTrashNum);//查找所有png文件
+  int filesNum = GetFileList("清理背包\\*.png", trashList, maxTrashNum);//查找所有png文件
   trashNum = 0;
   char path[maxPath] = {};
   for (int i = 0; i < filesNum && trashNum < maxTrashNum; i++)
   {
-    sprintf_s(path, "可删物品\\%s", trashList[i]);
+    sprintf_s(path, "清理背包\\%s", trashList[i]);
     if (FileExist(path)) //如果可以打开
     {
       BitmapToColor(path, trash[trashNum].image);//读取卡片图像到image
@@ -447,13 +447,6 @@ bool FindCustom(int row, int column, int *pCode = nullptr)
       return true;
     }
   return false;
-}
-//调用本进程弹出高清对话框
-void PopMessageDPI(HWND hWnd, const char *message)
-{
-  char cmd[1000];
-  sprintf_s(cmd, "\"%s\" %d \"%s\"", programName, (int)hWnd, message);
-  Execute(cmd);
 }
 void RecordColor(COLORREF color)
 {
@@ -744,13 +737,13 @@ void ViewRoleName()
   PaintGrid(16, 3, roleX, roleY - roleHeight, roleWidth, roleHeight);
 }
 //绘制道具框线
-void ViewPropGrid()
+void ViewProp()
 {
   if (hWndGame == nullptr)
     return;
 
   //标注存在的可删道具
-  SetFontSize(14);
+  SetFontSize(13);
   settextcolor(red);
   setfillcolor(white);
   int code = 0;
@@ -787,7 +780,7 @@ void removeChar(char *str, char ch)
   }
 }
 //绘制卡片框线，标注存在的卡片
-void ViewSlotGrid()
+void ViewCustom()
 {
   if (hWndGame == nullptr)
     return;
@@ -846,8 +839,8 @@ const char *tutorString[tagNum][2] = { {
     "截取空间服登录游戏所需的头像。",
     "将右上角图标拖动至快捷登录界面即可。"
   }, {
-    "截取可删除的物品和可分解的宝石。",
-    "将右上角图标拖动至背包，单击物品截图，右键删除截图。"
+    "截取可删除的道具、可分解的宝石和可使用的装备（消耗品）。",
+    "将右上角图标拖动至道具或装备背包，单击物品截图，右键删除截图。"
   }, {
     "截取需要自动携带的防御卡。",
     "将右上角图标拖动至选卡界面，单击卡片截图，右键删除截图。"
@@ -890,15 +883,15 @@ void Repaint()
     {
       if (tag == QQ_HEAD) //QQ头像标签
         ViewMap();//绘制地图
-      else if (tag == TRASH) //可删物品标签
+      else if (tag == TRASH) //清理背包标签
       {
         ViewMap();//绘制地图
-        ViewPropGrid();//绘制卡片框线
+        ViewProp();//绘制道具框线和名称
       }
       else if (tag == CUSTOM) //自定卡槽标签
       {
         ViewMap();//绘制地图
-        ViewSlotGrid();//绘制卡片框线
+        ViewCustom();//绘制卡片框线和名称
       }
       else if (tag == IMAGES) //自定图像标签
       {
@@ -933,7 +926,7 @@ void ChangeTemplate(const char *itemFullPath)
   if (!IsItemPathLegal(shortPath, itemName, &requiredSimilarity,
     &offsetX, &offsetY, &realGridWidth, &realGridHeight))
   {
-    PopMessageDPI(hWndTool, "截图名称不合格。");
+    PopMessage(hWndTool, "截图名称不合格。");
     return;
   }
   EraseTemplate();//清除原模板颜色
@@ -1186,14 +1179,14 @@ void TryCatchSlotTemplate()
     if (CatchSlotTemplate(path))
     {
       sprintf_s(message, "卡片截图已保存至\n【%s】", path);
-      PopMessageDPI(hWndTool, message);
+      PopMessage(hWndTool, message);
     }
     else //卡片截取失败
     {
       if (isBackgroundCatched)
-        PopMessageDPI(hWndTool, "卡片截取失败。");
+        PopMessage(hWndTool, "卡片截取失败。");
       else
-        PopMessageDPI(hWndTool, "卡片截取失败，请先截取背景。");
+        PopMessage(hWndTool, "卡片截取失败，请先截取背景。");
     }
   }
 }
@@ -1257,6 +1250,8 @@ int headDifference(COLORREF head0[87][87], COLORREF head1[87][87])
   for (int x = 0; x < headWidth; x++)
     for (int y = 0; y < headHeight; y++)
     {
+      if (x < 30 && y < 17)
+        continue;
       int diffR = GetRValue(head0[x][y]) - GetRValue(head1[x][y]);
       int diffG = GetGValue(head0[x][y]) - GetGValue(head1[x][y]);
       int diffB = GetBValue(head0[x][y]) - GetBValue(head1[x][y]);
@@ -1264,21 +1259,60 @@ int headDifference(COLORREF head0[87][87], COLORREF head1[87][87])
     }
   return diff;
 }
+COLORREF *imgHall;
+HDC hdcHall;
+HBITMAP hbmpHall;
+int hallWidth, hallHeight;
+
+//提取大厅中的像素点
+COLORREF &HallPoint(int x, int y)
+{
+  return imgHall[y * hallWidth + x];
+}
+//释放大厅
+void HallShotFree()
+{
+  DeleteObject(hbmpHall);
+  DeleteDC(hdcHall);
+  imgHall = nullptr;
+}
+//大厅截图准备工作：获取大厅尺寸并创建相应大小的位图，返回大厅句柄
+bool HallShotReady(HWND hWndHall)
+{
+  //1. 大厅截图准备工作
+  if (!IsWindowVisible(hWndHall))
+    return false;
+  //1.1 获取大厅窗口尺寸
+  hallWidth = 0;
+  hallHeight = 0;
+  GetWindowSize(hWndHall, &hallWidth, &hallHeight);//获取窗口宽高
+  //1.2 创建位图
+  //如果位图已经存在，则进行释放
+  if (imgHall)
+    HallShotFree();
+  //创建位图
+  imgHall = (COLORREF *)MallocColor(hallWidth, hallHeight, &hdcHall, &hbmpHall);
+  //形式检查。实际上MallocColor失败就直接报错并退出程序了。
+  if (!imgHall)
+    return false;
+  return true;
+}
+//截图QQ头像
 void ShotQQHead(HWND hWndHall)
 {
-  int hallWidth, hallHeight;
-  COLORREF *hallShot = nullptr;//大厅截图一级指针
-  //截取大厅图像（HallShot函数自动分配内存）
-  if (!HallShot(hWndHall, hallShot, &hallWidth, &hallHeight, 1))
+  //准备截图大厅
+  if (!HallShotReady(hWndHall))
   {
-    PopMessageDPI(hWndTool, "大厅截图失败。");
+    PopMessage(hWndTool, "大厅截图失败。");
     return;
   }
-  //截图成功，则构造二级指针
-  COLORREF *pHallShot[4320] = {};//高度不超过8K分辨率4320
-  for (int i = 0; i < hallHeight; i++)
-    pHallShot[i] = hallShot + i * hallWidth;
-  GetWindowSize(hWndHall, &hallWidth, &hallHeight);//获得大厅尺寸
+
+  //截图1帧
+  PrintWindow(hWndHall, hdcHall, NULL);
+  for (int i = 0; i < hallWidth * hallHeight; i++)
+    imgHall[i] &= 0x00ffffff;
+
+  ColorToBitmap(imgHall, hallWidth, hallHeight, "大厅.png");
 
   int headAreaLength = 0;//头像区域累积长度（一行全白色则累积中断）
   int headX = 0, headY = 0;//头像右上角尺寸
@@ -1286,7 +1320,7 @@ void ShotQQHead(HWND hWndHall)
   for (int y = 120; y < hallHeight && isHeadFound == 0; y++) //从高度120开始从上到下扫描
   {
     for (int x = hallWidth - 20; x >= hallWidth / 2; x--) //从右往左扫，最多扫到半屏
-      if (pHallShot[y][x] != 0xffffff) //非白色区位头像区
+      if (HallPoint(x, y) != 0xffffff) //非白色区位头像区
       {
         if (headAreaLength == 0) //记录首次到达头像区的坐标
         {
@@ -1305,7 +1339,8 @@ void ShotQQHead(HWND hWndHall)
   }
   if (isHeadFound == 0) //找不到头像区，返回0
   {
-    PopMessageDPI(hWndTool, "找不到头像，可能是页面缩放不对。\n请重新打开登录窗口再试。");
+    HallShotFree();
+    PopMessage(hWndTool, "找不到头像，可能是页面缩放不对。\n请重新打开登录窗口再试。");
     return;
   }
 
@@ -1315,7 +1350,7 @@ void ShotQQHead(HWND hWndHall)
     head[i].y = headY;
   for (int x = headX; x > 20; x--) //从右往左扫描
     for (int y = headY; y < headY + 87; y++) //在头像纵坐标区域扫描
-      if (pHallShot[y][x] != 0xffffff) //非白色区域为头像区，累积长度+1
+      if (HallPoint(x, y) != 0xffffff) //非白色区域为头像区，累积长度+1
       {
         headAreaLength++;
         break;
@@ -1333,56 +1368,68 @@ void ShotQQHead(HWND hWndHall)
 
   if (headNum <= 1) //找不到头像区，返回0
   {
-    PopMessageDPI(hWndTool, "没有找到头像，请先登录QQ。");
+    HallShotFree();
+    PopMessage(hWndTool, "没有找到头像，请先登录QQ。");
     return;
   }
   headNum--; //去掉二维码的头像个数
   char path[MAX_PATH];
   for (int i = 0; i < headNum; i++) //保存前headNum - 1个头像，从左到右命名为1P,2P,...
   {
-    sprintf_s(path, "QQ头像截图\\%dP.png", headNum - i);
+    sprintf_s(path, "QQ头像\\高级任务x_%dP.png", headNum - i);
     COLORREF tempHead[87][87];
     for (int y = 0; y < 87; y++)
       for (int x = 0; x < 87; x++)
-        tempHead[y][x] = pHallShot[head[i].y + y][head[i].x + x];
+        tempHead[y][x] = HallPoint(head[i].x + x, head[i].y + y);
     ColorToBitmap(tempHead, path);
   }
+  HallShotFree();
+
   //截图后分析相似度
-  COLORREF newheadShot[10][87][87];
+  COLORREF newheadShot[10][87][87] = {};
   for (int order = 0; order <= headNum; order++)
   {
     if (order == 0)
-      BitmapToColor("QQ头像截图\\默认头像.png", newheadShot[order]);
+      BitmapToColor("QQ头像\\默认头像.png", newheadShot[order]);
     else
     {
       char path[MAX_PATH];
-      sprintf_s(path, "QQ头像截图\\%dP.png", order);
+      sprintf_s(path, "QQ头像\\高级任务x_%dP.png", order);
       BitmapToColor(path, newheadShot[order]);
     }
   }
+  if (FileExist("QQ头像\\头像区分度.txt"))
+    remove("QQ头像\\头像区分度.txt");
   FILE *f;
-  fopen_s(&f, "QQ头像截图\\头像区分度.txt", "w");
+  fopen_s(&f, "QQ头像\\重要说明.txt", "w");
+  fprintf(f,
+    "1. 头像命名规则：命名为“高级任务0_1P”表示该头像仅用于高级任务0的1P登录；命名为“1P”表示该头像用于所有高级任务的1P登录。2P同理。\n"
+    "2. 任意两个头像之间的区分度都要大于5000，否则可能识别错误。以下是最近一次截图时各头像的区分度。\n\n");
   fprintf(f, "\t默认");
   for (int i = 1; i <= headNum; i++)
-    fprintf(f, "\t%dP", i);
+    fprintf(f, "\t高x_%dP", i);
   fprintf(f, "\n");
   for (int i = 0; i <= headNum; i++)
   {
     if (i == 0)
       fprintf(f, "默认");
     else
-      fprintf(f, "%dP", i);
+      fprintf(f, "高x_%dP", i);
     for (int j = 0; j <= headNum; j++)
     {
-      int diff = headDifference(newheadShot[i], newheadShot[j]);
-      fprintf(f, "\t%d", diff / 10000);
+      if (i == j)
+        fprintf(f, "\t-");
+      else
+      {
+        int diff = headDifference(newheadShot[i], newheadShot[j]);
+        fprintf(f, "\t%d", diff / 10000);
+      }
     }
     fprintf(f, "\n");
   }
-  fprintf(f, "任意两个头像之间的区分度都要大于1000，否则可能识别错误。");
   fclose(f);
-  PopMessageDPI(hWndTool, "截图已保存至【QQ头像截图】文件夹。\n"
-    "请将1P/2P头像分别命名为1P.png/2P.png。");
+  PopMessage(hWndTool, "截图已保存至【QQ头像】文件夹，请按格式命名，\n"
+    "例如高级任务0的1P头像命名为[高级任务0_1P]。");
 }
 bool IsCustomTop(int y)
 {
@@ -1471,7 +1518,7 @@ int GrabHandle(int type = 0, int order = 0)
   //都不是
   else
   {
-    PopMessageDPI(hWndTool, "抓取位置不对，请按说明操作。");
+    PopMessage(hWndTool, "抓取位置不对，请按说明操作。");
     return 0;
   }
   if (tag == QQ_HEAD) //QQ头像标签：直接截图大厅，截图成功则完工，否则提示失败
@@ -1483,24 +1530,24 @@ int GrabHandle(int type = 0, int order = 0)
   {
     if (!hWndGame0)
     {
-      PopMessageDPI(hWndTool, "未找到游戏窗口。");
+      PopMessage(hWndTool, "未找到游戏窗口。");
       return 0;
     }
     if (!MouseMove(hWndGame0, 0, 0))
     {
-      PopMessageDPI(hWndTool, "权限不足。请先关闭当前窗口，然后\n右键截图工具选择“以管理员身份运行”。");
+      PopMessage(hWndTool, "权限不足。请先关闭当前窗口，然后\n右键截图工具选择“以管理员身份运行”。");
       return 0;
     }
 
     //如果抓到了游戏窗口，自定图像标签直接通过
-    if (tag == TRASH) //可删物品：要求在道具背包界面
+    if (tag == TRASH) //清理背包：要求在道具背包界面
     {
       MapShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
       propY = GetTop(propY1, propY2, IsPropTop);
       if (propY == 0)
       {
         hWndGame = 0;//清空句柄
-        PopMessageDPI(hWndTool, "未识别到物品，请进入道具背包再截图。");
+        PopMessage(hWndTool, "未识别到物品，请进入道具背包再截图。");
         return 0;
       }
       propY++;//propY自增1
@@ -1514,7 +1561,7 @@ int GrabHandle(int type = 0, int order = 0)
       if (bagY == 0)
       {
         hWndGame = 0;//清空句柄
-        PopMessageDPI(hWndTool, "未识别到卡片，请进入选卡界面再截图。");
+        PopMessage(hWndTool, "未识别到卡片，请进入选卡界面再截图。");
         return 0;
       }
     }
@@ -1586,7 +1633,7 @@ int GrabHandle(int type = 0, int order = 0)
         else
         {
           hWndGame = 0;//清空句柄
-          PopMessageDPI(hWndTool, "抓取位置不对，请抓取邀请列表中的角色名。");
+          PopMessage(hWndTool, "抓取位置不对，请抓取邀请列表中的角色名。");
           return 0;
         }
       }
@@ -1658,7 +1705,7 @@ int SaveTrash(int row, int column)
   char path[MAX_PATH];
   for (int i = 0; i < 999; i++)
   {
-    sprintf_s(path, "可删物品\\%d.png", i);
+    sprintf_s(path, "清理背包\\%d.png", i);
     if (!FileExist(path))
     {
       ColorToBitmap(map, path, x, y, propWidth, propHeight);//保存道具截图
@@ -1677,7 +1724,7 @@ void DeleteTrash(int row, int column)
   if (!FindTrash(row, column, &code)) //没有截图的物品无法删除
     return;
   char path[MAX_PATH];
-  sprintf_s(path, "可删物品\\%s.png", trash[code].name);
+  sprintf_s(path, "清理背包\\%s.png", trash[code].name);
   remove(path);
   //如果要删的不是最后一张，把最后一张移动到被删除的位置
   if (code != trashNum - 1)
@@ -1733,7 +1780,7 @@ void Edit()
           GrabHandle();
       }
 
-      if (tag == TRASH) //可删物品标签
+      if (tag == TRASH) //清理背包标签
       {
         if (area / 10000 == 1)
         {
@@ -1802,7 +1849,7 @@ void Edit()
             if (area == 99) //截取背景
             {
               SaveBackground();
-              PopMessageDPI(hWndTool, "背景已保存至【自定图像\\背景.png】。");
+              PopMessage(hWndTool, "背景已保存至【自定图像\\背景.png】。");
             }
             if (area / 100 == 1)//点击格子：保存截图
             {
@@ -1812,7 +1859,7 @@ void Edit()
               if (itemCode >= 0)
               {
                 sprintf_s(message, "截图已保存至\n【%s】", path);
-                PopMessageDPI(hWndTool, message);
+                PopMessage(hWndTool, message);
               }
             }
           }
@@ -1883,7 +1930,7 @@ LRESULT CALLBACK MyWindowProc(HWND hWndTool, UINT uMsg, WPARAM wParam, LPARAM lP
     if (GetBitmapRect(newTemplatePath, &width, &height) && width == 60 && height == 64)
       clickMessage = 97;//非键消息97：载入模板newTemplate
     else
-      PopMessageDPI(hWndTool, "模板截图必须是60x64的png位图。");
+      PopMessage(hWndTool, "模板截图必须是60x64的png位图。");
   }
   break;
   case WM_LBUTTONDOWN:
@@ -1911,6 +1958,8 @@ LRESULT CALLBACK MyWindowProc(HWND hWndTool, UINT uMsg, WPARAM wParam, LPARAM lP
 int main(int argc, char *argv[])
 {
   DPI = SetDPIAware();
+  //ClaimAdministratorPower();//请求管理员权限
+
   if (argc == 3)
   {
     PopMessage((HWND)atoi(argv[1]), argv[2]);

@@ -3,6 +3,7 @@
 #endif
 #include "resource.h"
 #include "..\\track.h"
+
 const char versionString[] = "轨道编辑器%s by -云涛晓雾-";
 
 //1. 编辑器位置常数
@@ -26,10 +27,10 @@ const int trackX = timelineX - timelineWidth / 2, trackY = 127, trackWidth = tim
 const int trackNum = 61;//一页的轨道数量
 const int undoX = modeX, undoY = mapGridY + 7 * mapGridHeight - 2 * trackHeight, undoWidth = modeWidth, undoHeight = trackHeight;//撤销按钮
 const int waveX = modeX, waveY = mapGridY + trackHeight, waveWidth = modeWidth / 4, waveHeight = 30;
-const int buttonX = modeX, buttonY = waveY + 3 * waveHeight, buttonWidth = modeWidth, buttonHeight = trackHeight;//自动布轨按钮
+const int buttonX = modeX, buttonY = waveY + 3 * waveHeight, buttonWidth = modeWidth, buttonHeight = 39;//自动布轨按钮
 const int trackSlotX = 40, trackSlotY = trackY, trackSlotWidth = trackX - trackSlotX, trackSlotHeight = trackHeight;//轨道编辑卡槽
-const int pageX = modeX, pageY = mapGridY + 3 * waveHeight + 6 * trackHeight + 20, pageWidth = modeWidth / 4, pageHeight = 30;//翻页框
-const int stackX = modeX, stackY = 331, stackWidth = modeWidth, stackHeight = 31;//堆叠区
+const int pageX = modeX, pageY = mapGridY + 3 * waveHeight + 7 * trackHeight + 5, pageWidth = modeWidth / 4, pageHeight = 30;//翻页框
+const int stackX = modeX, stackY = 364, stackWidth = modeWidth, stackHeight = 28;//堆叠区
 const int moveX = trackSlotX, moveY = 30, moveWidth = 26, moveHeight = 42;//轨道编辑方向键
 const int playerX = 140, playerHeight = roleSlotY, playerTitleWidth = 40, playerOptionWidth = 60, playerDistance = 480;//[1P]字样宽度；[1P]和[2P]的距离
 const int skillX = playerX + 2 * playerDistance - 25, skillY = 5, skillWidth = 20, skillHeight = 20;//刷技能勾选框
@@ -80,6 +81,8 @@ const int maxStack = 99;//堆叠容量
 const int maxViewStack = 9;//堆叠显示容量
 const int trackSlotNumPerPage = 14;//每页显示的卡槽数量
 IMAGE imageBackup;//编辑器图像备份
+HDC hdcGame; //游戏截图HDC
+Map &game = *MallocMap(&hdcGame); //游戏截图
 int commonPage = 1;//防御卡背包当前页数
 int lastClickMessage;//上次鼠标点击信息：单击1xxxxyyyy，右击2xxxxyyyy，无消息0
 char lastTip[200];//上一次显示的提示（用于判断要不要更新提示）
@@ -185,7 +188,9 @@ char trackName[2][maxPath];//轨道文件名
 char tempTrackForSave[maxPath];//SaveTrack用的临时轨道文件
 int tower[2];//魔塔层数
 int quitTime[2];//退出时间
+int plantSpeed[2];//放卡限速
 bool isSkillMode;//是否刷技能模式
+bool isMobile[2];//是否开启移动板块追踪
 int roleLocNum[2];//两个人物的放置次数，
 int roleLoc[2][63];//人物1/2位置（第一个位置存放在roleLoc[account][1]）
 int slotNum[2];//卡槽数
@@ -1330,9 +1335,9 @@ int LShovelX = 113, LShovelY = 90, LShovelWidth = 80, LShovelHeight = 84;//20-21
 int MapX = 302, MapY = 105, MapWidth = 60, MapHeight = 64;//地图1行1列横、纵坐标，地图格子宽度、高度
 int ExitCount;//计数达到3结束录制
 /*图像显示*/
-int isMapCatched = 1;//是否已经抓取地图
 IMAGE mapImage;//地图图像
-int isMapImageCatched;//地图图像是否已经载入
+bool isMapImageCatched;//地图图像是否已经载入
+bool isMapImageCatching;//地图是否正在截取
 
 const int maxBackupNum = 256;
 char backupList[maxBackupNum][maxPath];
@@ -1354,25 +1359,6 @@ void ClearThisBackup()
   sprintf_s(direct, "自动备份\\轨道文件\\%s\\", runTimeString);
   DeleteFolder(direct);
 }
-/*自动转化函数*/
-int TransformStopSignal;//自动转化结束信号，1=结束程序
-DWORD __stdcall AutoTransform(void *Title)//自动转化（无参数）
-{
-  HWND hWnd, hActiveWnd;
-  TransformStopSignal = 0;
-  while (TransformStopSignal == zero)//信号为0才执行剪贴板转化，信号为1立即退出线程
-  {
-    hWnd = FindWindow(NULL, (char *)Title);//查找轨道路径输入窗口
-    if (hWnd != NULL)//窗口存在
-    {
-      hActiveWnd = GetForegroundWindow();//获得活动窗口句柄
-      if (hWnd == hActiveWnd)//窗口为活动窗口
-        CompleteClipboard();//窗口存在且活动才执行剪贴板转化，以免在外部生效
-    }
-    Sleep(100);
-  }
-  return 0;
-}
 /*对话框函数*/
 struct InputBoxParam
 {
@@ -1387,6 +1373,9 @@ INT_PTR CALLBACK InputDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
   {
   case WM_INITDIALOG:
   {
+    //修复输入框功能
+    RepairEdit(GetDlgItem(hDlg, IDC_EDIT1));
+
     InputBoxParam *params = (InputBoxParam *)lParam;// 获取传入的参数
     //设置输入框位置
     RECT Desktop, Dialog;
@@ -1658,6 +1647,20 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
   {
   case WM_INITDIALOG:
   {
+    //修复输入框功能
+    RepairEdit(GetDlgItem(hDlg, idDelay));
+    RepairEdit(GetDlgItem(hDlg, idEnergy));
+    RepairEdit(GetDlgItem(hDlg, idWave));
+    RepairEdit(GetDlgItem(hDlg, idCardNum));
+    HWND hComboImage = GetDlgItem(hDlg, idImage);
+    HWND hEditImage = FindWindowEx(hComboImage, NULL, "EDIT", NULL);
+    RepairEdit(hEditImage);
+    RepairEdit(GetDlgItem(hDlg, idImageNum));
+    RepairEdit(GetDlgItem(hDlg, idRow));
+    RepairEdit(GetDlgItem(hDlg, idColumn));
+    RepairEdit(GetDlgItem(hDlg, idEndNum));
+    RepairEdit(GetDlgItem(hDlg, idEndTime));
+
     ConditionType *params = (ConditionType *)lParam;// 获取传入的参数
     RECT Desktop, Dialog;
     GetWindowRect(GetDesktopWindow(), &Desktop);
@@ -1680,7 +1683,6 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
       SetItemText(hDlg, idImage, params->image, 8);
     else
       SetItemText(hDlg, idImage, "（无）", 8);
-    HWND hComboImage = GetDlgItem(hDlg, idImage);
     ComboBox_AddString(hComboImage, "（无）");
     int originImage = -1;//原来选中的图像
     LoadItem();//载入所有图像
@@ -1692,16 +1694,12 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     }
     if (originImage > 0)
       ComboBox_SetCurSel(hComboImage, originImage + 1);//设置默认选中
-    HWND hEdit = FindWindowEx(hComboImage, NULL, "EDIT", NULL);
-    if (hEdit)
-      SendMessage(hEdit, EM_LIMITTEXT, 8, 0);//设置长度限制
+    if (hEditImage)
+      SendMessage(hEditImage, EM_LIMITTEXT, 8, 0);//设置长度限制
 
     //设置其他文本框
     SetItemValue(hDlg, idDelay, params->delay, 3);
-    if (params->triggerMode)
-      CheckDlgButton(hDlg, idRetain, BST_CHECKED);
-    else
-      CheckDlgButton(hDlg, idRetain, BST_UNCHECKED);
+    SetCheck(hDlg, idRetain, params->triggerMode != 0);
     SetItemValue(hDlg, idEnergy, params->energy, 5);
     SetItemText(hDlg, idWave, params->wave, 5);
     SetItemValue(hDlg, idCardNum, params->cardNum, 2);
@@ -1711,7 +1709,9 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     SetItemText(hDlg, idFollow, params->follow, 6);
     SetItemValue(hDlg, idEndNum, params->endNum, 2);
     SetItemValue(hDlg, idEndTime, params->endTime, 3);
-    SetWindowLongPtr(hDlg, DWLP_USER, (LONG_PTR)params);//设置用户数据，以便在后面的消息中使用
+
+    //设置用户数据，以便在后面的消息中使用
+    SetWindowLongPtr(hDlg, DWLP_USER, (LONG_PTR)params);
   }
   return TRUE;
   case WM_COMMAND:
@@ -1723,7 +1723,7 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
 
       if (!GetItemValue(&temp.delay, "延迟", hDlg, idDelay, 3, 0, 960))
         break;
-      temp.triggerMode = GetItemCheck(hDlg, idRetain);
+      temp.triggerMode = GetCheck(hDlg, idRetain) ? 1 : 0;
       if (!GetItemValue(&temp.energy, "火苗", hDlg, idEnergy, 5, 0, 15000))
         break;
       if (!GetItemText(temp.wave, "波次", hDlg, idWave, 5))
@@ -1821,6 +1821,12 @@ INT_PTR CALLBACK AutoDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
   {
   case WM_INITDIALOG:
   {
+    //修复输入框功能
+    RepairEdit(GetDlgItem(hDlg, idDelay));
+    RepairEdit(GetDlgItem(hDlg, idEnergy));
+    RepairEdit(GetDlgItem(hDlg, idWave));
+    RepairEdit(GetDlgItem(hDlg, idCardNum));
+
     RECT desktop, dialog;
     GetWindowRect(GetDesktopWindow(), &desktop);
     GetWindowRect(hDlg, &dialog);
@@ -2226,17 +2232,25 @@ int GetArea(int originX, int originY)
     //魔塔、地图、波次
     if (x >= waveX && x < waveX + 4 * waveWidth)
     {
+      //600-611=波次按钮
       if (y >= waveY && y < waveY + 3 * waveHeight)
-        return 600 + (y - waveY) / waveHeight * 4 + (x - waveX) / waveWidth;//600-611=波次按钮
+        return 600 + (y - waveY) / waveHeight * 4 + (x - waveX) / waveWidth;
+      //612=按波变阵标题
+      else if (y >= waveY - buttonHeight && y < waveY)
+        return 612;
       else if (y >= buttonY && y < buttonY + buttonHeight)
       {
-        if (x - buttonX < 22)
-          return 615;//抓取地图
+        if (x - buttonX < 23)
+          return 614;//抓取地图
         else if (buttonX + buttonWidth - x <= 22)
-          return 616;//删除地图
+          return 615;//删除地图
+        else
+          return 613;//地图标题
       }
+      else if (y >= buttonY + buttonHeight && y < buttonY + 2 * buttonHeight)
+        return 616;//移动板块
     }
-    //800-808=深度0-8
+    //800-808=堆叠区深度0-8
     if (x >= stackX && x < stackX + stackWidth && y >= stackY && y < stackY + maxViewStack * stackHeight)
       return 800 + (y - stackY) / stackHeight;
     if (x >= stackX && x < stackX + stackWidth && y >= stackY + maxViewStack * stackHeight && y < stackY + 10 * stackHeight)
@@ -2248,6 +2262,7 @@ int GetArea(int originX, int originY)
       else
         return 810;
     }
+    //1000+=地图格子
     if (x >= mapGridX && x < mapGridX + 9 * mapGridWidth && y >= mapGridY && y < mapGridY + 7 * mapGridHeight)
     {
       int row = (y - mapGridY) / mapGridHeight;
@@ -2324,12 +2339,14 @@ int GetArea(int originX, int originY)
     {
       if (y >= waveY && y < waveY + 3 * waveHeight)
         return 600 + (y - waveY) / waveHeight * 4 + (x - waveX) / waveWidth;
-    }
-    //612=录制轨道，613=自动布轨，614=魔塔，615=退出时间
-    if (x >= buttonX && x < buttonX + buttonWidth && y >= buttonY && y < buttonY + 4 * buttonHeight)
-    {
-      int n = (y - buttonY) / buttonHeight;
-      return 612 + n;
+      else if (y >= waveY - buttonHeight && y < waveY)
+        return 612;
+      //613=录制轨道，614=自动布轨，615=魔塔，616=退出时间，617=放卡限速
+      else if (y >= buttonY && y < buttonY + 5 * buttonHeight)
+      {
+        int n = (y - buttonY) / buttonHeight;
+        return 613 + n;
+      }
     }
 
     //712=优先队列标题，700-711=第0-11张卡
@@ -3038,6 +3055,8 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
     fgets(f, s);
     line++;
   }
+  else
+    tower[account] = 0;
 
   if (sscanf_s(s, "退出时间=%d", &quitTime[account]) == 1)//如果读到了就再读一行
   {
@@ -3046,11 +3065,31 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
     fgets(f, s);
     line++;
   }
+  else
+    quitTime[account] = 0;
+  
+  if (sscanf_s(s, "放卡限速=%d", &plantSpeed[account]) == 1)//如果读到了就再读一行
+  {
+    if (plantSpeed[account] < zero || plantSpeed[account] > 5)
+      return WriteInfo(info, f, path, line, s, "放卡限速范围为0~5");
+    fgets(f, s);
+    line++;
+  }
+  else
+    plantSpeed[account] = 0;
 
   //读取刷技能模式
   if (strstr(s, "刷技能模式=") == s)
   {
     isSkillMode = atoi(s + 11) != 0;
+    fgets(f, s);
+    line++;
+  }
+
+  //读取移动板块
+  if (strstr(s, "移动板块=") == s)
+  {
+    isMobile[account] = atoi(s + 9) != 0;
     fgets(f, s);
     line++;
   }
@@ -3278,7 +3317,9 @@ void SaveHead(int account, FILE *fout, int SlotNumVariation = 0)
   }
   fprintf(fout, "魔塔层数=%d\n", tower[account]);
   fprintf(fout, "退出时间=%d\n", quitTime[account]);
+  fprintf(fout, "放卡限速=%d\n", plantSpeed[account]);
   fprintf(fout, "刷技能模式=%d\n", isSkillMode ? 1 : 0);
+  fprintf(fout, "移动板块=%d\n", isMobile[account] ? 1 : 0);
 
   fprintf(fout, "优先队列=");
   for (int i = 0; i < queueSize[account]; i++)
@@ -4753,7 +4794,7 @@ void ViewTrack()
     int floor = GetSlotFloor(order);//宝石（22号槽）显示位置为-1
     if (slot[curAccount][order].retain == 1)
     {
-      char retainString[30] = "使用默认轨道";
+      char retainString[30] = "使用自动承载";
       if (curTotalWave[curAccount] > 0)
       {
         int totalWaveRetained = 0;//被继承的波次
@@ -4914,13 +4955,22 @@ void ViewWave()
 void ViewMapButtons()
 {
   ViewWave();
-  PaintGrid(1, 1, buttonX, buttonY, buttonWidth, buttonHeight);//按钮
+  PaintGrid(2, 1, buttonX, buttonY, buttonWidth, buttonHeight);//按钮
   settextcolor(RGB(255, 255, 255));
-  CenterView("地图", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
-  PaintTargetCursor(buttonX + 12, buttonY + buttonHeight / 2);
-  if (isMapImageCatched == 1)
-    CenterView("×", buttonX + buttonWidth - 12, buttonY + buttonHeight / 2);
+  if (isMapImageCatching)
+    CenterView("截图中", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
+  else
+    CenterView("地图", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
+  PaintTargetCursor(buttonX + 13, buttonY + buttonHeight / 2);
+  //地图存在时显示删除按钮
+  CenterView("×", buttonX + buttonWidth - 12, buttonY + buttonHeight / 2);
+  //显示移动追踪
+  PaintCheckBox(buttonX, buttonY + buttonHeight, buttonWidth, buttonHeight, -42);
+  if (isMobile[curAccount])
+    PaintCheck(buttonX, buttonY + buttonHeight, buttonWidth, buttonHeight, -42);
+  CenterView("移动板块", buttonX + buttonWidth / 2 + 13, buttonY + buttonHeight * 3 / 2);
 }
+//显示左上角箭头
 void ViewMove()
 {
   int size;
@@ -5067,7 +5117,7 @@ int GetTip(int mode, int area, char(&tip)[200])
     return strcpy_s(tip, "单击添加2P轨道。");
   if (area == 50)
     return strcpy_s(tip, "单击移除2P轨道。");
-  if (area >= 600 && area <= 611)
+  if (area >= 600 && area <= 612)
     return strcpy_s(tip, "按波变阵：在关卡到达指定波次后变换阵型，详见使用手册4.3。");
   if (area == 90)
     return strcpy_s(tip, "撤销：返回上一步操作。");
@@ -5106,8 +5156,10 @@ int GetTip(int mode, int area, char(&tip)[200])
       else
         return strcpy_s(tip, "2P人物：选中后可以往地图中添加多个人物位置，右击删除2P。");
     }
-    if (area == 615)
+    if (area == 613 || area == 614 || area == 615)
       return strcpy_s(tip, "将靶形光标拖至游戏窗口内可截取地图，方便观察地形。");
+    if (area == 616)
+      return strcpy_s(tip, "移动板块：勾选后，玩家只需在板块初始位置布阵，执行时自动识别实时位置放卡。");
     if (area >= 800 && area <= 808)
       return strcpy_s(tip, "堆叠区：选中地图中的卡片后单击堆叠区空位，即可在这一格叠加卡片。");
     if (area == 809)
@@ -5129,21 +5181,23 @@ int GetTip(int mode, int area, char(&tip)[200])
     if (area / 100 == 1)
       return strcpy_s(tip, "卡槽：选中后可以用左上角的箭头调节CD或移动轨道。双击可自动布轨。右击清空轨道。");
     if (area / 100 == 2)
-      return strcpy_s(tip, "编号：单击开启轨道继承，详见使用手册4.3。");
+      return strcpy_s(tip, "编号：在第0波单击激活自动承载，在其他波次单击则开启继承。");
     if (area / 100 == 3)
       return strcpy_s(tip, "独立计时：该卡片使用精确计时，适用于补云洞、放海盐等操作。");
     if (area / 100 == 4)
       return strcpy_s(tip, "绝对优先：该卡片的放置无视放卡优先队列的限制。");
     if (area / 100 == 5)
       return strcpy_s(tip, "极限成阵：卡槽亮起时立即放置。按住Ctrl后单击可设置放卡条件。");
-    if (area == 612)
-      return strcpy_s(tip, "录制轨道：将手动放卡操作录制成轨道文件。");
     if (area == 613)
-      return strcpy_s(tip, "自动布轨：根据火苗计算结果自动安排放卡时间。需填写卡片数据和生产信息才可使用。");
+      return strcpy_s(tip, "录制轨道：将手动放卡操作录制成轨道文件。");
     if (area == 614)
-      return strcpy_s(tip, "魔塔：进入指定魔塔层数执行轨道。可用于刷技能。");
+      return strcpy_s(tip, "自动布轨：根据火苗计算结果自动安排放卡时间。需填写卡片数据和生产信息才可使用。");
     if (area == 615)
+      return strcpy_s(tip, "魔塔：进入指定魔塔层数执行轨道。可用于刷技能。");
+    if (area == 616)
       return strcpy_s(tip, "定时退出：到达指定时间后主动退出关卡。用于跨服刷威望等情形。");
+    if (area == 617)
+      return strcpy_s(tip, "放卡限速：限制每秒最大放卡张数。");
     if (area / 100 == 8)
       return strcpy_s(tip, "翻页：点击数字快速翻页。一页为一分钟。");
     if (area == 900 || area == 901)
@@ -5171,24 +5225,31 @@ void RepaintTip()
 void ViewTrackButtons()
 {
   ViewWave();
-  PaintGrid(4, 1, buttonX, buttonY, buttonWidth, buttonHeight);//自动布轨按钮
+  PaintGrid(5, 1, buttonX, buttonY, buttonWidth, buttonHeight);
   settextcolor(RGB(255, 255, 255));
   CenterView("录制轨道", buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
   CenterView("自动布轨", buttonX + buttonWidth / 2, buttonY + 3 * buttonHeight / 2);
 
-  char TowerString[20];
+  char towerString[20];
   if (tower[curAccount] == zero)
-    sprintf_s(TowerString, "魔塔：无");
+    sprintf_s(towerString, "魔塔：无");
   else
-    sprintf_s(TowerString, "魔塔：%d", tower[curAccount]);
-  CenterView(TowerString, buttonX + buttonWidth / 2, buttonY + 5 * buttonHeight / 2);
+    sprintf_s(towerString, "魔塔：%d", tower[curAccount]);
+  CenterView(towerString, buttonX + buttonWidth / 2, buttonY + 5 * buttonHeight / 2);
 
-  char QuitString[20];
+  char quitString[20];
   if (quitTime[curAccount] == zero)
-    sprintf_s(QuitString, "退出：无");
+    sprintf_s(quitString, "退出：无");
   else
-    sprintf_s(QuitString, "退出：%ds", quitTime[curAccount]);
-  CenterView(QuitString, buttonX + buttonWidth / 2, buttonY + 7 * buttonHeight / 2);
+    sprintf_s(quitString, "退出：%ds", quitTime[curAccount]);
+  CenterView(quitString, buttonX + buttonWidth / 2, buttonY + 7 * buttonHeight / 2);
+
+  char speedString[20];
+  if (plantSpeed[curAccount] == zero)
+    sprintf_s(speedString, "限速：无");
+  else
+    sprintf_s(speedString, "限速：%d/s", plantSpeed[curAccount]);
+  CenterView(speedString, buttonX + buttonWidth / 2, buttonY + 9 * buttonHeight / 2);
 }
 void ViewUndo()
 {
@@ -6149,9 +6210,7 @@ void AddCommonCard()
 //编辑注释
 void EditNotation()
 {
-  CreateThread(NULL, 0, AutoTransform, (void *)"注释", 0, NULL);//运行自动转化
   NewInputBox(notation[curAccount], 121, "可在此补充配置要求或提示信息，不超过60字。", "注释", notation[curAccount]);
-  TransformStopSignal = 1;
 }
 //波次字符串m.n是否符合格式；额外检查“波次已存在”
 int IsWaveLegalForEdit(const char *waveString)
@@ -6204,11 +6263,9 @@ void EditCardName()
   char OriginName[10];
   strcpy_s(OriginName, bag[curAccount][bagMode].name);
 
-  CreateThread(NULL, 0, AutoTransform, (void *)"防御卡名称", 0, NULL);//运行自动转化
   NewInputBox(bag[curAccount][bagMode].name, 7, "长度为1-3个汉字", "防御卡名称", OriginName);
   while (strlen(bag[curAccount][bagMode].name) == zero)
     NewInputBox(bag[curAccount][bagMode].name, 7, "您的输入不规范，请重新输入。\n长度为1-3个汉字", "防御卡名称", OriginName);
-  TransformStopSignal = 1;
 
   if (strcmp(bag[curAccount][bagMode].name, "炎焱兔") == zero)
     bag[curAccount][bagMode].style = 6;
@@ -6894,16 +6951,108 @@ int IsGameWindow(HWND hWndGame)
   return 0; //否则返回0
 }
 //载入地图图像
-int LoadMapImage(IMAGE *pGridImage)
+bool LoadMapImage(IMAGE *pMapImage)
 {
   char path[] = "用户参数\\地图.png";
   if (!FileExist(path)) //如果不存在地图文件
-    return 0;
-  loadimage(pGridImage, path, mapGridWidth * 9, mapGridHeight * 7);
-  DWORD *grid = GetImageBuffer(pGridImage);
+    return false;
+  loadimage(pMapImage, path, mapGridWidth * 9, mapGridHeight * 7);
+  DWORD *map = GetImageBuffer(pMapImage);
   for (int i = 0; i < mapGridWidth * 9 * mapGridHeight * 7; i++)//每个点RGB减半
-    grid[i] = RGB(GetRValue(grid[i]) / 2, GetGValue(grid[i]) / 2, GetBValue(grid[i]) / 2);
-  return 1;
+    map[i] = RGB(GetRValue(map[i]) / 2, GetGValue(map[i]) / 2, GetBValue(map[i]) / 2);
+  return true;
+}
+//根据房间内特征颜色判断是否处于房间内
+bool CheckRoomColor(Map &game)
+{
+  //房间内特征颜色
+  const COLORREF roomColor = 0x7fc7f5;
+  const int roomX = 370;//房间内特征颜色判定位置X
+  for (int y = 25; y <= 60; y++)
+    if (game[y][roomX] != roomColor)
+      return false;
+  return true;
+}
+//根据头像颜色判断是否处于关卡内
+bool CheckHeadColor(Map &game)
+{
+  //关卡内正常状态的头像特征颜色
+  const COLORREF headColor = 0xfcf3ca;
+  const int headX = 100;//头像特征颜色判定位置X
+  for (int y = 33; y <= 44; y++)
+    if (game[y][headX] != headColor)
+      return false;
+  return true;
+}
+//从截图中检测是否处于房间或关卡内（房间内1，关卡内2，其他界面0）
+int IsInRoomOrLevel(Map &game)
+{
+  //判断是否处于选卡界面
+  if (CheckRoomColor(game))
+    return 1;
+  //判断是否处于关卡内
+  if (CheckHeadColor(game))
+    return 2;
+  return 0;
+}
+//开始程序，成功离开房间界面返回true，超时返回false
+bool Start(HWND hwndGame, Map &game, HDC &hdcGame)
+{
+  const COLORREF boxColor = 0x7ec8f5;//蓝色提示框颜色
+  const POINT moveAway = { 1, gameHeight / 2 };//鼠标移开防止遮挡地图
+  const POINT start = { 875, 453 };//“开始”按钮
+  const POINT expNoMoreTip = { 430, 332 };//经验满不再提示
+  const POINT bagConfirm = { 430, 358 };//背包满、经验满确认
+
+  LeftClickDPI(hwndGame, start);//房主开始
+  MouseMoveDPI(hwndGame, moveAway);//鼠标移开
+
+  bool isBagConfirmed = false;//是否已经点了背包满确认，点了就不用操作了
+  for (int iColor = 1; iColor <= 300; iColor++)//最多等30秒
+  {
+    //截图并检测关卡状态
+    GameShot(hwndGame, game, hdcGame);
+    int roomOrLevel = IsInRoomOrLevel(game);
+
+    //检测弹窗
+    int box = 0;
+    if (game[246][475] == boxColor) //经验满
+      box = 3;
+    else if (game[280][475] == boxColor) //掉线/背包满
+      box = 2;
+
+    if (roomOrLevel == 2 || roomOrLevel == 0)//已经进入关卡或加载程序，则跳出循环
+      return true;
+    //连续30秒未进入关卡，则判定为进入失败
+    else if (iColor >= 8 * 10)//8秒没开始则放弃
+      return false;
+
+    //开始操作：每秒1次
+    if (!isBagConfirmed && iColor % 10 == 0)
+    {
+      if (box == 3) //经验满弹窗
+      {
+        LeftClickDPI(hwndGame, expNoMoreTip);//勾选不再提示
+        LeftClickDPI(hwndGame, bagConfirm);//确认
+        MouseMoveDPI(hwndGame, moveAway);//鼠标移开
+      }
+      else if (box == 2) //背包满弹窗
+      {
+        LeftClickDPI(hwndGame, bagConfirm);//确认
+        MouseMoveDPI(hwndGame, moveAway);//鼠标移开
+        isBagConfirmed = true;//记录已经点击确认
+      }
+
+      //在没有点击背包满提示的时候，3秒点击一次开始按钮
+      if (!isBagConfirmed && iColor % 30 == 0)
+      {
+        LeftClickDPI(hwndGame, start);//房主开始
+        MouseMoveDPI(hwndGame, moveAway);//鼠标移开
+      }
+    }
+    Sleep(100);//每0.1秒识图
+  }
+  return false;
 }
 //抓取地图，抓取成功返回1，失败返回0
 int GrabMap()
@@ -6915,6 +7064,7 @@ int GrabMap()
   char ClassName[256];
   GetClassName(hWndPointed, ClassName, 256);//获取窗口类名
 
+  //检查抓取的是否为游戏窗口
   if (strcmp(ClassName, "ApolloRuntimeContentWindow") == 0 || strcmp(ClassName, "DUIWindow") == 0)
     hWndGame = GetActiveGameWindow(hWndPointed);
   else if (strcmp(ClassName, "NativeWindowClass") == 0 || strcmp(ClassName, "WebPluginView") == 0)
@@ -6923,9 +7073,56 @@ int GrabMap()
     hWndGame = GetGameWindowFromServer(hWndPointed);
   else //不是游戏窗口则返回0
     return 0;
-  WindowToBitmap(hWndGame, "用户参数\\地图.png", 304, 111, 536, 451, 0);//截取地图
-  isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
-  return 1;
+
+  //检测是否处于房间或关卡内
+  GameShot(hWndGame, game, hdcGame);
+  int roomOrLevel = IsInRoomOrLevel(game);
+
+  //如果处于关卡内，直接截图
+  if (roomOrLevel == 2)
+  {
+    ColorToBitmap(game, "用户参数\\地图.png", 304, 111, 536, 451);//保存地图
+    isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
+    return 1;
+  }
+  //如果处于房间内，点击开始按钮
+  else if (roomOrLevel == 1)
+  {
+    //重绘阵型界面，提示“截图中”
+    isMapImageCatching = true;
+    RepaintMap();
+
+    //点击开始按钮，直到跳出房间内界面
+    if (!Start(hWndGame, game, hdcGame))
+    {
+      isMapImageCatching = false;
+      PopMessage(hWndEditor, "进入关卡失败");
+      return 0;
+    }
+    roomOrLevel = IsInRoomOrLevel(game);
+
+    //等待加载完成进入关卡
+    int counter = 0;
+    while (roomOrLevel != 2)
+    {
+      counter++;
+      if (counter > 200) //最多允许加载20秒
+      {
+        isMapImageCatching = false;
+        PopMessage(hWndEditor, "进入关卡失败");
+        return 0;
+      }
+      Sleep(100);//每0.1秒识图
+      GameShot(hWndGame, game, hdcGame);
+      roomOrLevel = IsInRoomOrLevel(game);
+    }
+    //保存截图
+    ColorToBitmap(game, "用户参数\\地图.png", 304, 111, 536, 451);//保存地图
+    isMapImageCatched = LoadMapImage(&mapImage);//载入地图图像并记录
+    isMapImageCatching = false;
+    return 1;
+  }
+  return 0;
 }
 //返回第n个存在的波次，点击“+”返回-1，点击空位返回-2
 int getExistedTotalWave(int account, int n)
@@ -7382,16 +7579,20 @@ void EditMap()
           slot[curAccount][area - 500].search = !slot[curAccount][area - 500].search;
           state = 0;
         }
-        EditWave(buttons, area, 600, 613);
+        //按波变阵：选择波次
+        EditWave(buttons, area, 600, 611);
 
-        if (area == 615) //抓取地图
+        if (area == 614) //抓取地图
           GrabMap();
-        if (area == 616)
+        if (area == 615) //删除地图
         {
-          isMapImageCatched = 0;
+          isMapImageCatched = false;
           if (FileExist("用户参数\\地图.png"))
             remove("用户参数\\地图.png");
         }
+        if (area == 616) //移动板块
+          isMobile[curAccount] = !isMobile[curAccount];
+
         if (area == 90)//撤销按钮
           if (IsUndoAllowed())
             Undo();
@@ -7786,7 +7987,8 @@ void EditMap()
           }
           state = 0;
         }
-        EditWave(buttons, area, 600, 613);
+        //按波变阵：删除波次
+        EditWave(buttons, area, 600, 611);
 
         if (area / 100 == 1) //右击卡槽
         {
@@ -8035,7 +8237,8 @@ void EditTrack()//模块二：编辑轨道
               slot[curAccount][order].limit = false;
           }
         }
-        if (area == 612)//录制轨道按钮
+        //录制轨道
+        if (area == 613)
         {
           int RecordMessage = MessageBox(hWndEditor,
             "点击确定后，将鼠标指向选卡界面，\n程序将自动进入关卡并开始录制。\n移动地图请在2秒内放人，以免错位。",
@@ -8057,9 +8260,11 @@ void EditTrack()//模块二：编辑轨道
           }
           state = 0;
         }
+        //按波变阵
         EditWave(buttons, area, 600, 611);
 
-        if (area == 613)//自动布轨按钮
+        //自动布轨
+        if (area == 614)
         {
           GetAsyncKeyState(VK_CONTROL);
           if (GetAsyncKeyState(VK_CONTROL)) //按住Ctrl点自动布轨：约束自动布轨
@@ -8081,12 +8286,18 @@ void EditTrack()//模块二：编辑轨道
           }
           state = 0;
         }
-        if (area == 614)//魔塔
+        //魔塔
+        if (area == 615)
           InputNum(&tower[curAccount], 0, 165,
-            "输入要刷的魔塔层数（1~165）。\n输入0表示普通关卡。", "魔塔选项");
-        if (area == 615)//退出时间
+            "输入要刷的魔塔层数（1~165），仅普通任务需要在此处填写。\n输入0表示非魔塔关卡。", "魔塔选项");
+        //退出时间
+        if (area == 616)
           InputNum(&quitTime[curAccount], 0, 960,
             "到达指定时间（1~960秒）后主动退出关卡，仅高级任务有效。\n输入0表示不主动退出。", "退出时间");
+        //退出时间
+        if (area == 617)
+          InputNum(&plantSpeed[curAccount], 0, 5,
+            "输入每秒最大放卡张数（1~5）。\n输入0表示不限速。", "放卡限速");
 
         if (area == 90)//撤销按钮
           if (IsUndoAllowed())
@@ -8179,7 +8390,7 @@ void EditTrack()//模块二：编辑轨道
             else
             {
               if (curTotalWave[curAccount] == 0)
-                PopMessage(hWndEditor, "使用默认轨道的卡无法添加轨道。");
+                PopMessage(hWndEditor, "使用自动承载的卡无法添加轨道。");
               else
                 PopMessage(hWndEditor, "启用继承的卡无法添加轨道。");
             }
@@ -8217,6 +8428,7 @@ void EditTrack()//模块二：编辑轨道
           }
         }
 
+        //按波变阵：删除波次
         EditWave(buttons, area, 600, 611);
 
         //右击队列标题/队列卡：切换或取消选中
@@ -8458,6 +8670,7 @@ void RemakeAllTrack()
 int main(int argc, char *argv[])
 {
   DPI = SetDPIAware();//设置DPI感知并获取DPI
+  //ClaimAdministratorPower();//请求管理员权限
 
   /*获取程序所在目录*/
   char programDirect[maxPath];//当前目录
