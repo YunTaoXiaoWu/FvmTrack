@@ -4,26 +4,36 @@
 #include "resource.h"
 #include "..\\track.h"
 using namespace Gdiplus;
+bool alphaMode; // 内测模式
 HCURSOR CrossCursor;//十字光标
 const int mapLeftCut = 140;//地图左侧截去的宽度
+const int tradeLeftCut = 100; // 兑换界面地图左侧截去的宽度
 const int wndWidth = 950 - mapLeftCut, wndHeight = 596;//窗口尺寸
 int wndWidthDPI, wndHeightDPI;//按DPI缩放后的窗口尺寸
 float ratio;//窗口缩放比例
-const COLORREF red = RGB(255, 64, 32), yellow = RGB(255, 255, 0),
+const COLORREF red = RGB(255, 64, 32), yellow = RGB(255, 255, 0), blue = RGB(0, 255, 255),
 white = RGB(255, 255, 255), black = RGB(30, 30, 30);
 
 //标签
-const int tagNum = 5;
-const int tagX = 0, tagY = 0, tagWidth = 90, tagHeight = 36;//标签栏
-const int QQ_HEAD = 0, TRASH = 1, CUSTOM = 2, IMAGES = 3, ROLE = 4;//QQ头像 清理背包 自定卡槽 自定图像 角色名
-const char tagsName[tagNum][20] = { "QQ头像", "清理背包", "自定卡槽", "自定图像", "角色名" };
+const int tagNumPerRow = 6;
+const int tagNum = 9;
+const int tagX = 0, tagY = 0, tagWidth = 80, tagHeight = 30;//标签栏
+const char tagsName[tagNum][20] =
+{ "QQ头像", "清理背包", "自定卡槽", "目标卡片", "自定图像", "角色名",
+"兑换物品", "邮寄物品", "邮寄卡片" };
+//QQ头像 清理背包 自定卡槽 目标卡片 自定图像 角色名 兑换物品 邮寄物品
+const int QQ_HEAD = 0, TRASH = 1, CUSTOM = 2, TARGET = 3, IMAGES = 4, ROLE = 5,
+TRADE = 6, MAIL_PROP = 7, MAIL_CARD = 8;
 const int RECOGNITION = 1, SHOT = 2;//识别和截图
 
 //自定卡槽标签参数
 const int customX = 10, customY = 20, customCoreWidth = 25, customCoreHeight = 15;//卡槽识别范围
-const int bagX = 382, customWidth = 49, customHeight = 57;
-int bagY;//防御卡背包Y：不同任务可能有不同的值
-const int bagY1 = 179, bagY2 = 407;//确定bagY的范围
+const int mailCardX = 5, mailCardY = 5, mailCardWidth = 30, mailCardHeight = 30;//卡槽识别范围
+const int customWidth = 49, customHeight = 57;
+int cellY;//防御卡背包Y：不同任务可能有不同的值
+int upgradeY;//强卡界面Y
+const int cellX = 382, cellY1 = 179, cellY2 = 407;//确定bagY的范围
+const int upgradeX = 559, upgradeY0 = 91, upgradeY1 = 546; //强化界面X及Y的范围
 //清理背包标签参数
 const int propX = 468, propWidth = 49, propHeight = 49;//道具背包
 int propY;
@@ -61,8 +71,9 @@ COLORREF imageTemplate[templateHeight][templateWidth];//当前识别图像
 COLORREF fullTemplate[fullTemplateHeight][fullTemplateWidth];//完整卡片模板
 HDC hDCMap;//地图DC
 HBITMAP hBmpMap;//地图Bitmap
-HDC hDCBackground;//背景DC
 COLORREF(&map)[596][950] = *MallocMap(&hDCMap, &hBmpMap);//地图
+
+HDC hDCBackground;//背景DC
 COLORREF(&background)[596][950] = *MallocMap(&hDCBackground);//背景
 COLORREF erasedColor[templateWidth * templateHeight * 27];
 int erasedColorNum;
@@ -103,18 +114,18 @@ public:
   }
 
   //绘制缩放后的图像
-  void PaintZoomedImage()
+  void PaintZoomedImage(int dx)
   {
     Bitmap srcBitmap(hBmpMap, nullptr);
     graphics.DrawImage(&srcBitmap, Rect(0, 0, wndWidthDPI, wndHeightDPI),
-      mapLeftCut, 0, wndWidth, wndHeight, UnitPixel);
+      dx, 0, wndWidth, wndHeight, UnitPixel);
   }
 };
 WindowScaler *pScaler;
-//绘制map
-void ViewMap()
+//将map绘制到软件窗口
+void ViewMap(int dx = mapLeftCut)
 {
-  pScaler->PaintZoomedImage();
+  pScaler->PaintZoomedImage(dx);
 }
 
 //载入教程图片
@@ -128,18 +139,61 @@ void LoadTutor()
   }
 }
 
+// 兑换物品截图位置
+const int tradeX = 130, tradeY = 190, tradeWidth = 242, tradeHeight = 41;
+// 兑换物品框出位置
+const int tradeBoxX = 116, tradeBoxY = 159, tradeBoxWidth = 381, tradeBoxHeight = 86;
+// 兑换物品识别区
+const int tradeCoreX = 5, tradeCoreY = 5, tradeCoreWidth = 232, tradeCoreHeight = 23;
+// 兑换物品类型（保存完整截图用于显示，但只有中间区域用于比较）
+struct Trade
+{
+  char name[20]; // 物品名称
+  COLORREF image[tradeHeight][tradeWidth]; // 物品图像
+};
+const int maxTradeNum = 100; // 兑换物品上限
+char tradeList[maxTradeNum][maxPath]; // 兑换物品目录
+Trade trade[maxTradeNum]; // 兑换物品
+int tradeNum; // 兑换物品数量
+
+//载入兑换物品
+void LoadTrade()
+{
+  const char folder[] = "兑换物品";
+  if (!FileExist(folder))
+    CreatePath(folder);
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, tradeList, maxTradeNum);//查找所有png文件
+
+  tradeNum = 0;
+  char path[maxPath] = {};
+  for (int i = 0; i < filesNum && tradeNum < maxTradeNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, tradeList[i]);
+    if (FileExist(path)) //如果可以打开
+    {
+      BitmapToColor(path, trade[tradeNum].image);//读取卡片图像到image
+      tradeList[i][strlen(tradeList[i]) - 4] = 0;//删除".png"
+      strcpy_s(trade[tradeNum].name, tradeList[i]);//记录名称
+      tradeNum++;
+    }
+  }
+}
+
 const int heavyNameX = 108, heavyNameY = 38, heavyNameWidth = 90, heavyNameHeight = 12;//左上角粗角色名
 const int lightNameX = 460, lightNameY = 150, lightNameWidth = 83, lightNameHeight = 12;//邀请界面细角色名
 const int inviteeX = 423, inviteeY = 141, inviteeWidth = 210, inviteeHeight = 30;//邀请列表角色名纵向距离
 //角色名类型
-struct RoleNameType
+struct RoleName
 {
   char name[100];//图片名称
   COLORREF image[heavyNameHeight][lightNameWidth + heavyNameWidth];//粗/细角色名组合图像
 };
 const int maxRoleNameNum = 200;
 char roleNameList[maxRoleNameNum][maxPath];//角色名截图列表
-RoleNameType roleName[maxRoleNameNum];
+RoleName roleName[maxRoleNameNum];
 int roleNameNum;
 
 //载入角色名
@@ -147,7 +201,7 @@ void LoadRoleName()
 {
   const char folder[] = "角色名";
   if (!FileExist(folder))
-    return;
+    ReportMissingFile(folder);
 
   char searchPath[maxPath] = {};
   sprintf_s(searchPath, "%s\\*.png", folder);
@@ -171,27 +225,32 @@ void LoadRoleName()
 const int trashWidth = 49, trashHeight = 49;
 const int lootCoreX = 5, lootCoreY = 5, lootCoreWidth = 36, lootCoreHeight = 28;
 //可删物品类型（保存完整截图用于显示，但只有中间区域用于比较）
-struct TrashType
+struct Trash
 {
   char name[50];//可删物品名称
   COLORREF image[trashWidth][trashHeight];//可删物品图像
 };
-const int maxTrashNum = 200;//可删物品上限
+const int maxTrashNum = 500;//可删物品上限
 char trashList[maxTrashNum][maxPath];//可删物品列表
-TrashType trash[maxTrashNum];//可删物品
+Trash trash[maxTrashNum];//可删物品
 int trashNum;//可删物品数量
 
 //载入可删物品
 void LoadTrash()
 {
-  if (!FileExist("清理背包"))
-    return;
-  int filesNum = GetFileList("清理背包\\*.png", trashList, maxTrashNum);//查找所有png文件
+  const char folder[] = "清理背包";
+  if (!FileExist(folder))
+    ReportMissingFile(folder);
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, trashList, maxTrashNum);//查找所有png文件
+
   trashNum = 0;
   char path[maxPath] = {};
   for (int i = 0; i < filesNum && trashNum < maxTrashNum; i++)
   {
-    sprintf_s(path, "清理背包\\%s", trashList[i]);
+    sprintf_s(path, "%s\\%s", folder, trashList[i]);
     if (FileExist(path)) //如果可以打开
     {
       BitmapToColor(path, trash[trashNum].image);//读取卡片图像到image
@@ -202,23 +261,85 @@ void LoadTrash()
   }
 }
 
+// 邮寄物品类型（保存完整截图用于显示，但只有中间区域用于比较）
+struct Cargo
+{
+  char name[20]; // 邮寄物品名称
+  COLORREF image[propWidth][propHeight]; // 邮寄物品图像
+};
+const int maxCargoNum = 500; // 邮寄物品上限
+char cargoList[maxCargoNum][maxPath]; // 邮寄物品目录
+Cargo cargo[maxCargoNum]; // 邮寄物品
+int cargoNum; // 邮寄物品数量
+
+//载入邮寄物品
+void LoadCargo()
+{
+  const char folder[] = "邮寄物品";
+  if (!FileExist(folder))
+    CreatePath(folder);
+
+  char searchPath[maxPath] = {};
+  sprintf_s(searchPath, "%s\\*.png", folder);
+  int filesNum = GetFileList(searchPath, cargoList, maxCargoNum);//查找所有png文件
+
+  cargoNum = 0;
+  char path[maxPath] = {};
+  for (int i = 0; i < filesNum && cargoNum < maxCargoNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", folder, cargoList[i]);
+    if (FileExist(path)) //如果可以打开
+    {
+      BitmapToColor(path, cargo[cargoNum].image);//读取卡片图像到image
+      cargoList[i][strlen(cargoList[i]) - 4] = 0;//删除".png"
+      strcpy_s(cargo[cargoNum].name, cargoList[i]);//记录名称
+      cargoNum++;
+    }
+  }
+}
+
 //自定卡槽类型
-struct CustomType
+struct Custom
 {
   char name[50];//卡槽名称
   COLORREF image[customHeight][customWidth];//卡槽图像
 };
 const int maxCustomNum = 500;//自定卡槽上限
 char customList[maxCustomNum][maxPath];//自定卡槽目录
-CustomType custom[maxCustomNum];//自定卡槽
+Custom custom[maxCustomNum];//自定卡槽
 int customNum;//自定卡槽数量
+
+//目标卡片类型
+struct Target
+{
+  char name[50];//卡槽名称
+  COLORREF image[customHeight][customWidth];//卡槽图像
+};
+const int maxTargetNum = 500;//目标卡片上限
+char targetList[maxTargetNum][maxPath];//目标卡片目录
+Target target[maxTargetNum];//目标卡片
+int targetNum;//目标卡片数量
+int innateTargetNum;//配方卡数量
+int customTargetNum;//自定目标卡数量
+
+// 邮寄卡片类型
+struct MailCard
+{
+  char name[50];//卡槽名称
+  COLORREF image[customHeight][customWidth];//卡槽图像
+};
+const int maxMailCardNum = 500; // 邮寄卡片上限
+char mailCardList[maxMailCardNum][maxPath]; // 邮寄卡片目录
+MailCard mailCard[maxMailCardNum]; // 邮寄卡片
+int mailCardNum; // 邮寄卡片数量
+
 //载入自定卡槽
 void LoadCustom()
 {
-  if (!FileExist("自定卡槽"))
-    return;
-  int filesNum = GetFileList("自定卡槽\\*.png", customList, maxCustomNum);//查找所有png文件
   customNum = 0;
+  if (!FileExist("自定卡槽"))
+    ReportMissingFile("自定卡槽");
+  int filesNum = GetFileList("自定卡槽\\*.png", customList, maxCustomNum);//查找所有png文件
   COLORREF bag[customHeight][customWidth] = {};//背包卡
   char path[maxPath] = {};
   for (int i = 0; i < filesNum && customNum < maxCustomNum; i++)
@@ -233,13 +354,83 @@ void LoadCustom()
     }
   }
 }
+
+//载入强化用卡
+void LoadTarget()
+{
+  const char sideFolder[] = "..\\附加程序\\图片\\合成\\卡片";
+  const char targetFolder[] = "目标卡片";
+  if (!FileExist(sideFolder) || !FileExist(targetFolder))
+    return;
+
+  char searchPath[maxPath] = {};
+  //查找内置卡片
+  sprintf_s(searchPath, "%s\\*.png", sideFolder);
+  innateTargetNum = GetFileList(searchPath, targetList, maxTargetNum);
+  //查找目标卡片
+  sprintf_s(searchPath, "%s\\*.png", targetFolder);
+  customTargetNum = GetFileList(searchPath, targetList + innateTargetNum, maxTargetNum - innateTargetNum);
+
+  targetNum = 0;
+  char sidePath[maxPath];
+  for (int i = 0; i < innateTargetNum && targetNum < maxTargetNum; i++)
+  {
+    sprintf_s(sidePath, "%s\\%s", sideFolder, targetList[i]);
+    if (FileExist(sidePath)) //如果文件存在
+    {
+      targetList[i][strlen(targetList[i]) - 4] = 0;
+      strcpy_s(target[targetNum].name, targetList[i] + 2);//名称
+      BitmapToColor(sidePath, target[targetNum].image);//副卡图像
+      targetNum++;
+    }
+  }
+  for (int i = innateTargetNum; i < innateTargetNum + customTargetNum && targetNum < maxTargetNum; i++)
+  {
+    sprintf_s(sidePath, "%s\\%s", targetFolder, targetList[i]);
+    if (FileExist(sidePath)) //如果文件存在
+    {
+      targetList[i][strlen(targetList[i]) - 4] = 0;
+      strcpy_s(target[targetNum].name, targetList[i]);//名称
+      BitmapToColor(sidePath, target[targetNum].image);//副卡图像
+      targetNum++;
+    }
+  }
+}
+
+//载入邮寄卡片
+void LoadMailCard()
+{
+  const char mailCardFolder[] = "邮寄卡片";
+  if (!FileExist(mailCardFolder))
+    return;
+
+  char searchPath[maxPath] = {};
+  //查找目标卡片
+  sprintf_s(searchPath, "%s\\*.png", mailCardFolder);
+  int fileNum = GetFileList(searchPath, mailCardList, maxMailCardNum);
+
+  mailCardNum = 0;
+  char path[maxPath];
+  for (int i = 0; i < fileNum && mailCardNum < maxMailCardNum; i++)
+  {
+    sprintf_s(path, "%s\\%s", mailCardFolder, mailCardList[i]);
+    if (FileExist(path)) // 如果文件存在
+    {
+      mailCardList[i][strlen(mailCardList[i]) - 4] = 0;
+      strcpy_s(mailCard[mailCardNum].name, mailCardList[i]); // 名称
+      BitmapToColor(path, mailCard[mailCardNum].image); // 邮寄卡片图像
+      mailCardNum++;
+    }
+  }
+}
+
 typedef COLORREF CustomImage[customHeight][customWidth];
 //自定卡槽编辑信息
 struct CustomInfo
 {
   int code;//被重命名的卡槽编号（-1表示新增）
   char oldFilename[20];//旧图片名（带优先级后缀）
-  char oldName[10], newName[10];//旧卡槽名、新卡槽名
+  char oldName[20], newName[20];//旧卡槽名、新卡槽名
   int oldPriority, newPriority;//旧优先级、新优先级
   COLORREF(&image)[customHeight][customWidth];//卡槽图像
   HDC hdcImage;//卡槽图像HDC
@@ -250,7 +441,7 @@ struct CustomInfo
 CustomInfo customInfo;
 
 //从输入框获取文本，文本不对则提示
-int GetItemText(char(&dest)[10], const char *itemName, HWND hDlg, int idItem, int length)
+int GetItemText(char(&dest)[20], const char *itemName, HWND hDlg, int idItem, int length)
 {
   if (!dest)
   {
@@ -313,6 +504,7 @@ INT_PTR CALLBACK CustomDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lP
   {
   case WM_INITDIALOG:
   {
+    RepairEdit(GetDlgItem(hDlg, idName));
     //对话框位置居中
     CenterDialog(hDlg);
 
@@ -415,10 +607,233 @@ INT_PTR CALLBACK CustomDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lP
 //编辑自定卡槽
 int EditCustom()
 {
-  return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_CUSTOM),
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_CUSTOM),
     hWndTool, CustomDialogProc, 0);
 }
-//判断row行column列的物品是否已存在，存在则记录编号并返回true
+
+//目标卡片输入框过程函数
+INT_PTR CALLBACK TargetProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+  switch (uMsg)
+  {
+  case WM_INITDIALOG:
+  {
+    RepairEdit(GetDlgItem(hDlg, idName));
+    //对话框位置居中
+    CenterDialog(hDlg);
+
+    //设置对话框标题
+    if (customInfo.code == -1)
+      SetWindowTextA(hDlg, "新增目标卡片");
+    else
+      SetWindowTextA(hDlg, "重命名目标卡片");
+
+    //设置输入框内容
+    SetItemText(hDlg, idName, customInfo.oldName, 10);
+    SetTimer(hDlg, 1, 1, NULL);//设置0ms定时器，将选中文本操作延后
+  }
+  return TRUE;
+  case WM_TIMER:
+    if (wParam == 1)
+    {
+      KillTimer(hDlg, 1);// 第一次处理就销毁定时器
+      HWND hEditName = GetDlgItem(hDlg, idName);
+      if (hEditName)
+      {
+        SetFocus(hEditName);// 设置焦点到输入框
+        SendMessageA(hEditName, EM_SETSEL, 0, -1);// 选中输入框中的所有文本
+      }
+    }
+    break;
+
+  case WM_PAINT: //绘制卡片图像
+  {
+    PAINTSTRUCT ps;
+    BeginPaint(hDlg, &ps);
+    BitBlt(GetDC(hDlg), 25, 30, customWidth, customHeight,
+      customInfo.hdcImage, 0, 0, SRCCOPY);
+    EndPaint(hDlg, &ps);
+    break;
+  }
+  case WM_COMMAND:
+    if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
+    {
+      //读取卡片名称
+      if (!GetItemText(customInfo.newName, "卡片名称", hDlg, idName, 10))
+        break;
+
+      //填写新旧路径
+      char oldPath[maxPath] = {};
+      sprintf_s(oldPath, "目标卡片\\%s", customInfo.oldFilename);
+      char newPath[maxPath] = {};
+      sprintf_s(newPath, "目标卡片\\%s.png", customInfo.newName);
+
+      //文件已存在则提示修改
+      if (FileExist(newPath))
+      {
+        //特例：重命名时不作修改是允许的，此时直接结束对话框
+        if (customInfo.code != -1 && strcmp(oldPath, newPath) == 0)
+        {
+          EndDialog(hDlg, IDOK);// 结束对话框
+          return TRUE;
+        }
+        //其他情况弹窗提示文件已存在
+        char message[100];
+        sprintf_s(message, "截图[%s.png]已存在，\n请使用其他名称。",
+          customInfo.newName);
+        PopMessage(hDlg, message);
+        break;
+      }
+
+      //新增卡片：保存到文件并记入自定卡槽
+      if (customInfo.code == -1)
+      {
+        //保存到文件
+        ColorToBitmap(customInfo.image, newPath);
+        //添加到custom数组
+        sprintf_s(target[targetNum].name, "%s", customInfo.newName);
+        CopyMap(target[targetNum].image, customInfo.image);
+        targetNum++;
+      }
+      else //重命名卡片
+      {
+        //重命名文件
+        rename(oldPath, newPath);
+        //重命名custom数组
+        sprintf_s(target[customInfo.code].name, "%s", customInfo.newName);
+      }
+      EndDialog(hDlg, IDOK);// 结束对话框
+      return TRUE;
+    }
+    else if (LOWORD(wParam) == IDCANCEL) // 点击了“取消”按钮
+    {
+      EndDialog(hDlg, IDCANCEL);
+      return TRUE;
+    }
+    break;
+  }
+  return FALSE;
+}
+
+//编辑目标卡片
+int EditTarget()
+{
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_TARGET),
+    hWndTool, TargetProc, 0);
+}
+
+//目标卡片输入框过程函数
+INT_PTR CALLBACK MailCardProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+  switch (uMsg)
+  {
+  case WM_INITDIALOG:
+  {
+    RepairEdit(GetDlgItem(hDlg, idName));
+    //对话框位置居中
+    CenterDialog(hDlg);
+
+    //设置对话框标题
+    if (customInfo.code == -1)
+      SetWindowTextA(hDlg, "新增邮寄卡片");
+    else
+      SetWindowTextA(hDlg, "重命名邮寄卡片");
+
+    //设置输入框内容
+    SetItemText(hDlg, idName, customInfo.oldName, 10);
+    SetTimer(hDlg, 1, 1, NULL);//设置0ms定时器，将选中文本操作延后
+  }
+  return TRUE;
+  case WM_TIMER:
+    if (wParam == 1)
+    {
+      KillTimer(hDlg, 1);// 第一次处理就销毁定时器
+      HWND hEditName = GetDlgItem(hDlg, idName);
+      if (hEditName)
+      {
+        SetFocus(hEditName);// 设置焦点到输入框
+        SendMessageA(hEditName, EM_SETSEL, 0, -1);// 选中输入框中的所有文本
+      }
+    }
+    break;
+
+  case WM_PAINT: //绘制卡片图像
+  {
+    PAINTSTRUCT ps;
+    BeginPaint(hDlg, &ps);
+    BitBlt(GetDC(hDlg), 25, 30, customWidth, customHeight,
+      customInfo.hdcImage, 0, 0, SRCCOPY);
+    EndPaint(hDlg, &ps);
+    break;
+  }
+  case WM_COMMAND:
+    if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
+    {
+      //读取卡片名称
+      if (!GetItemText(customInfo.newName, "卡片名称", hDlg, idName, 10))
+        break;
+
+      //填写新旧路径
+      char oldPath[maxPath] = {};
+      sprintf_s(oldPath, "邮寄卡片\\%s", customInfo.oldFilename);
+      char newPath[maxPath] = {};
+      sprintf_s(newPath, "邮寄卡片\\%s.png", customInfo.newName);
+
+      //文件已存在则提示修改
+      if (FileExist(newPath))
+      {
+        //特例：重命名时不作修改是允许的，此时直接结束对话框
+        if (customInfo.code != -1 && strcmp(oldPath, newPath) == 0)
+        {
+          EndDialog(hDlg, IDOK);// 结束对话框
+          return TRUE;
+        }
+        //其他情况弹窗提示文件已存在
+        char message[100];
+        sprintf_s(message, "截图[%s.png]已存在，\n请使用其他名称。",
+          customInfo.newName);
+        PopMessage(hDlg, message);
+        break;
+      }
+
+      //新增卡片：保存到文件并记入自定卡槽
+      if (customInfo.code == -1)
+      {
+        //保存到文件
+        ColorToBitmap(customInfo.image, newPath);
+        //添加到custom数组
+        sprintf_s(mailCard[mailCardNum].name, "%s", customInfo.newName);
+        CopyMap(mailCard[mailCardNum].image, customInfo.image);
+        mailCardNum++;
+      }
+      else //重命名卡片
+      {
+        //重命名文件
+        rename(oldPath, newPath);
+        //重命名custom数组
+        sprintf_s(mailCard[customInfo.code].name, "%s", customInfo.newName);
+      }
+      EndDialog(hDlg, IDOK);// 结束对话框
+      return TRUE;
+    }
+    else if (LOWORD(wParam) == IDCANCEL) // 点击了“取消”按钮
+    {
+      EndDialog(hDlg, IDCANCEL);
+      return TRUE;
+    }
+    break;
+  }
+  return FALSE;
+}
+
+//编辑目标卡片
+int EditMailCard()
+{
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_MAIL_CARD),
+    hWndTool, MailCardProc, 0);
+}
+
+//判断row行column列的可删物品是否已存在，存在则记录编号并返回true
 bool FindTrash(int row, int column, int *pCode = nullptr)
 {
   int x = propX + column * propWidth;
@@ -433,11 +848,55 @@ bool FindTrash(int row, int column, int *pCode = nullptr)
     }
   return false;
 }
+
+//判断row行column列的邮寄物品是否已存在，存在则记录编号并返回true
+bool FindCargo(int row, int column, int *pCode = nullptr)
+{
+  int x = propX + column * propWidth;
+  int y = propY + row * propHeight;
+  for (int code = 0; code < cargoNum; code++)
+    if (IsBitmapEqual(map, cargo[code].image, lootCoreWidth, lootCoreHeight,
+      x + lootCoreX, y + lootCoreY, lootCoreX, lootCoreY))
+    {
+      if (pCode)
+        *pCode = code;
+      return true;
+    }
+  return false;
+}
+
+// row行column列的兑换物品是否为code号物品
+bool IsTradeEqual(int row, int column, int code)
+{
+  // 兑换物品位置
+  int x0 = tradeX + column * tradeBoxWidth;
+  int y0 = tradeY + row * tradeBoxHeight;
+  for (int y = tradeCoreY; y < tradeCoreY + tradeCoreHeight; y++)
+    for (int x = tradeCoreX; x < tradeCoreX + tradeCoreWidth; x++)
+      if (x != 46)
+        if (map[y0 + y][x0 + x] != trade[code].image[y][x])
+          return false;
+  return true;
+}
+
+//判断row行column列的兑换物品是否已存在，存在则记录编号并返回true
+bool FindTrade(int row, int column, int *pCode = nullptr)
+{
+  for (int code = 0; code < tradeNum; code++)
+    if (IsTradeEqual(row, column, code))
+    {
+      if (pCode)
+        *pCode = code;
+      return true;
+    }
+  return false;
+}
+
 //判断row行column列的卡槽是否已存在，存在则记录编号并返回true
 bool FindCustom(int row, int column, int *pCode = nullptr)
 {
-  int x = bagX + column * customWidth + customX;
-  int y = bagY + row * customHeight + customY;
+  int x = cellX + column * customWidth + customX;
+  int y = cellY + row * customHeight + customY;
   for (int code = 0; code < customNum; code++)
     if (IsBitmapEqual(map, custom[code].image, customCoreWidth, customCoreHeight,
       x, y, customX, customY))
@@ -448,6 +907,39 @@ bool FindCustom(int row, int column, int *pCode = nullptr)
     }
   return false;
 }
+
+//判断row行column列的卡槽是否已存在，存在则记录编号并返回true
+bool FindTarget(int row, int column, int *pCode = nullptr)
+{
+  int x = upgradeX + column * customWidth + customX;
+  int y = upgradeY + row * customHeight + customY;
+  for (int code = 0; code < targetNum; code++)
+    if (IsBitmapEqual(map, target[code].image, customCoreWidth, customCoreHeight,
+      x, y, customX, customY))
+    {
+      if (pCode)
+        *pCode = code;
+      return true;
+    }
+  return false;
+}
+
+// （在合成屋中）判断row行column列的卡槽是否已存在，存在则记录编号并返回true
+bool FindMailCard(int row, int column, int *pCode = nullptr)
+{
+  int x = upgradeX + column * customWidth + mailCardX;
+  int y = upgradeY + row * customHeight + mailCardY;
+  for (int code = 0; code < mailCardNum; code++)
+    if (IsBitmapEqual(map, mailCard[code].image, mailCardWidth, mailCardHeight,
+      x, y, mailCardX, mailCardY))
+    {
+      if (pCode)
+        *pCode = code;
+      return true;
+    }
+  return false;
+}
+
 void RecordColor(COLORREF color)
 {
   colorExist[color >> 3] |= 1 << (color & 0x00000007);
@@ -610,19 +1102,24 @@ void ViewMapGrid()
       PaintGrid(1, 1, cutGridX + offsetX + (column - 1) * gridWidth, gridY + offsetY + (row - 1) * gridHeight,
         realGridWidth, realGridHeight);
 }
-const int cursorCX = 500, cursorCY = tagHeight / 2, cursorRadium = 12;//抓取光标
+const int cursorCX = 535, cursorCY = tagHeight / 2, cursorRadium = 12;//抓取光标
 //绘制标签
 void ViewTags()
 {
   solidrectangle(0, 0, wndWidth, tagHeight + 1);
+  if (alphaMode)
+    solidrectangle(0, tagHeight, wndWidth, tagHeight * 2 + 1);
 
-  SetFontSize(20);
+  SetFontSize(18);
   setlinecolor(yellow);
   settextcolor(yellow);
 
   char tip[100];//右上角提示语
   if (tag == ROLE) //截取角色名
+  {
     strcpy_s(tip, "请阅读使用手册“3.2.2 邀请机制”");
+    outtextxy(cursorCX - 10, 8, tip);
+  }
   else //其他标签
   {
     PaintTargetCursor(cursorCX, cursorCY);//绘制抓取图标
@@ -630,31 +1127,31 @@ void ViewTags()
       strcpy_s(tip, "← 拖动至游戏窗口内获取句柄");
     else
       sprintf_s(tip, "窗口句柄：%d", (int)hWndGame);
+    outtextxy(cursorCX + 20, 8, tip);
   }
-  outtextxy(cursorCX + 20, 8, tip);
 
   setlinecolor(white);
   settextcolor(white);
-  PaintGrid(1, tagNum, tagX, tagY, tagWidth, tagHeight);//绘制标签格子
-  for (int i = 0; i < tagNum; i++)
+  // 2行标签格子
+  PaintGrid(1, tagNumPerRow, tagX, tagY, tagWidth, tagHeight);
+  if (alphaMode)
+    PaintGrid(1, tagNum - tagNumPerRow, tagX, tagY + tagHeight, tagWidth, tagHeight);
+  int realTagNum = alphaMode ? tagNum : 6;
+  for (int i = 0; i < realTagNum; i++)
   {
     if (tag == i)
       settextcolor(red);
     else
       settextcolor(white);
-    CenterView(tagsName[i], (2 * i + 1) * tagWidth / 2, tagHeight / 2);
+    int row = i / tagNumPerRow;
+    int column = i % tagNumPerRow;
+    CenterView(tagsName[i], (2 * column + 1) * tagWidth / 2, (2 * row + 1) * tagHeight / 2);
   }
   SetFontSize(defaultFont);
 }
 //截图1帧并计算各格相似度
-void ShotAndGetSimilarity()
+void GetSimilarity()
 {
-  //窗口可见：截取地图，直到左上角不为黑色，但最多截取10次
-  if (IsGameWindowVisible(hWndGame))
-    MapShot(hWndGame, map, hDCMap); //截取地图（最多截5次防黑）
-  else //窗口不可见：直接设为全黑
-    memset(map, 0, sizeof(map));
-
   //将最近BufferSize-1次相似度右移一格
   for (int i = frame - 1; i >= 1; i--)
     for (int row = 1; row <= 7; row++)
@@ -682,7 +1179,7 @@ void ShotAndGetSimilarity()
 //角色名行列数
 const int roleRowNum = 15, roleColumnNum = 3;
 //角色名显示位置
-const int roleX = 15, roleY = 85, roleWidth = 258, roleHeight = 32;
+const int roleX = 15, roleY = 100, roleWidth = 258, roleHeight = 32;
 //粗细角色名抓取图标显示位置
 const int heavyX = 5, lightX = 135, heavyY = 6, lightY = 6;
 //显示一个角色名
@@ -736,8 +1233,9 @@ void ViewRoleName()
   //显示表格框线
   PaintGrid(16, 3, roleX, roleY - roleHeight, roleWidth, roleHeight);
 }
-//绘制道具框线
-void ViewProp()
+
+//绘制清理物品框线
+void ViewTrash()
 {
   if (hWndGame == nullptr)
     return;
@@ -767,10 +1265,75 @@ void ViewProp()
     line(propX - mapLeftCut + column * propWidth, propY,
       propX - mapLeftCut + column * propWidth, propY + 7 * propHeight);
 }
+
+//绘制邮寄物品框线
+void ViewCargo()
+{
+  if (hWndGame == nullptr)
+    return;
+
+  //标注存在的可删道具
+  SetFontSize(13);
+  settextcolor(red);
+  setfillcolor(white);
+  int code = 0;
+  for (int row = 0; row < 7; row++)
+    for (int column = 0; column < 9; column++)
+      if (FindCargo(row, column, &code))
+      {
+        int x = propX + column * propWidth + propWidth / 2 - mapLeftCut;
+        int y = propY + (row + 1) * propHeight - 7;
+        solidrectangle(x - propWidth / 2 + 1, y - 7, x + propWidth / 2 - 1, y + 7);
+        CenterView(cargo[code].name, x, y);
+      }
+  SetFontSize(defaultFont);
+  setfillcolor(black);
+
+  //标注道具位置
+  for (int row = 0; row <= 7; row++)
+    line(propX - mapLeftCut, propY + row * propHeight,
+      propX - mapLeftCut + 9 * propWidth, propY + row * propHeight);
+  for (int column = 0; column <= 9; column++)
+    line(propX - mapLeftCut + column * propWidth, propY,
+      propX - mapLeftCut + column * propWidth, propY + 7 * propHeight);
+}
+
+//绘制交易物品框线
+void ViewTrade()
+{
+  if (hWndGame == nullptr)
+    return;
+
+  //标注交易物品名称
+  SetFontSize(13);
+  settextcolor(red);
+  setfillcolor(white);
+  int code = 0;
+  for (int row = 0; row < 4; row++)
+    for (int column = 0; column < 2; column++)
+      if (FindTrade(row, column, &code))
+      {
+        int x = tradeBoxX + column * tradeBoxWidth + tradeBoxWidth / 2 - tradeLeftCut;
+        int y = tradeBoxY + row * tradeBoxHeight + 7;
+        solidrectangle(x - tradeBoxWidth / 2 + 1, y - 7, x + tradeBoxWidth / 2 - 1, y + 7);
+        CenterView(trade[code].name, x, y);
+      }
+  SetFontSize(defaultFont);
+  setfillcolor(black);
+
+  //框线标注交易物品位置
+  for (int row = 0; row <= 4; row++)
+    line(tradeBoxX - tradeLeftCut, tradeBoxY + row * tradeBoxHeight,
+      tradeBoxX - tradeLeftCut + 2 * tradeBoxWidth, tradeBoxY + row * tradeBoxHeight);
+  for (int column = 0; column <= 2; column++)
+    line(tradeBoxX - tradeLeftCut + column * tradeBoxWidth, tradeBoxY,
+      tradeBoxX - tradeLeftCut + column * tradeBoxWidth, tradeBoxY + 4 * tradeBoxHeight);
+}
+
 //从字符串str中移除所有字符ch
 void removeChar(char *str, char ch)
 {
-  int length = strlen(str);
+  int length = (int)strlen(str);
   int i = 0, j = 0;//原字符串、新字符串指针
   while (i <= length)
   {
@@ -796,8 +1359,8 @@ void ViewCustom()
     for (int column = 0; column < 11; column++)
       if (FindCustom(row, column, &code))
       {
-        int x = bagX + column * customWidth + customWidth / 2 - mapLeftCut;
-        int y = bagY + (row + 1) * customHeight - 9;
+        int x = cellX + column * customWidth + customWidth / 2 - mapLeftCut;
+        int y = cellY + (row + 1) * customHeight - 9;
         solidrectangle(x - customWidth / 2 + 1, y - 8, x + customWidth / 2 - 1, y + 8);
 
         strcpy_s(name, custom[code].name);
@@ -815,7 +1378,7 @@ void ViewCustom()
           int textY = y - textheight(name) / 2;
           settextcolor(yellow);
           outtextxy(textX, textY, name);
-          settextcolor(RGB(0, 255, 255));
+          settextcolor(blue);
           outtextxy(textX + nameWidth, textY, priorityStr);
         }
         else
@@ -825,42 +1388,154 @@ void ViewCustom()
         }
       }
   SetFontSize(defaultFont);
-  //setfillcolor(black);
 
   //绘制卡片框线
   for (int row = 0; row <= 4; row++)
-    line(bagX - mapLeftCut, bagY + row * customHeight,
-      bagX - mapLeftCut + 11 * customWidth, bagY + row * customHeight);
+    line(cellX - mapLeftCut, cellY + row * customHeight,
+      cellX - mapLeftCut + 11 * customWidth, cellY + row * customHeight);
   for (int column = 0; column <= 11; column++)
-    line(bagX - mapLeftCut + column * customWidth, bagY,
-      bagX - mapLeftCut + column * customWidth, bagY + 4 * customHeight);
+    line(cellX - mapLeftCut + column * customWidth, cellY,
+      cellX - mapLeftCut + column * customWidth, cellY + 4 * customHeight);
 }
+
+// 绘制目标卡片框线，标注存在的卡片
+void ViewTarget()
+{
+  if (hWndGame == nullptr)
+    return;
+
+  //标注存在的卡片
+  SetFontSize(13);
+  setfillcolor(black);
+  int code = 0;
+  for (int row = 0; row < 8; row++)
+    for (int column = 0; column < 7; column++)
+      if (FindTarget(row, column, &code))
+      {
+        int x = upgradeX + column * customWidth + customWidth / 2 - mapLeftCut;
+        int y = upgradeY + (row + 1) * customHeight - 9;
+        solidrectangle(x - customWidth / 2 + 1, y - 8, x + customWidth / 2 - 1, y + 8);
+        if (code < innateTargetNum)
+          settextcolor(yellow);
+        else
+          settextcolor(blue);
+        int length = (int)strlen(target[code].name);
+        if (length <= 7)
+          SetFontSize(13);
+        else if (length <= 8)
+          SetFontSize(12);
+        else
+          SetFontSize(11);
+        CenterView(target[code].name, x, y);
+      }
+  SetFontSize(defaultFont);
+
+  //绘制卡片框线
+  for (int row = 0; row <= 4; row++)
+    line(upgradeX - mapLeftCut, upgradeY + row * customHeight,
+      upgradeX - mapLeftCut + 7 * customWidth, upgradeY + row * customHeight);
+  for (int column = 0; column <= 11; column++)
+    line(upgradeX - mapLeftCut + column * customWidth, upgradeY,
+      upgradeX - mapLeftCut + column * customWidth, upgradeY + 8 * customHeight);
+}
+
+// 绘制邮寄卡片框线，标注存在的卡片
+void ViewMailCard()
+{
+  if (hWndGame == nullptr)
+    return;
+
+  //标注存在的卡片
+  SetFontSize(13);
+  setfillcolor(black);
+  int code = 0;
+  for (int row = 0; row < 8; row++)
+    for (int column = 0; column < 7; column++)
+      if (FindMailCard(row, column, &code))
+      {
+        int x = upgradeX + column * customWidth + customWidth / 2 - mapLeftCut;
+        int y = upgradeY + (row + 1) * customHeight - 9;
+        solidrectangle(x - customWidth / 2 + 1, y - 8, x + customWidth / 2 - 1, y + 8);
+        settextcolor(yellow);
+        int length = (int)strlen(mailCard[code].name);
+        if (length <= 7)
+          SetFontSize(13);
+        else if (length <= 8)
+          SetFontSize(12);
+        else
+          SetFontSize(11);
+        CenterView(mailCard[code].name, x, y);
+      }
+  SetFontSize(defaultFont);
+
+  //绘制卡片框线
+  for (int row = 0; row <= 4; row++)
+    line(upgradeX - mapLeftCut, upgradeY + row * customHeight,
+      upgradeX - mapLeftCut + 7 * customWidth, upgradeY + row * customHeight);
+  for (int column = 0; column <= 11; column++)
+    line(upgradeX - mapLeftCut + column * customWidth, upgradeY,
+      upgradeX - mapLeftCut + column * customWidth, upgradeY + 8 * customHeight);
+}
+
+//教程
 const char *tutorString[tagNum][2] = { {
+    // QQ头像
     "截取空间服登录游戏所需的头像。",
     "将右上角图标拖动至快捷登录界面即可。"
   }, {
+    // 清理背包
     "截取可删除的道具、可分解的宝石和可使用的装备（消耗品）。",
     "将右上角图标拖动至道具或装备背包，单击物品截图，右键删除截图。"
   }, {
+    // 自定卡槽
     "截取需要自动携带的防御卡。",
     "将右上角图标拖动至选卡界面，单击卡片截图，右键删除截图。"
   }, {
+    // 目标卡片
+    "截取需要强化的目标卡片。",
+    "将右上角图标拖动至强卡界面，单击卡片截图，右键删除截图。"
+  }, {
+    // 自定图像
     "截取需要在战斗中识别的老鼠、BOSS或物件。",
     "将右上角图标拖动至游戏窗口内，按使用手册操作。"
   }, {
+    // 角色名
     "",
     ""
+  }, {
+    // 兑换物品
+    "截取需要自动兑换的物品。",
+    "将右上角图标拖动至兑换界面，单击物品截图，右键删除截图。"
+  }, {
+    // 邮寄物品
+    "截取需要自动邮寄的物品。",
+    "将右上角图标拖动至道具背包，单击物品截图，右键删除截图。"
+  }, {
+    // 邮寄卡片
+    "截取需要自动邮寄的卡片。",
+    "将右上角图标拖动至强卡界面，单击卡片截图，右键删除截图。"
+
   }
 };
+// 显示教程
 void ViewTutor()
 {
   SetFontSize(24);
   ColorToWindow(tutor[tag], 0, tagHeight);//显示教程图片
   settextcolor(red);
-  outtextxy(36, tagHeight + 40 + 0 * 40, tutorString[tag][0]);
+  outtextxy(36, tagHeight + 50 + 0 * 40, tutorString[tag][0]);
   settextcolor(RGB(255, 255, 255));
-  outtextxy(36, tagHeight + 40 + 1 * 40, tutorString[tag][1]);
+  outtextxy(36, tagHeight + 50 + 1 * 40, tutorString[tag][1]);
   SetFontSize(defaultFont);
+}
+//截图游戏画面到map
+void UpdateMap()
+{
+  //窗口可见：截取地图，直到左上角不为黑色
+  if (IsGameWindowVisible(hWndGame))
+    GameShot(hWndGame, map, hDCMap);
+  else //窗口不可见：直接设为全黑
+    memset(map, 0, sizeof(map));
 }
 //界面绘制函数
 void Repaint()
@@ -886,25 +1561,47 @@ void Repaint()
       else if (tag == TRASH) //清理背包标签
       {
         ViewMap();//绘制地图
-        ViewProp();//绘制道具框线和名称
+        ViewTrash();//绘制道具框线和名称
       }
       else if (tag == CUSTOM) //自定卡槽标签
       {
         ViewMap();//绘制地图
         ViewCustom();//绘制卡片框线和名称
       }
+      else if (tag == TARGET) //目标卡片标签
+      {
+        ViewMap();//绘制地图
+        ViewTarget();//绘制卡片框线和名称
+      }
+      else if (tag == MAIL_CARD) // 邮寄卡片标签
+      {
+        ViewMap();//绘制地图
+        ViewMailCard();//绘制卡片框线和名称
+      }
       else if (tag == IMAGES) //自定图像标签
       {
+        if (mode == RECOGNITION)
+          UpdateMap();
         ViewMap();//绘制地图
         ViewMapGrid();//绘制地图格子
         if (mode == RECOGNITION)
         {
-          ShotAndGetSimilarity();//截图并计算相似度
+          GetSimilarity();//计算相似度
           ViewSimilarity();//显示相似度
         }
         ViewMode();//显示模式按钮
         ViewTemplate();//绘制模板
         ViewBackground();//显示背景
+      }
+      else if (tag == TRADE) //兑换物品标签
+      {
+        ViewMap(tradeLeftCut);//绘制地图
+        ViewTrade();//绘制道具框线和名称
+      }
+      else if (tag == MAIL_PROP) //邮寄物品标签
+      {
+        ViewMap();//绘制地图
+        ViewCargo();//绘制道具框线和名称
       }
     }
   }
@@ -938,6 +1635,7 @@ void ChangeTemplate(const char *itemFullPath)
   RecordTemplate();//记录新模板颜色
   memset(similarity, 0, sizeof(similarity));
 }
+// 获取坐标对应的区域
 int GetArea(int originX, int originY)
 {
   int x = (int)(originX / ratio + 0.5);
@@ -945,13 +1643,20 @@ int GetArea(int originX, int originY)
   if (x < 0 || y < 0 || x >= wndWidth || y >= wndHeight)
     return 0;
   //tag切换：10-14
-  if (x < tagNum * tagWidth && y < tagHeight)
-    return 10 + x / tagWidth;
-  //标签抓取19
+  if (x < tagNumPerRow * tagWidth && y < 2 * tagHeight)
+  {
+    int row = y / tagHeight;
+    int column = x / tagWidth;
+    int tagArea = 10 + row * tagNumPerRow + column;
+    if (!alphaMode && tagArea >= 16)
+      return 0;
+    return tagArea;
+  }
+  //标签抓取90
   if (tag != ROLE)
     if (x >= cursorCX - cursorRadium && x <= cursorCX + cursorRadium
       && y >= cursorCY - cursorRadium && y <= cursorCY + cursorRadium)
-      return 19;
+      return 90;
 
   if (tag == ROLE)
   {
@@ -979,7 +1684,7 @@ int GetArea(int originX, int originY)
     if (hWndGame == nullptr) //未抓取句柄，返回0
       return 0;
 
-    if (tag == TRASH)
+    if (tag == TRASH || tag == MAIL_PROP)
     {
       x += mapLeftCut;
       //道具背包区域：10000+
@@ -991,15 +1696,39 @@ int GetArea(int originX, int originY)
         return 10000 + row * 100 + column;
       }
     }
+    else if (tag == TRADE)
+    {
+      x += tradeLeftCut;
+      //道具背包区域：10000+
+      if (x >= tradeBoxX && x < tradeBoxX + 2 * tradeBoxWidth &&
+        y >= tradeBoxY && y < tradeBoxY + 4 * tradeBoxHeight)
+      {
+        int row = (y - tradeBoxY) / tradeBoxHeight;
+        int column = (x - tradeBoxX) / tradeBoxWidth;
+        return 10000 + row * 100 + column;
+      }
+    }
     else if (tag == CUSTOM)
     {
       x += mapLeftCut;
       //选卡区域：10000+
-      if (x >= bagX && x < bagX + 11 * customWidth &&
-        y >= bagY && y < bagY + 4 * customHeight)
+      if (x >= cellX && x < cellX + 11 * customWidth &&
+        y >= cellY && y < cellY + 4 * customHeight)
       {
-        int row = (y - bagY) / customHeight;
-        int column = (x - bagX) / customWidth;
+        int row = (y - cellY) / customHeight;
+        int column = (x - cellX) / customWidth;
+        return 10000 + row * 100 + column;
+      }
+    }
+    else if (tag == TARGET || tag == MAIL_CARD)
+    {
+      x += mapLeftCut;
+      //选卡区域：10000+
+      if (x >= upgradeX && x < upgradeX + 7 * customWidth &&
+        y >= upgradeY && y < upgradeY + 8 * customHeight)
+      {
+        int row = (y - upgradeY) / customHeight;
+        int column = (x - upgradeX) / customWidth;
         return 10000 + row * 100 + column;
       }
     }
@@ -1143,7 +1872,7 @@ int CatchSlotTemplate(char(&path)[maxPath])
     if (counter > 3)
       return 0;
     Sleep(20);
-    MapShot(hWndGame, map, hDCMap);//截取地图
+    GameShot(hWndGame, map, hDCMap);//截取地图
   } while (IsBitmapEqual(background, map, fullTemplateWidth, fullTemplateHeight,
     fullTemplateX, fullTemplateY, fullTemplateX, fullTemplateY));//当完整模板区域与背景不同时退出
   LeftClickDPI(hWndGame, gridX - gridWidth, gridY + 3 * gridHeight);//释放卡槽
@@ -1312,7 +2041,7 @@ void ShotQQHead(HWND hWndHall)
   for (int i = 0; i < hallWidth * hallHeight; i++)
     imgHall[i] &= 0x00ffffff;
 
-  ColorToBitmap(imgHall, hallWidth, hallHeight, "大厅.png");
+  //ColorToBitmap(imgHall, hallWidth, hallHeight, "大厅.png");
 
   int headAreaLength = 0;//头像区域累积长度（一行全白色则累积中断）
   int headX = 0, headY = 0;//头像右上角尺寸
@@ -1431,10 +2160,19 @@ void ShotQQHead(HWND hWndHall)
   PopMessage(hWndTool, "截图已保存至【QQ头像】文件夹，请按格式命名，\n"
     "例如高级任务0的1P头像命名为[高级任务0_1P]。");
 }
+const COLORREF customColor[] = { 0x001f41, 0x1a4263, 0x708596 };//防御卡识别色
+
 bool IsCustomTop(int y)
 {
-  int x = bagX + customX;
-  return map[y][x] == 0x001f41 && map[y + 1][x] == 0x1a4263 && map[y + 2][x] == 0x1a4263;
+  int x = cellX + customX;
+  return map[y][x] == customColor[0] && map[y + 1][x] == customColor[1]
+    && (map[y + 2][x] == customColor[1] || map[y + 2][x] == customColor[2]);
+}
+bool IsUpgradeTop(int y)
+{
+  int x = upgradeX + customX;
+  return map[y][x] == customColor[0] && map[y + 1][x] == customColor[1]
+    && (map[y + 2][x] == customColor[1] || map[y + 2][x] == customColor[2]);
 }
 bool IsPropTop(int y)
 {
@@ -1481,7 +2219,8 @@ bool AddRoleName(char(&path)[maxPath])
   }
   return false;
 }
-//抓取游戏窗口句柄，抓取成功则记录句柄
+
+// 抓取游戏窗口句柄，抓取成功则记录句柄
 int GrabHandle(int type = 0, int order = 0)
 {
   SetSystemCursor(CrossCursor, (DWORD)IDC_ARROW);//将箭头和十字光标替换
@@ -1535,14 +2274,14 @@ int GrabHandle(int type = 0, int order = 0)
     }
     if (!MouseMove(hWndGame0, 0, 0))
     {
-      PopMessage(hWndTool, "权限不足。请先关闭当前窗口，然后\n右键截图工具选择“以管理员身份运行”。");
+      PopMessage(hWndTool, "权限不足。请先关闭截图工具，然后右键“综合截图工具.exe”，选择“以管理员身份运行”。");
       return 0;
     }
 
     //如果抓到了游戏窗口，自定图像标签直接通过
-    if (tag == TRASH) //清理背包：要求在道具背包界面
+    if (tag == TRASH || tag == MAIL_PROP) //清理背包/邮寄物品：要求在道具背包界面
     {
-      MapShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
+      GameShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
       propY = GetTop(propY1, propY2, IsPropTop);
       if (propY == 0)
       {
@@ -1554,20 +2293,41 @@ int GrabHandle(int type = 0, int order = 0)
       while (propY >= 88 + propHeight) //把propY修正到[88,88+49)范围内
         propY -= propHeight;
     }
+    else if (tag == TRADE) // 兑换物品：要求在兑换界面
+    {
+      GameShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
+    }
     else if (tag == CUSTOM) //自定卡槽：要求在选卡界面
     {
-      MapShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
-      bagY = GetTop(bagY1, bagY2, IsCustomTop);
-      if (bagY == 0)
+      GameShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
+      cellY = GetTop(cellY1, cellY2, IsCustomTop);
+      if (cellY == 0)
       {
         hWndGame = 0;//清空句柄
         PopMessage(hWndTool, "未识别到卡片，请进入选卡界面再截图。");
         return 0;
       }
+      //将cellY校正到[171, 171+customHeight)
+      while (cellY >= 171 + customHeight)
+        cellY -= customHeight;
+    }
+    else if (tag == TARGET || tag == MAIL_CARD) //目标卡片/邮寄卡片：要求在强卡界面
+    {
+      GameShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
+      upgradeY = GetTop(upgradeY0, upgradeY1, IsUpgradeTop);
+      if (upgradeY == 0)
+      {
+        hWndGame = 0;//清空句柄
+        PopMessage(hWndTool, "未识别到卡片，请进入强卡界面再截图。");
+        return 0;
+      }
+      //将upgradeY校正到[upgradeY1-starCoreY, upgradeY1-starCoreY+customHeight)
+      while (upgradeY >= upgradeY0 - 8 + customHeight)
+        upgradeY -= customHeight;
     }
     else if (tag == ROLE) //角色名：粗角色名；细角色名要求在邀请界面
     {
-      MapShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
+      GameShot(hWndGame0, map, hDCMap); //截取地图（最多截5次防黑）
       char path[maxPath];
       if (type == 1) //截取粗角色名：要求在头像显示界面（排行按钮）
       {
@@ -1643,12 +2403,14 @@ int GrabHandle(int type = 0, int order = 0)
     hWndGame = hWndGame0;
   return 1;
 }
+
 //重置数据
 void ResetData()
 {
   hWndGame = nullptr;//清空句柄
   memset(map, 0, sizeof(map));//清空地图
 }
+
 //保存防御卡截图
 void SaveCustom(int row, int column)
 {
@@ -1668,8 +2430,8 @@ void SaveCustom(int row, int column)
   //单击未截图的卡槽时进行新增
   else
   {
-    int x = bagX + column * customWidth;
-    int y = bagY + row * customHeight;
+    int x = cellX + column * customWidth;
+    int y = cellY + row * customHeight;
     customInfo.code = -1;
     strcpy_s(customInfo.oldFilename, "");
     strcpy_s(customInfo.oldName, "");
@@ -1678,6 +2440,66 @@ void SaveCustom(int row, int column)
   }
   EditCustom();
 }
+
+//保存防御卡截图
+void SaveTarget(int row, int column)
+{
+  //单击已截图的卡槽时执行重命名
+  if (FindTarget(row, column, &customInfo.code))
+  {
+    if (customInfo.code < innateTargetNum)
+    {
+      PopMessage(hWndTool, "配方卡不能修改名称。");
+      return;
+    }
+    //旧文件名
+    sprintf_s(customInfo.oldFilename, "%s.png", target[customInfo.code].name);
+    //提取卡槽名和优先级
+    strcpy_s(customInfo.oldName, target[customInfo.code].name);
+    customInfo.oldPriority = 0;
+    CopyMap(customInfo.image, target[customInfo.code].image);//卡槽图像
+  }
+  //单击未截图的卡槽时进行新增
+  else
+  {
+    int x = upgradeX + column * customWidth;
+    int y = upgradeY + row * customHeight;
+    customInfo.code = -1;
+    strcpy_s(customInfo.oldFilename, "");
+    strcpy_s(customInfo.oldName, "");
+    customInfo.oldPriority = 0;
+    CopyMap(customInfo.image, map, x, y);
+  }
+  EditTarget();
+}
+
+//保存防御卡截图
+void SaveMailCard(int row, int column)
+{
+  //单击已截图的卡槽时执行重命名
+  if (FindMailCard(row, column, &customInfo.code))
+  {
+    //旧文件名
+    sprintf_s(customInfo.oldFilename, "%s.png", mailCard[customInfo.code].name);
+    //提取卡槽名和优先级
+    strcpy_s(customInfo.oldName, mailCard[customInfo.code].name);
+    customInfo.oldPriority = 0;
+    CopyMap(customInfo.image, mailCard[customInfo.code].image);//卡槽图像
+  }
+  //单击未截图的卡槽时进行新增
+  else
+  {
+    int x = upgradeX + column * customWidth;
+    int y = upgradeY + row * customHeight;
+    customInfo.code = -1;
+    strcpy_s(customInfo.oldFilename, "");
+    strcpy_s(customInfo.oldName, "");
+    customInfo.oldPriority = 0;
+    CopyMap(customInfo.image, map, x, y);
+  }
+  EditMailCard();
+}
+
 //删除防御卡截图
 void DeleteCustom(int row, int column)
 {
@@ -1695,6 +2517,49 @@ void DeleteCustom(int row, int column)
   }
   customNum--;
 }
+
+//删除目标卡片截图
+void DeleteTarget(int row, int column)
+{
+  int code = 0;
+  if (!FindTarget(row, column, &code)) //没有截图的卡无法删除
+    return;
+  if (code < innateTargetNum)
+  {
+    PopMessage(hWndTool, "配方卡不能删除。");
+    return;
+  }
+  char path[MAX_PATH];
+  sprintf_s(path, "目标卡片\\%s.png", target[code].name);
+  remove(path);
+  //如果要删的不是最后一张，把最后一张移动到被删除的位置
+  if (code != targetNum - 1)
+  {
+    strcpy_s(target[code].name, target[targetNum - 1].name);
+    CopyMap(target[code].image, target[targetNum - 1].image);
+  }
+  targetNum--;
+}
+
+//删除邮寄卡片截图
+void DeleteMailCard(int row, int column)
+{
+  int code = 0;
+  if (!FindMailCard(row, column, &code)) //没有截图的卡无法删除
+    return;
+
+  char path[MAX_PATH];
+  sprintf_s(path, "邮寄卡片\\%s.png", mailCard[code].name);
+  remove(path);
+  //如果要删的不是最后一张，把最后一张移动到被删除的位置
+  if (code != mailCardNum - 1)
+  {
+    strcpy_s(mailCard[code].name, mailCard[mailCardNum - 1].name);
+    CopyMap(mailCard[code].image, mailCard[mailCardNum - 1].image);
+  }
+  mailCardNum--;
+}
+
 //保存可删物品截图
 int SaveTrash(int row, int column)
 {
@@ -1717,6 +2582,53 @@ int SaveTrash(int row, int column)
   }
   return -1;
 }
+
+//保存可删物品截图
+int SaveCargo(int row, int column)
+{
+  if (FindCargo(row, column)) //已有截图的道具不予保存
+    return -1;
+  int x = propX + column * propWidth;
+  int y = propY + row * propHeight;
+  char path[MAX_PATH];
+  for (int i = 0; i < 999; i++)
+  {
+    sprintf_s(path, "邮寄物品\\%d.png", i);
+    if (!FileExist(path))
+    {
+      ColorToBitmap(map, path, x, y, propWidth, propHeight);//保存道具截图
+      CopyMap(cargo[cargoNum].image, map, x, y);//记录可删物品图像和名称
+      sprintf_s(cargo[cargoNum].name, "%d", i);
+      cargoNum++;
+      return i;
+    }
+  }
+  return -1;
+}
+
+//保存兑换物品截图
+int SaveTrade(int row, int column)
+{
+  if (FindTrade(row, column)) //已有截图的道具不予保存
+    return -1;
+  int x = tradeX + column * tradeBoxWidth;
+  int y = tradeY + row * tradeBoxHeight;
+  char path[MAX_PATH];
+  for (int i = 0; i < 999; i++)
+  {
+    sprintf_s(path, "兑换物品\\%d.png", i);
+    if (!FileExist(path))
+    {
+      ColorToBitmap(map, path, x, y, tradeWidth, tradeHeight);//保存道具截图
+      CopyMap(trade[tradeNum].image, map, x, y);//记录可删物品图像和名称
+      sprintf_s(trade[tradeNum].name, "%d", i);
+      tradeNum++;
+      return i;
+    }
+  }
+  return -1;
+}
+
 //删除可删物品截图
 void DeleteTrash(int row, int column)
 {
@@ -1734,6 +2646,43 @@ void DeleteTrash(int row, int column)
   }
   trashNum--;
 }
+
+//删除邮寄物品截图
+void DeleteCargo(int row, int column)
+{
+  int code = 0;
+  if (!FindCargo(row, column, &code)) //没有截图的物品无法删除
+    return;
+  char path[MAX_PATH];
+  sprintf_s(path, "邮寄物品\\%s.png", cargo[code].name);
+  remove(path);
+  //如果要删的不是最后一张，把最后一张移动到被删除的位置
+  if (code != cargoNum - 1)
+  {
+    strcpy_s(cargo[code].name, cargo[cargoNum - 1].name);
+    CopyMap(cargo[code].image, cargo[cargoNum - 1].image, 0, 0);
+  }
+  cargoNum--;
+}
+
+//删除兑换物品截图
+void DeleteTrade(int row, int column)
+{
+  int code = 0;
+  if (!FindTrade(row, column, &code)) //没有截图的物品无法删除
+    return;
+  char path[MAX_PATH];
+  sprintf_s(path, "兑换物品\\%s.png", trade[code].name);
+  remove(path);
+  //如果要删的不是最后一张，把最后一张移动到被删除的位置
+  if (code != tradeNum - 1)
+  {
+    strcpy_s(trade[code].name, trade[tradeNum - 1].name);
+    CopyMap(trade[code].image, trade[tradeNum - 1].image, 0, 0);
+  }
+  tradeNum--;
+}
+
 //删除第order个角色名
 void DeleteRoleName(int order)
 {
@@ -1776,7 +2725,7 @@ void Edit()
             return;
           }
         }
-        else if (area == 19)//抓取句柄
+        else if (area == 90)//抓取句柄
           GrabHandle();
       }
 
@@ -1792,6 +2741,18 @@ void Edit()
             DeleteTrash(row, column);
         }
       }
+      else if (tag == MAIL_PROP) //邮寄物品标签
+      {
+        if (area / 10000 == 1)
+        {
+          int row = area % 10000 / 100;
+          int column = area % 100;
+          if (buttons == 1)
+            SaveCargo(row, column);
+          else if (buttons == 2)
+            DeleteCargo(row, column);
+        }
+      }
       else if (tag == CUSTOM) //自定卡槽标签
       {
         if (area / 10000 == 1)
@@ -1802,6 +2763,30 @@ void Edit()
             SaveCustom(row, column);
           else if (buttons == 2) //右键：删除自定卡槽
             DeleteCustom(row, column);
+        }
+      }
+      else if (tag == TARGET) //目标卡片标签
+      {
+        if (area / 10000 == 1)
+        {
+          int row = area % 10000 / 100;
+          int column = area % 100;
+          if (buttons == 1) //左键：添加或重命名自定卡槽
+            SaveTarget(row, column);
+          else if (buttons == 2) //右键：删除自定卡槽
+            DeleteTarget(row, column);
+        }
+      }
+      else if (tag == MAIL_CARD) // 邮寄卡片标签
+      {
+        if (area / 10000 == 1)
+        {
+          int row = area % 10000 / 100;
+          int column = area % 100;
+          if (buttons == 1) //左键：添加或重命名自定卡槽
+            SaveMailCard(row, column);
+          else if (buttons == 2) //右键：删除自定卡槽
+            DeleteMailCard(row, column);
         }
       }
       else if (tag == IMAGES) //自定图像标签
@@ -1888,6 +2873,18 @@ void Edit()
           }
         }
       }
+      else if (tag == TRADE)
+      {
+        if (area / 10000 == 1)
+        {
+          int row = area % 10000 / 100;
+          int column = area % 100;
+          if (buttons == 1) //左键：添加或重命名自定卡槽
+            SaveTrade(row, column);
+          else if (buttons == 2) //右键：删除自定卡槽
+            DeleteTrade(row, column);
+        }
+      }
 
       if (tag != IMAGES)
         Repaint();
@@ -1958,8 +2955,9 @@ LRESULT CALLBACK MyWindowProc(HWND hWndTool, UINT uMsg, WPARAM wParam, LPARAM lP
 int main(int argc, char *argv[])
 {
   DPI = SetDPIAware();
+  GetShaKey(); // 生成随机密钥
   //ClaimAdministratorPower();//请求管理员权限
-
+  alphaMode = IsAlphaMode();
   if (argc == 3)
   {
     PopMessage((HWND)atoi(argv[1]), argv[2]);
@@ -1968,7 +2966,14 @@ int main(int argc, char *argv[])
   programName = argv[0];
   LoadTutor();
   LoadTrash();
+  if (alphaMode)
+  {
+    LoadCargo();
+    LoadTrade();
+  }
   LoadCustom();
+  LoadTarget();
+  LoadMailCard();
   LoadRoleName();
   //载入背景
   if (BitmapToColor("自定图像\\背景.png", background))
@@ -1999,7 +3004,7 @@ int main(int argc, char *argv[])
   settextstyle(&f);						//设置字体样式
 
   setfillcolor(black);
-  tag = QQ_HEAD;//自定图像标签
+  tag = QQ_HEAD; //自定图像标签
 
   while (true)
     Edit();

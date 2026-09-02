@@ -22,7 +22,6 @@
   <ItemGroup>
     <Text Include="生产信息_初始.txt" />
     <Text Include="防御卡背包_初始.txt" />
-    <Text Include="Track_初始.txt" />
     <Text Include="附加程序\依赖文件.txt" />
     <Text Include="资源文件\防御卡背包_初始.txt" />
     <Text Include="资源文件\生产信息_初始.txt" />

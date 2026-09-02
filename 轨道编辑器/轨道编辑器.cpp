@@ -75,7 +75,7 @@ int curAccount = 0;//正在编辑的人物
 int accountNum = 1;
 int totalWaveExist[2][maxTotalWave];//两个账号的第0-13波是否存在（开局时填好）
 int curTotalWave[2];//两个账号正在编辑的波数
-char notation[2][1000];//两个账号的注释
+char notation[2][2000];//两个账号的注释
 char wndTitle[100];//编辑器标题
 const int maxStack = 99;//堆叠容量
 const int maxViewStack = 9;//堆叠显示容量
@@ -85,7 +85,7 @@ HDC hdcGame; //游戏截图HDC
 Map &game = *MallocMap(&hdcGame); //游戏截图
 int commonPage = 1;//防御卡背包当前页数
 int lastClickMessage;//上次鼠标点击信息：单击1xxxxyyyy，右击2xxxxyyyy，无消息0
-char lastTip[200];//上一次显示的提示（用于判断要不要更新提示）
+char lastTip[2000];//上一次显示的提示（用于判断要不要更新提示）
 HWND hWndEditor;
 HCURSOR crossCursor;//十字光标
 char tracePrint[1000];//调试输出
@@ -114,7 +114,7 @@ const char levelName[7][7] = { "无", "承载", "护罩", "普通", "升级", "�
 const char styleName[9][10] = { "非生产", "无秒产", "火炉型", "酒杯型", "四转太", "单轮型", "增幅型", "同小火", "同酒杯" };
 
 //放卡条件
-struct ConditionType
+struct Condition
 {
   int delay;//达成条件后延迟放卡的时间
   int triggerMode;//触发模式（达成条件一次后不断放卡）
@@ -187,6 +187,7 @@ char shortTrackPath[2][maxPath];//轨道文件相对路径
 char trackName[2][maxPath];//轨道文件名
 char tempTrackForSave[maxPath];//SaveTrack用的临时轨道文件
 int tower[2];//魔塔层数
+char quitWave[2][6];//退出波次
 int quitTime[2];//退出时间
 int plantSpeed[2];//放卡限速
 bool isSkillMode;//是否刷技能模式
@@ -241,7 +242,6 @@ struct AutoTableType
   char minCard[10];//优化卡片
 };
 AutoTableType autoTable;//自动布轨面板
-
 
 //账号account名称为name的卡在几号卡槽？不在返回-1
 int GetOrder(int account, const char *name)
@@ -1061,7 +1061,7 @@ void ClearTrack(int account)
     slot[account][order].limit = false;
     slot[account][order].independent = false;
     slot[account][order].retain = false;
-    memset(&slot[account][order].delay, 0, sizeof(ConditionType));//清空放卡条件
+    memset(&slot[account][order].delay, 0, sizeof(Condition));//清空放卡条件
   }
 }
 //清空阵型和轨道（保留卡槽）
@@ -1443,15 +1443,15 @@ void SetItemValue(HWND hDlg, int idItem, int value, int length)
 void SetItemText(HWND hDlg, int idItem, const char *text, int length)
 {
   if (text == nullptr)
-    SetDlgItemText(hDlg, idItem, "");
+    SetDlgItemTextA(hDlg, idItem, "");
   else
   {
     if (idItem == idWave && strcmp(text, "0") == 0) //波次为0不显示
-      SetDlgItemText(hDlg, idItem, "");
+      SetDlgItemTextA(hDlg, idItem, "");
     else //否则原样显示
-      SetDlgItemText(hDlg, idItem, text);
+      SetDlgItemTextA(hDlg, idItem, text);
   }
-  SendMessage(GetDlgItem(hDlg, idItem), EM_LIMITTEXT, length, 0);//设置长度限制
+  SendMessageA(GetDlgItem(hDlg, idItem), EM_LIMITTEXT, length, 0);//设置长度限制
 }
 //从输入框获取数值
 int GetItemValue(int *dest, const char *itemName, HWND hDlg, int idItem, int length, int minimum, int maximum)
@@ -1490,22 +1490,17 @@ int GetItemText(char(&dest)[size], const char *itemName, HWND hDlg, int idItem, 
   }
 
   char condition[20] = {};//输入的条件
-  GetDlgItemText(hDlg, idItem, condition, length + 1);
-  if (idItem == idWave) //波次：只能是m.n格式
+  GetDlgItemTextA(hDlg, idItem, condition, length + 1);
+  if (idItem == idWave || idItem == idQuitWave) //波次：只能是m.n格式
   {
     if (!IsWaveLegal(condition)) //波次输入不合格
     {
-      MessageBox(hDlg, waveErrorString, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
+      PopMessage(hDlg, waveErrorString);
       return 0;
     }
     int mainWave = 0, smallWave = 0;
     int scannedNum = sscanf_s(condition, "%d.%d", &mainWave, &smallWave);
-    if (smallWave > 0)
-      sprintf_s(dest, "%d.%d", mainWave, smallWave);
-    else if (mainWave > 0)
-      sprintf_s(dest, "%d", mainWave);
-    else
-      sprintf_s(dest, "");
+    GetWaveString(dest, mainWave, smallWave);
     return 1;
   }
   else if (idItem == idImage)//图像：不超过6个字
@@ -1529,7 +1524,7 @@ int GetItemText(char(&dest)[size], const char *itemName, HWND hDlg, int idItem, 
       "a+2（放在图像下方2行）\n"
       "a-1（放在图像上方1行）\n";
     bool isLegal = true;
-    int length = strlen(condition);
+    int length = (int)strlen(condition);
     if (length != 0 && length != 1 && length != 3)
     {
       MessageBox(hDlg, tip, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
@@ -1562,7 +1557,7 @@ int GetItemText(char(&dest)[size], const char *itemName, HWND hDlg, int idItem, 
       "b+2（放在图像右边2列）\n"
       "b-1（放在图像左边1列）\n";
     bool isLegal = true;
-    int length = strlen(condition);
+    int length = (int)strlen(condition);
     if (length != 0 && length != 1 && length != 3)
     {
       MessageBox(hDlg, tip, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
@@ -1661,16 +1656,10 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     RepairEdit(GetDlgItem(hDlg, idEndNum));
     RepairEdit(GetDlgItem(hDlg, idEndTime));
 
-    ConditionType *params = (ConditionType *)lParam;// 获取传入的参数
-    RECT Desktop, Dialog;
-    GetWindowRect(GetDesktopWindow(), &Desktop);
-    GetWindowRect(hDlg, &Dialog);
-    int xPos = (Desktop.left + Desktop.right - (Dialog.right - Dialog.left)) / 2;
-    int yPos = (Desktop.top + Desktop.bottom - (Dialog.bottom - Dialog.top)) / 2;
-    //设置对话框位置
-    SetWindowPos(hDlg, HWND_TOP, xPos, yPos, 0, 0, SWP_NOSIZE);
-    //设置对话框标题
-    SetWindowText(hDlg, "极限成阵附加条件");
+    //获取传入的参数
+    Condition *params = (Condition *)lParam;
+    //对话框位置居中
+    CenterDialog(hDlg);
 
     //设置卡片组合框
     InitComboBox(hDlg, idCard, params->card);
@@ -1718,8 +1707,8 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
     {
       // 获取编辑框中的内容
-      ConditionType *params = (ConditionType *)GetWindowLongPtr(hDlg, DWLP_USER);
-      ConditionType temp = {};
+      Condition *params = (Condition *)GetWindowLongPtr(hDlg, DWLP_USER);
+      Condition temp = {};
 
       if (!GetItemValue(&temp.delay, "延迟", hDlg, idDelay, 3, 0, 960))
         break;
@@ -1775,8 +1764,8 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
     }
     else if (LOWORD(wParam) == IDRESET)
     {
-      ConditionType *params = (ConditionType *)GetWindowLongPtr(hDlg, DWLP_USER);
-      memset(params, 0, sizeof(ConditionType));
+      Condition *params = (Condition *)GetWindowLongPtr(hDlg, DWLP_USER);
+      memset(params, 0, sizeof(Condition));
       EndDialog(hDlg, IDRESET);
       return TRUE;
     }
@@ -1787,9 +1776,62 @@ INT_PTR CALLBACK LimitDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPa
 //弹出放卡条件对话框
 int EditCondition(int account, int order)
 {
-  return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_LIMIT),
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_LIMIT),
     hWndEditor, LimitDialogProc, (LPARAM)&slot[account][order].delay);
 }
+
+//退出时间对话框
+INT_PTR CALLBACK QuitTimeProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+  switch (uMsg)
+  {
+  case WM_INITDIALOG:
+  {
+    //修复输入框功能
+    RepairEdit(GetDlgItem(hDlg, idQuitWave));
+    RepairEdit(GetDlgItem(hDlg, idQuitTime));
+
+    //对话框位置居中
+    CenterDialog(hDlg);
+
+    //设置其他文本框
+    SetItemText(hDlg, idQuitWave, quitWave[curAccount], 5);
+    SetItemValue(hDlg, idQuitTime, quitTime[curAccount], 3);
+  }
+  return TRUE;
+  case WM_COMMAND:
+    if (LOWORD(wParam) == IDOK) // 点击了“确定”按钮
+    {
+      char tempQuitWave[6] = {};
+      int tempQuitTime = 0;
+
+      if (!GetItemText(tempQuitWave, "波次", hDlg, idQuitWave, 5))
+        break;
+      if (!GetItemValue(&tempQuitTime, "时间", hDlg, idQuitTime, 3, 0, 960))
+        break;
+
+      strcpy_s(quitWave[curAccount], tempQuitWave);
+      quitTime[curAccount] = tempQuitTime;
+
+      EndDialog(hDlg, IDOK);// 结束对话框
+      return TRUE;
+    }
+    else if (LOWORD(wParam) == IDCANCEL) // 点击了“取消”按钮
+    {
+      EndDialog(hDlg, IDCANCEL);
+      return TRUE;
+    }
+    break;
+  }
+  return FALSE;
+}
+//弹出退出时间对话框
+int EditQuitTime()
+{
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_QUIT),
+    hWndEditor, QuitTimeProc, 0);
+}
+
 //初始化自动布轨对话框控件内容
 void InitAutoDialog(HWND hDlg)
 {
@@ -1882,7 +1924,7 @@ INT_PTR CALLBACK AutoDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
 //弹出自动布轨对话框
 int EditAutoTrack()
 {
-  return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_AUTO),
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_AUTO),
     hWndEditor, AutoDialogProc, 0);
 }
 
@@ -1931,7 +1973,7 @@ INT_PTR CALLBACK DragDialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPar
 //弹出拖入轨道文件对话框
 int DragDialog(const char *path)
 {
-  return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_DRAG),
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_DRAG),
     hWndEditor, DragDialogProc, (LPARAM)path);
 }
 // 自定义的InputBox函数
@@ -1944,7 +1986,7 @@ int NewInputBox(char *dest, int maxLength = maxPath, const char *prompt = "",
   params.title = title;
   params.defaultStr = defaultStr;
   params.maxLength = maxLength;
-  return DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_INPUT), hWndEditor, InputDialogProc, (LPARAM)&params);
+  return (int)DialogBoxParamA(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_INPUT), hWndEditor, InputDialogProc, (LPARAM)&params);
 }
 //输入自然数到Num，直到满足范围Min~Max为止。输入成功则返回1，否则返回0
 int InputNum(int *pNum, int mininum, int maximun, const char *prompt = "", const char *title = "输入")
@@ -1954,7 +1996,7 @@ int InputNum(int *pNum, int mininum, int maximun, const char *prompt = "", const
 
   char maxString[11];
   sprintf_s(maxString, "%d", maximun);
-  int maxLength = strlen(maxString) + 1;//获得最大输入长度
+  int maxLength = (int)strlen(maxString) + 1;//获得最大输入长度
 
   char defaultStr[11];
   sprintf_s(defaultStr, "%d", *pNum);//初始文本：自然数的原值
@@ -2031,21 +2073,6 @@ void PrintToClipboard(const char *AnsiStr)//将字符串AnsiStr复制到剪贴�
 
   CloseClipboard();//关闭剪贴板
   free(UnicodeStr);// 释放内存
-}
-//居中显示窗口
-void CenterShow(HWND hWnd)
-{
-  if (!IsWindow(hWnd))
-    return;//没有窗口则结束
-  ShowWindow(hWnd, SW_SHOW);//显示窗口
-  RECT rect;
-  GetWindowRect(hWnd, &rect);
-  int wndWidth = rect.right - rect.left;
-  int wndHeight = rect.bottom - rect.top;
-  int scrWidth = GetSystemMetrics(SM_CXFULLSCREEN);
-  int scrHeight = GetSystemMetrics(SM_CYFULLSCREEN);
-  MoveWindow(hWnd, (scrWidth - wndWidth) / 2, (scrHeight - wndHeight * 29 / 30) / 2,
-    wndWidth, wndHeight, true);//窗口回到屏幕并居中
 }
 //卡片order第times次种植在地图的什么位置
 void GetMapLoc(int account, int order, int times, int &row, int &column, int &level, int &depth)
@@ -2310,6 +2337,9 @@ int GetArea(int originX, int originY)
       return 40; //添加2P
     if (accountNum == 2 && x >= playerX + 2 * playerDistance && x < playerX + 2 * playerDistance + playerOptionWidth && y < playerHeight) //1P/2P轨道切换
       return 50; //移除2P
+    if (accountNum == 1 && x >= skillX && x < skillX + skillWidth && y >= skillY
+      && y < skillY + skillHeight)
+      return 70; //刷技能勾选框
 
     if (x >= undoX && x < undoX + undoWidth && y >= undoY && y < undoY + 2 * undoHeight)
       return 90 + (y - undoY) / undoHeight;//90=撤销，91=恢复
@@ -2582,50 +2612,70 @@ void InsertSlot(int account, int order0, int order1)
       ExchangeSlot(account, order, order - 1);
 }
 //写入错误信息到info，返回出错的行数line
-int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *content, const char *tip)
+int WriteInfo(char(&info)[1000], FILE *f, const char *path, int line, char *lineContent,
+  const char *tip, const char *solution)
 {
-  fclose(f);//关闭文件
-  if (path == NULL) //没有填写path，则不需要记录info
+  if (f)
+    fclose(f);//关闭文件
+  if (!path) //没有填写path，则不需要记录info
     return line;
-  int maxlen = 20;
-  char shortPath[100], shortContent[100];
-  int length = strlen(path);
-  if (length > maxlen)
+
+  const int maxLength = 30;//行内容最大长度
+  char shortContent[50] = {};//缩短的行内容
+  int length = (int)strlen(lineContent);
+  if (length > maxLength)
   {
-    if (IsChineseSecond(path, length - maxlen))
-      sprintf_s(shortPath, "...%s", path + length - maxlen + 1);//只显示最后39字节
-    else
-      sprintf_s(shortPath, "...%s", path + length - maxlen);//显示最后40字节
-  }
-  else
-    strcpy_s(shortPath, path);//完整显示
-  length = strlen(content);
-  if (length > maxlen)
-  {
-    if (IsChineseFirst(content, maxlen - 1))
+    if (IsChineseFirst(lineContent, maxLength - 1))
     {
-      strncpy_s(shortContent, content, maxlen - 1);
-      shortContent[maxlen - 1] = 0;
+      strncpy_s(shortContent, lineContent, maxLength - 1);
+      shortContent[maxLength - 1] = 0;
     }
     else
     {
-      strncpy_s(shortContent, content, maxlen);
-      shortContent[maxlen] = 0;
+      strncpy_s(shortContent, lineContent, maxLength);
+      shortContent[maxLength] = 0;
     }
     strcat_s(shortContent, "...");
   }
   else
-    strcpy_s(shortContent, content);
+    strcpy_s(shortContent, lineContent);
 
-  size_t len = strlen(shortContent);
-  for (size_t i = 0; i < len; i++) //tab改空格
+  //将shortContent中的tab改为空格
+  int shortLength = (int)strlen(shortContent);
+  for (int i = 0; i < shortLength; i++)
     if (shortContent[i] == '\t')
       shortContent[i] = ' ';
 
-  if (tip == NULL)
-    sprintf_s(info, "文件【%s】\n第%d行出错：%s\n请修改或删除该文件后重试。", shortPath, line, shortContent);
+  //显示的行内容
+  char realContent[60] = " (";
+  strcat_s(realContent, shortContent);
+  strcat_s(realContent, ")");
+
+  if (!solution)
+    solution = "修改或删除文件后重试。(用记事本编辑轨道文件极易出错，建议只用“轨道编辑器”编辑。)";
+
+  if (!tip)
+  {
+    sprintf_s(info,
+      "轨道路径：%s\n"
+      "错误行数：%d%s\n"
+      "解决方法：%s",
+      path,
+      line, shortLength ? realContent : "",
+      solution);
+  }
   else
-    sprintf_s(info, "文件【%s】\n第%d行出错：%s\n（%s）\n请修改或删除该文件后重试。", shortPath, line, shortContent, tip);
+  {
+    sprintf_s(info,
+      "轨道路径：%s\n"
+      "错误行数：%d%s\n"
+      "错误原因：%s\n"
+      "解决方法：%s",
+      path,
+      line, shortLength ? realContent : "",
+      tip,
+      solution);
+  }
   return line;
 }
 //检查账号account的轨道文件有哪些波次，填写WaveExist。
@@ -2695,7 +2745,7 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
     if (strlen(s) == 0 || IsWaveTitle(s))
     {
       sprintf_s(tip, "卡槽数=%d，但只读取到%d个卡槽", slotNum0, originOrder - 1);
-      return WriteInfo(info, f, path, line, s, tip);
+      return WriteInfo(info, f, path, line, s, tip, nullptr);
     }
     //第一行如果不是宝石，则从铲子（order=0）开始读
     if (originOrder == -1 && strstr(s, "宝石") == nullptr)
@@ -2704,12 +2754,12 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
 
     strcpy_s(segment, s);
     if (segment[0] == '\t')//没有卡片名称
-      WriteInfo(info, f, path, line, s, "卡片名称不能为空");
+      WriteInfo(info, f, path, line, s, "卡片名称不能为空", nullptr);
     name = strtok_s(segment, "\t", &nextName);//从子串0读取卡牌名称（非空）
     if (order >= 1 && order <= maxSlotNum)//铲子和宝石无需添加到卡槽，其他卡需要添加
     {
       if (strlen(name) > 6)
-        return WriteInfo(info, f, path, line, s, "卡片名称不能超过3个汉字");
+        return WriteInfo(info, f, path, line, s, "卡片名称不能超过3个汉字", nullptr);
       bool isCommonCard = false;//这张卡是否为背包中的卡
       for (int common = 0; common < bagNum[account]; common++)//通过名称查找是哪张常用卡
         if (strcmp(bag[account][common].name, name) == zero)
@@ -2725,7 +2775,7 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
     //子串1：冷却|补极独索继|放卡条件
     name = strtok_s(NULL, "\t", &nextName);
     if (name == NULL || strstr(name, "|") != NULL)
-      return WriteInfo(info, f, path, line, s, "第二项应为冷却时间和轨道状态");
+      return WriteInfo(info, f, path, line, s, "第二项应为冷却时间和轨道状态", nullptr);
     //按逗号分割"7[3]补极,火苗=120,血量=80,图像=hello"
     char *nextCondition = nullptr;
     char *condition = NewStrTok(name, ",", &nextCondition);//第一项：7[3]补极
@@ -2738,12 +2788,12 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
     slot0.retain = strstr(condition, "继") != nullptr;
     sscanf_s(condition, "%d[%d]", &slot0.cd, &slot0.level);//冷却和层级
     if (order == zero && (slot0.cd < zero || slot0.cd > 320))
-      return WriteInfo(info, f, path, line, s, "铲子cd范围0~320s");
+      return WriteInfo(info, f, path, line, s, "铲子cd范围0~320s", nullptr);
     if (order != zero && (slot0.cd < 2 || slot0.cd > 320))
-      return WriteInfo(info, f, path, line, s, "卡片cd范围2~320s");
+      return WriteInfo(info, f, path, line, s, "卡片cd范围2~320s", nullptr);
 
     //第2-n项：13种极限条件
-    memset(&slot0.delay, 0, sizeof(ConditionType));
+    memset(&slot0.delay, 0, sizeof(Condition));
     for (int i = 0; i < 13; i++)
     {
       condition = NewStrTok(nullptr, ",", &nextCondition);
@@ -2754,7 +2804,7 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
       case 0:
         slot0.delay = atoi(condition);
         if (slot0.delay < 0 || slot0.delay > 960)
-          return WriteInfo(info, f, path, line, s, "【延迟】范围为0~960");
+          return WriteInfo(info, f, path, line, s, "[延迟]范围为0~960", nullptr);
         break;
       case 1:
         slot0.triggerMode = atoi(condition) ? 1 : 0;
@@ -2762,12 +2812,12 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
       case 2:
         slot0.energy = atoi(condition);
         if (slot0.energy < 0 || slot0.energy > 15000)
-          return WriteInfo(info, f, path, line, s, "【火苗】范围为0~15000");
+          return WriteInfo(info, f, path, line, s, "[火苗]范围为0~15000", nullptr);
         break;
       case 3: //波次：只能是m.n格式
       {
         if (!IsWaveLegal(condition)) //波次输入不合格
-          return WriteInfo(info, f, path, line, s, waveErrorString);
+          return WriteInfo(info, f, path, line, s, waveErrorString, nullptr);
         int mainWave = 0, smallWave = 0;
         int scannedNum = sscanf_s(condition, "%d.%d", &mainWave, &smallWave);
         if (smallWave > 0)
@@ -2784,14 +2834,14 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
         else
         {
           if (strlen(condition) > 6)
-            return WriteInfo(info, f, path, line, s, "【卡片】长度不能超过3个汉字");
+            return WriteInfo(info, f, path, line, s, "[卡片]长度不能超过3个汉字", nullptr);
           strcpy_s(slot0.card, condition);
         }
         break;
       case 5:
         slot0.cardNum = atoi(condition);
         if (slot0.cardNum < 0 || slot0.cardNum > 63)
-          return WriteInfo(info, f, path, line, s, "【卡片数量】范围为0~63");
+          return WriteInfo(info, f, path, line, s, "[卡片数量]范围为0~63", nullptr);
         break;
       case 6:
         if (strcmp(condition, "NULL") == 0)
@@ -2799,34 +2849,34 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
         else
         {
           if (strlen(condition) > 8)
-            return WriteInfo(info, f, path, line, s, "【图像】长度不能超过4个汉字");
+            return WriteInfo(info, f, path, line, s, "[图像]长度不能超过4个汉字", nullptr);
           strcpy_s(slot0.image, condition);
         }
         break;
       case 7:
         slot0.imageNum = atoi(condition);
         if (slot0.imageNum < 0 || slot0.imageNum > 63)
-          return WriteInfo(info, f, path, line, s, "【图像数量】范围为0~63");
+          return WriteInfo(info, f, path, line, s, "[图像数量]范围为0~63", nullptr);
         break;
       case 8://行数:a,4,a+4,a-4
         if (strcmp(condition, "NULL") == 0)
           strcpy_s(slot0.hunterRow, "");
         else
         {
-          const char *tip = "【索敌行数】应为n,a,a±n三种格式之一";
+          const char *tip = "[索敌行数]应为n,a,a±n三种格式之一";
           bool isLegal = true;
-          int length = strlen(condition);
+          int length = (int)strlen(condition);
           if (length != 0 && length != 1 && length != 3)
-            return WriteInfo(info, f, path, line, s, tip);
+            return WriteInfo(info, f, path, line, s, tip, nullptr);
           if (length == 1) //a或一位数
           {
             if (!((condition[0] >= '1' && condition[0] <= '7') || condition[0] == 'a'))
-              return WriteInfo(info, f, path, line, s, tip);
+              return WriteInfo(info, f, path, line, s, tip, nullptr);
           }
           else if (length == 3) //a+n
           {
             if (!(condition[0] == 'a' && (condition[1] == '+' || condition[1] == '-') && condition[2] >= '1' && condition[2] <= '6'))
-              return WriteInfo(info, f, path, line, s, tip);
+              return WriteInfo(info, f, path, line, s, tip, nullptr);
           }
           strcpy_s(slot0.hunterRow, condition);
         }
@@ -2836,20 +2886,20 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
           strcpy_s(slot0.hunterColumn, "");
         else
         {
-          const char *tip = "【索敌列数】应为n,b,b±n三种格式之一";
+          const char *tip = "[索敌列数]应为n,b,b±n三种格式之一";
           bool isLegal = true;
-          int length = strlen(condition);
+          int length = (int)strlen(condition);
           if (length != 0 && length != 1 && length != 3)
-            return WriteInfo(info, f, path, line, s, tip);
+            return WriteInfo(info, f, path, line, s, tip, nullptr);
           if (length == 1) //b或一位数
           {
             if (!((condition[0] >= '1' && condition[0] <= '9') || condition[0] == 'b'))
-              return WriteInfo(info, f, path, line, s, tip);
+              return WriteInfo(info, f, path, line, s, tip, nullptr);
           }
           else if (length == 3) //b+n
           {
             if (!(condition[0] == 'b' && (condition[1] == '+' || condition[1] == '-') && condition[2] >= '1' && condition[2] <= '9'))
-              return WriteInfo(info, f, path, line, s, tip);
+              return WriteInfo(info, f, path, line, s, tip, nullptr);
           }
           strcpy_s(slot0.hunterColumn, condition);
         }
@@ -2860,19 +2910,19 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
         else
         {
           if (strlen(condition) > 6)
-            return WriteInfo(info, f, path, line, s, "【跟随卡片】长度不能超过3个汉字");
+            return WriteInfo(info, f, path, line, s, "[跟随卡片]长度不能超过3个汉字", nullptr);
           strcpy_s(slot0.follow, condition);
         }
         break;
       case 11:
         slot0.endNum = atoi(condition);
         if (slot0.endNum < 0 || slot0.endNum > 63)
-          return WriteInfo(info, f, path, line, s, "【终止数量】范围为0~63");
+          return WriteInfo(info, f, path, line, s, "[终止数量]范围为0~63", nullptr);
         break;
       case 12:
         slot0.endTime = atoi(condition);
         if (slot0.endTime < 0 || slot0.endTime > 960)
-          return WriteInfo(info, f, path, line, s, "【终止时间】范围为0~960");
+          return WriteInfo(info, f, path, line, s, "[终止时间]范围为0~960", nullptr);
         break;
       }
     }
@@ -2883,7 +2933,7 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
     while (name)
     {
       if (strlen(name) > 8 || strchr(name, '|') == NULL)
-        return WriteInfo(info, f, path, line, s, "放卡格式应为ttt(.t)|xy，以Tab键分隔");
+        return WriteInfo(info, f, path, line, s, "放卡格式应为ttt(.t)|xy，以Tab键分隔", nullptr);
 
       times++;//读到了ttt.s|xy型轨道，则次数+1
       if (sscanf_s(name, "%d.%d|%d", &second, &decisecond, &loc) == 3)//有小数点就按小数读取
@@ -2900,7 +2950,7 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
       //记录种植时刻
       moment[account][order][times] = second * 10 + decisecond;
       if ((moment[account][slotNum[account]][times] != zero && moment[account][slotNum[account]][times] < 10) || moment[account][slotNum[account]][times] > 9600)
-        return WriteInfo(info, f, path, line, s, "放卡时间范围为1~960");
+        return WriteInfo(info, f, path, line, s, "放卡时间范围为1~960", nullptr);
       if (second > zero)//如果时刻不是000
         track[account][order][second]++;//记入轨道
 
@@ -2911,7 +2961,7 @@ int LoadCurrentWave(int account, FILE *f, int slotNum0, const char *path, int &l
       if (loc != zero)//如果位置不是00
       {
         if (row < 1 || row > 7 || column == zero)
-          return WriteInfo(info, f, path, line, s, "行数范围为1~7，列数范围为1~9");
+          return WriteInfo(info, f, path, line, s, "行数范围为1~7，列数范围为1~9", nullptr);
         AddToGrid(account, order, row, column);//向地图添加这次种植位置
       }
       name = strtok_s(NULL, "\t", &nextName);
@@ -2942,7 +2992,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
 {
   char *name = nullptr, *nextName = nullptr;
   char s[maxLineSize];//每行读入的原始字符串，用来分割的字符串
-  char Tip[100];
+  char tip[100];
   /*待读信息归零*/
   slotNum[account] = 0;//预设参数和状态清零
   tower[account] = 0;
@@ -2975,12 +3025,12 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
         break;
       int result = ScanWave(s, &wave, &smallWave);//检查是否是--第%d.%d波--
       if (result == -1)
-        return WriteInfo(info, f, path, line, s, "波次范围为0~23（小波范围为0~11）");
+        return WriteInfo(info, f, path, line, s, "[波次]范围为0~23（小波范围为0~11）", nullptr);
       else if (result == 1)
       {
         existedWaveNum++;
         if (existedWaveNum > 12)
-          return WriteInfo(info, f, path, line, s, "最多只允许设置12个波次");
+          return WriteInfo(info, f, path, line, s, "最多只允许设置12个波次", nullptr);
         totalWaveExist[account][wave * maxSmallWave + smallWave] = 1;
       }
     }
@@ -2994,6 +3044,15 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
 
   if (strstr(s, "轨道版本号=") == s) //有版本号则再读一行
   {
+    //检查版本号
+    char currentVerStr[100] = {};
+    char trackVerStr[100] = {};
+    sscanf_s(version + 1, "%s", currentVerStr, sizeof(currentVerStr));
+    sscanf_s(s + 12, "%s", trackVerStr, sizeof(trackVerStr));
+    int currentVer = GetIntegerVersion(currentVerStr);//当前版本号
+    int trackVer = GetIntegerVersion(trackVerStr);//轨道文件版本号
+    if (currentVer < trackVer)
+      return WriteInfo(info, f, path, line, s, "轨道编辑器版本过低", "更新到最新版本。");
     fgets(f, s);//读取第2行：人物1位置
     line++;
   }
@@ -3008,7 +3067,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
 
   char roleString[100];
   if (sscanf_s(s, "人物1位置=%s", roleString, sizeof(roleString)) != 1) //不能读取人物1位置直接报错
-    return WriteInfo(info, f, path, line, s, "缺少人物1位置");
+    return WriteInfo(info, f, path, line, s, "未找到[人物1位置]", nullptr);
   else //否则读取各个人物位置
   {
     nextName = nullptr;
@@ -3018,7 +3077,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
     {
       int loc = atoi(name);
       if (loc / 10 < 1 || loc / 10 > 7 || loc % 10 == zero)//人物1位置超出范围
-        return WriteInfo(info, f, path, line, s, "行数范围为1~7，列数范围为1~9");
+        return WriteInfo(info, f, path, line, s, "[行数]范围为1~7，[列数]范围为1~9", nullptr);
       roleLocNum[account]++;//人物1个数+1
       roleLoc[account][roleLocNum[account]] = loc;//记录人物1位置
       name = strtok_s(nullptr, ",", &nextName);
@@ -3038,7 +3097,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
       {
         int loc = atoi(name);
         if (loc / 10 < 1 || loc / 10 > 7 || loc % 10 == zero)//人物1位置超出范围
-          return WriteInfo(info, f, path, line, s, "行数范围为1~7，列数范围为1~9");
+          return WriteInfo(info, f, path, line, s, "[行数]范围为1~7，[列数]范围为1~9", nullptr);
         roleLocNum[1 - account]++;//人物2个数+1
         roleLoc[1 - account][roleLocNum[1 - account]] = loc;//记录人物2位置
         name = strtok_s(nullptr, ",", &nextName);
@@ -3051,27 +3110,43 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   if (sscanf_s(s, "魔塔层数=%d", &tower[account]) == 1)//如果读到了就再读一行
   {
     if (tower[account] < zero || tower[account] > 165)
-      return WriteInfo(info, f, path, line, s, "魔塔层数范围为0~165");
+      return WriteInfo(info, f, path, line, s, "[魔塔层数]范围为0~165", nullptr);
     fgets(f, s);
     line++;
   }
   else
     tower[account] = 0;
 
-  if (sscanf_s(s, "退出时间=%d", &quitTime[account]) == 1)//如果读到了就再读一行
+  if (strstr(s, "退出时间=") == s)//如果读到了就再读一行
   {
+    int mainWave = 0, smallWave = 0;
+    char *flag = strchr(s, 'F');//是否存在波次
+    //如果有退出波次，读取波次和时间
+    if (flag)
+    {
+      flag[0] = 0;
+      sscanf_s(s + 9, "%d.%d", &mainWave, &smallWave);
+      if (!IsWaveInRange(mainWave, smallWave)) //波次范围不合格
+        return WriteInfo(info, f, path, line, s, "[退出时间]波次格式错误", nullptr);
+      GetWaveString(quitWave[account], mainWave, smallWave);
+      sscanf_s(flag + 2, "%d", &quitTime[account]);
+    }
+    //没有波次则只读取时间
+    else
+      sscanf_s(s + 9, "%d", &quitTime[account]);
+
     if (quitTime[account] < zero || quitTime[account] > 960)
-      return WriteInfo(info, f, path, line, s, "退出时间范围为0~960");
+      return WriteInfo(info, f, path, line, s, "[退出时间]范围为0~960", nullptr);
     fgets(f, s);
     line++;
   }
   else
     quitTime[account] = 0;
-  
+
   if (sscanf_s(s, "放卡限速=%d", &plantSpeed[account]) == 1)//如果读到了就再读一行
   {
     if (plantSpeed[account] < zero || plantSpeed[account] > 5)
-      return WriteInfo(info, f, path, line, s, "放卡限速范围为0~5");
+      return WriteInfo(info, f, path, line, s, "[放卡限速]范围为0~5", nullptr);
     fgets(f, s);
     line++;
   }
@@ -3122,11 +3197,11 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
   //读取卡槽数
   int slotNum0;//临时卡槽数
   if (sscanf_s(s, "卡槽数=%d", &slotNum0) != 1)
-    return WriteInfo(info, f, path, line, s, "缺少卡槽数");
+    return WriteInfo(info, f, path, line, s, "未找到[卡槽数]", nullptr);
   else
   {
     if (slotNum0 < 0 || slotNum0 > 21)
-      return WriteInfo(info, f, path, line, s, "卡槽数范围为0~21");
+      return WriteInfo(info, f, path, line, s, "[卡槽数]范围为0~21", nullptr);
   }
 
   if (checkAllWave == false) //正常读取，不检查轨道
@@ -3141,7 +3216,7 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
       {
         char tip[30];
         sprintf_s(tip, "没有找到第%s波信息", waveString);
-        return WriteInfo(info, f, path, line, s, tip);
+        return WriteInfo(info, f, path, line, s, tip, nullptr);
       }
     }
     LoadCurrentWave(account, f, slotNum0);//读取当前波次的卡槽信息（不记录错误信息）
@@ -3159,8 +3234,8 @@ int LoadTrackFrom(int account, const char *path, char(&info)[1000], bool checkAl
         line++;
         if (strlen(s) > 0 && !IsWaveTitle(s))
         {
-          sprintf_s(Tip, "卡槽数=%d，但读完%d个卡槽仍未结束", slotNum0, slotNum0);
-          return WriteInfo(info, f, path, line, s, Tip);
+          sprintf_s(tip, "卡槽数=%d，但读完%d个卡槽仍未结束", slotNum0, slotNum0);
+          return WriteInfo(info, f, path, line, s, tip, nullptr);
         }
       }
   }
@@ -3219,6 +3294,7 @@ int GetConditionNum(int account, int order)
     conditionNum = 1;
   return conditionNum;
 }
+//向文件中写入本波轨道
 void SaveCurrentWave(int account, FILE *f)
 {
   for (int originOrder = -1; originOrder <= slotNum[account]; originOrder++)
@@ -3316,7 +3392,10 @@ void SaveHead(int account, FILE *fout, int SlotNumVariation = 0)
     }
   }
   fprintf(fout, "魔塔层数=%d\n", tower[account]);
-  fprintf(fout, "退出时间=%d\n", quitTime[account]);
+  if (strlen(quitWave[account]) == 0)
+    fprintf(fout, "退出时间=%d\n", quitTime[account]);
+  else
+    fprintf(fout, "退出时间=%sF+%d\n", quitWave[account], quitTime[account]);
   fprintf(fout, "放卡限速=%d\n", plantSpeed[account]);
   fprintf(fout, "刷技能模式=%d\n", isSkillMode ? 1 : 0);
   fprintf(fout, "移动板块=%d\n", isMobile[account] ? 1 : 0);
@@ -3703,7 +3782,7 @@ void LoadParameter()
   char path[100], s[1000];
 
   zoom = 100;//缩放默认为100%
-  strcpy_s(path, "用户参数\\编辑器参数.txt");
+  strcpy_s(path, "用户参数\\文本\\编辑器参数.txt");
   if (!fopen_s(&f, path, "r"))//打开文件
   {
     fgets(f, s);//读取第1行
@@ -3712,12 +3791,13 @@ void LoadParameter()
     fclose(f);
   }
 }
-void SaveParameter()//把任务参数保存到文件
+//把任务参数保存到文件
+void SaveParameter()
 {
   FILE *f;
   char path[100];
 
-  strcpy_s(path, "用户参数\\编辑器参数.txt");
+  strcpy_s(path, "用户参数\\文本\\编辑器参数.txt");
   fopen_s(&f, path, "w");//打开文件
   fprintf(f, "缩放比例=%d\n", zoom);
   fclose(f);
@@ -3727,7 +3807,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
 {
   const char NewTitle[200] = "名称\t冷却\t层级\t耗能\t生产特性\t星级\t单朵火苗\t火苗朵数\t转职";//未使用
   const char OldTitle[200] = "名称\t冷却\t层级\t耗能\t星级\t单朵火苗\t火苗朵数";
-  char IsOldFile = 0;
+  char isOldFile = 0;
   char s[1000], seg[1000];
   char *name = nullptr, *nextName = nullptr;
 
@@ -3735,7 +3815,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
   fgets(f, s);//第一行：标题行
   line++;
   if (strcmp(s, OldTitle) == zero)//旧版本
-    IsOldFile = 1;
+    isOldFile = 1;
   while (!feof(f))
   {
     fgets(f, s);//读取每一行
@@ -3745,11 +3825,11 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
     strcpy_s(seg, s);
     RemoveBlank(seg);//空格改Tab
     if (seg[0] == '\t')
-      return WriteInfo(info, f, path, line, s, "卡片名称不能为空");
+      return WriteInfo(info, f, path, line, s, "卡片名称不能为空", nullptr);
 
     name = strtok_s(seg, "\t", &nextName);//第1项：名称
     if (strlen(name) > 6)
-      return WriteInfo(info, f, path, line, s, "卡片名称不能超过3个汉字或6个字母");
+      return WriteInfo(info, f, path, line, s, "卡片名称不能超过3个汉字或6个字母", nullptr);
     strcpy_s(bag[account][bagNum[account]].name, name);//名称
 
     name = strtok_s(NULL, "\t", &nextName);//第2项：冷却
@@ -3780,7 +3860,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
     {
       int cost = atoi(name);
       if (cost < zero || cost > 999)
-        return WriteInfo(info, f, path, line, s, "耗能范围为0~999，可以带+");
+        return WriteInfo(info, f, path, line, s, "耗能范围为0~999，可以带+", nullptr);
       if (name[strlen(name) - 1] == '+')//如果耗能带+
         bag[account][bagNum[account]].cost = cost + 1000;//150+记为1150
       else//如果不带+
@@ -3789,7 +3869,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
     else
       bag[account][bagNum[account]].cost = 0;
 
-    if (IsOldFile == zero) //只有新版本有第5项
+    if (isOldFile == zero) //只有新版本有第5项
     {
       name = strtok_s(NULL, "\t", &nextName);//第5项：生产特性：非生产/无秒产/火炉型/酒杯型/四转太/单轮型/炎焱兔/初始火/初始灯
       if (name != NULL)
@@ -3814,7 +3894,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
     {
       int star = atoi(name);
       if (star < zero || star>16)
-        return WriteInfo(info, f, path, line, s, "星级范围为0~16");
+        return WriteInfo(info, f, path, line, s, "星级范围为0~16", nullptr);
       bag[account][bagNum[account]].star = star;
     }
     else
@@ -3825,7 +3905,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
     {
       int sun = atoi(name);
       if (sun < zero)
-        return WriteInfo(info, f, path, line, s, "单朵产量不能小于0");
+        return WriteInfo(info, f, path, line, s, "单朵产量不能小于0", nullptr);
       bag[account][bagNum[account]].sun = sun;
     }
     else
@@ -3836,13 +3916,13 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
     {
       int num = atoi(name);
       if (num < zero || num > 8)
-        return WriteInfo(info, f, path, line, s, "火苗朵数范围为0~8");
+        return WriteInfo(info, f, path, line, s, "火苗朵数范围为0~8", nullptr);
       bag[account][bagNum[account]].sunNum = num;
     }
     else
       bag[account][bagNum[account]].sunNum = 0;
 
-    if (IsOldFile == zero)//只有新版本有备注
+    if (isOldFile == zero)//只有新版本有备注
     {
       name = strtok_s(NULL, "\t", &nextName);//第9项：备注，没填就是0
       if (name != NULL)
@@ -3884,6 +3964,7 @@ int LoadCommonCard(FILE *f, char *path, int &line, int account, char(&info)[1000
   }
   return 0;
 }
+//载入防御卡背包
 int LoadCommonCard(char(&info)[1000])
 {
   int line = 0;
@@ -3896,9 +3977,9 @@ int LoadCommonCard(char(&info)[1000])
   }
   for (int account = 0; account < 2; account++)
   {
-    int LoadResult = LoadCommonCard(f, path, line, account, info);
-    if (LoadResult != zero)
-      return LoadResult;
+    int loadResult = LoadCommonCard(f, path, line, account, info);
+    if (loadResult != zero)
+      return loadResult;
   }
   fclose(f);
   return 0;
@@ -3966,32 +4047,32 @@ void DeleteCommonCard()//删除正在编辑的防御卡
     commonPage = MaxCommonPage;
 }
 //读取生产信息
-template<size_t size> int LoadProduction(FILE *f, char *path, int &line, int account, char(&info)[size])
+int LoadProduction(FILE *f, char *path, int &line, int account, char(&info)[1000])
 {
   char s[1000], tip[100], format[100];
   char *option[8] = { "回火", "产能", "生产", "光能", "神佑", "疾风", "转化", "榴弹类型" };
-  int OptionValue[8];
-  int MinValue[8] = { -1, -1, -1, -1, -1, -1, -1, 1 };
-  int MaxValue[8] = { 15, 15, 15, 15, 15, 15, 15, 2 };
+  int optionValue[8] = {};
+  int mMinValue[8] = { -1, -1, -1, -1, -1, -1, -1, 1 };
+  int maxValue[8] = { 15, 15, 15, 15, 15, 15, 15, 2 };
   do //跳到“回火”那一行
   {
     fgets(f, s);
     line++;
     if (strlen(s) == 0)//如果文档已经读完了
-      return WriteInfo(info, f, path, line, s, "文档中缺少“回火”项");
+      return WriteInfo(info, f, path, line, s, "文档中缺少“回火”项", nullptr);
   } while (strstr(s, "回火=") == 0);
   for (int i = 0; i <= 7; i++)
   {
     sprintf_s(format, "%s%s", option[i], "=%d");
-    if (sscanf_s(s, format, &OptionValue[i]) != 1) //不能读取直接报错
+    if (sscanf_s(s, format, &optionValue[i]) != 1) //不能读取直接报错
     {
       sprintf_s(tip, "本行应为：%s", option[i]);
-      return WriteInfo(info, f, path, i + 1, s, tip);
+      return WriteInfo(info, f, path, i + 1, s, tip, nullptr);
     }
-    else if (OptionValue[i] < MinValue[i] || OptionValue[i] > MaxValue[i]) //读取了还要检查范围
+    else if (optionValue[i] < mMinValue[i] || optionValue[i] > maxValue[i]) //读取了还要检查范围
     {
-      sprintf_s(tip, "%s范围为%d~%d", option[i], MinValue[i], MaxValue[i]);
-      return WriteInfo(info, f, path, i + 1, s, tip);
+      sprintf_s(tip, "%s范围为%d~%d", option[i], mMinValue[i], maxValue[i]);
+      return WriteInfo(info, f, path, i + 1, s, tip, nullptr);
     }
     if (i < 7)
     {
@@ -4000,21 +4081,20 @@ template<size_t size> int LoadProduction(FILE *f, char *path, int &line, int acc
     }
   }
   for (int i = 0; i <= 7; i++)//七颗宝石的星级和榴弹类型
-    weapon[account][i] = OptionValue[i];
+    weapon[account][i] = optionValue[i];
   return 0;
 }
 //读取生产信息
-template<size_t size>
-int LoadProduction(char(&info)[size])
+int LoadProduction(char(&info)[1000])
 {
   char s[1000];
   int line = 0;
   FILE *f;
   char *path = "生产信息.txt";
   fopen_s(&f, path, "r");
-  if (f == NULL)
+  if (!f)
   {
-    sprintf_s(info, "【%s】无法打开。", path);
+    sprintf_s(info, "[%s]无法打开。", path);
     return -2;
   }
 
@@ -4030,12 +4110,12 @@ int LoadProduction(char(&info)[size])
     if (sscanf_s(s, format, value[i]) != 1)
     {
       sprintf_s(tip, "本行应为：%s", option[i]);
-      return WriteInfo(info, f, path, line, s, tip);
+      return WriteInfo(info, f, path, line, s, tip, nullptr);
     }
     else if (*value[i] < zero || *value[i] > maxValue[i])
     {
       sprintf_s(tip, "%s范围为0~%d", option[i], maxValue[i]);
-      return WriteInfo(info, f, path, line, s, tip);
+      return WriteInfo(info, f, path, line, s, tip, nullptr);
     }
   }
 
@@ -5104,7 +5184,7 @@ void ViewTip(const char *tip)
   EndBatchDraw();
 }
 //获取提示信息内容
-int GetTip(int mode, int area, char(&tip)[200])
+int GetTip(int mode, int area, char(&tip)[2000])
 {
   if (area == 1)
     return strcpy_s(tip, "阵型编辑：用于设置放卡位置。右击此处清空阵型。");
@@ -5191,7 +5271,7 @@ int GetTip(int mode, int area, char(&tip)[200])
     if (area == 613)
       return strcpy_s(tip, "录制轨道：将手动放卡操作录制成轨道文件。");
     if (area == 614)
-      return strcpy_s(tip, "自动布轨：根据火苗计算结果自动安排放卡时间。需填写卡片数据和生产信息才可使用。");
+      return strcpy_s(tip, "自动布轨：所有卡片启用极限成阵。");
     if (area == 615)
       return strcpy_s(tip, "魔塔：进入指定魔塔层数执行轨道。可用于刷技能。");
     if (area == 616)
@@ -5217,7 +5297,7 @@ void RepaintTip()
   POINT point;
   GetCursorPos(&point);
   ScreenToClient(hWndEditor, &point);
-  char tip[200];
+  char tip[2000] = {};
   GetTip(mode, GetArea(point.x, point.y), tip);
   ViewTip(tip);
 }
@@ -5238,11 +5318,19 @@ void ViewTrackButtons()
   CenterView(towerString, buttonX + buttonWidth / 2, buttonY + 5 * buttonHeight / 2);
 
   char quitString[20];
-  if (quitTime[curAccount] == zero)
-    sprintf_s(quitString, "退出：无");
+  if (strlen(quitWave[curAccount]) == 0)
+  {
+    if (quitTime[curAccount] == zero)
+      sprintf_s(quitString, "退出：无");
+    else
+      sprintf_s(quitString, "退出：%ds", quitTime[curAccount]);
+    CenterView(quitString, buttonX + buttonWidth / 2, buttonY + 7 * buttonHeight / 2);
+  }
   else
-    sprintf_s(quitString, "退出：%ds", quitTime[curAccount]);
-  CenterView(quitString, buttonX + buttonWidth / 2, buttonY + 7 * buttonHeight / 2);
+  {
+    sprintf_s(quitString, "%sF+%ds", quitWave[curAccount], quitTime[curAccount]);
+    CenterView(quitString, buttonX + buttonWidth / 2, buttonY + 7 * buttonHeight / 2);
+  }
 
   char speedString[20];
   if (plantSpeed[curAccount] == zero)
@@ -5962,8 +6050,10 @@ void ConstrainedAutoTrack()
     sprintf_s(message, "求解失败，检查次数%d", checkTimes);
   MessageBox(hWndEditor, message, "提示", MB_ICONINFORMATION | MB_SYSTEMMODAL);
 }
-void MoveLevel(int account, int row0, int column0, int row, int column, int level0)//将层级移动到另一个空位
-{//需要搬迁Map中的信息，并修改卡片这一次的种植位置（Loc），无需修改Track
+//将层级移动到另一个空位
+void MoveLevel(int account, int row0, int column0, int row, int column, int level0)
+{
+  //需要搬迁Map中的信息，并修改卡片这一次的种植位置（Loc），无需修改Track
   int order;
   if (map[account][row][column].depth[level0] >= maxStack) return;//如果目标格同层级已经有9张卡了，那就搬不成
   /*修改Loc*/
@@ -7335,7 +7425,7 @@ bool AddNewToSlot(int account, int level)
 //去掉轨道名称结尾的"+"。成功返回true，失败返回false
 bool RemovePlus(const char *path, char(&newPath)[maxPath])
 {
-  int length = strlen(path);
+  int length = (int)strlen(path);
   if (length < 5) //长度小于5返回false
     return false;
   const char *plus = path + length - 5;//'+'的位置
@@ -7349,7 +7439,7 @@ bool RemovePlus(const char *path, char(&newPath)[maxPath])
 //在轨道名称结尾添加"+"。成功返回true，失败返回false
 bool AddPlusInTrack(const char *path, char(&newPath)[maxPath])
 {
-  int length = strlen(path);
+  int length = (int)strlen(path);
   if (length < 4) //长度小于4返回false
     return false;
   const char *dot = path + length - 4;//'.'的位置
@@ -7525,7 +7615,39 @@ void EditMap()
           AddPlusInTrack(fullTrackPath[0], trackPath2P);
           //如果trackPath2P（Track+.txt)不存在，生成初始轨道
           if (!FileExist(trackPath2P))
-            OutputRes("初始轨道", "TEXT", trackPath2P);
+          {
+            FILE *f;
+            if (fopen_s(&f, trackPath2P, "w"))
+              ExitMessage("无法增加2P轨道");
+            fprintf(f, "轨道版本号=%s\n", version);
+            fprintf(f, "注释=\n");
+            //如果没有2P，2P位置为11
+            if (roleLocNum[1] == 0)
+              fprintf(f, "人物1位置=11\n");
+            //如果有2P，保留2P位置
+            else
+            {
+              fprintf(f, "人物1位置=");
+              for (int times = 1; times <= roleLocNum[1]; times++)
+              {
+                fprintf(f, "%d", roleLoc[1][times]);
+                if (times < roleLocNum[1])
+                  fprintf(f, ",");
+                else
+                  fprintf(f, "\n");
+              }
+            }
+            fprintf(f, "魔塔层数=0\n");
+            fprintf(f, "退出时间=0\n");
+            fprintf(f, "放卡限速=0\n");
+            fprintf(f, "刷技能模式=0\n");
+            fprintf(f, "移动板块=0\n");
+            fprintf(f, "优先队列=\n");
+            fprintf(f, "卡槽数=0\n");
+            fprintf(f, "宝石\t120[0]\n");
+            fprintf(f, "铲子\t0[0]\n");
+            fclose(f);
+          }
           OpenTrack2P(trackPath2P);
           state = 0;
         }
@@ -8115,6 +8237,12 @@ int isTrackEmpty()
         return false;
   return true;
 }
+//所有卡开启极限成阵
+void AllSlotEnableLimit(int account)
+{
+  for (int order = 1; order <= slotNum[account]; order++)
+    slot[account][order].limit = true;
+}
 void EditTrack()//模块二：编辑轨道
 {
   int xPos, yPos, buttons;//鼠标按下
@@ -8167,6 +8295,8 @@ void EditTrack()//模块二：编辑轨道
           curAccount = 0;
           state = 0;
         }
+        if (area == 70) //切换刷技能模式
+          isSkillMode = !isSkillMode;
         if (area / 100 == 1) //点击卡槽：选中卡槽
         {
           if (trackSlotSelected == area) //已选中本卡槽：取消选中
@@ -8276,13 +8406,14 @@ void EditTrack()//模块二：编辑轨道
           }
           else
           {
-            if (trackSlotSelected == zero)//全局布轨
-              AutoTrack();
-            else
-            {
-              AutoTrack(curAccount, trackSlotSelected - 100, 1);//选中了卡槽，就布轨一个
-              isTrackSlotSelectionRetained = true;
-            }
+            AllSlotEnableLimit(curAccount);//所有卡开启极限成阵
+            //if (trackSlotSelected == zero)//全局布轨
+            //  AutoTrack();
+            //else
+            //{
+            //  AutoTrack(curAccount, trackSlotSelected - 100, 1);//选中了卡槽，就布轨一个
+            //  isTrackSlotSelectionRetained = true;
+            //}
           }
           state = 0;
         }
@@ -8292,9 +8423,8 @@ void EditTrack()//模块二：编辑轨道
             "输入要刷的魔塔层数（1~165），仅普通任务需要在此处填写。\n输入0表示非魔塔关卡。", "魔塔选项");
         //退出时间
         if (area == 616)
-          InputNum(&quitTime[curAccount], 0, 960,
-            "到达指定时间（1~960秒）后主动退出关卡，仅高级任务有效。\n输入0表示不主动退出。", "退出时间");
-        //退出时间
+          EditQuitTime();
+        //放卡限速
         if (area == 617)
           InputNum(&plantSpeed[curAccount], 0, 5,
             "输入每秒最大放卡张数（1~5）。\n输入0表示不限速。", "放卡限速");

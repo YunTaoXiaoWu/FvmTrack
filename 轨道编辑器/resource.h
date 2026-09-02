@@ -9,10 +9,12 @@
 #define ID_2P                           5
 #define IDI_ICON1                       101
 #define IDD_INPUT                       105
-#define IDD_LIMIT                       106
+#define IDD_QUIT                        106
 #define IDD_AUTO                        107
 #define IDD_LOADTRACK                   108
 #define IDD_DRAG                        108
+#define IDD_QUIT1                       109
+#define IDD_LIMIT                       109
 #define IDC_EDIT1                       1001
 #define IDC_TEXT                        1002
 #define idDelay                         1003
@@ -28,6 +30,8 @@
 #define idFollow                        1013
 #define idEndNum                        1014
 #define idEndTime                       1015
+#define idQuitWave                      1027
+#define idQuitTime                      1028
 #define idCard0                         1100
 #define idCard1                         1101
 #define idCard2                         1102
@@ -48,7 +52,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        111
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1027
+#define _APS_NEXT_CONTROL_VALUE         1029
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

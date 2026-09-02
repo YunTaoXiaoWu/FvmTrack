@@ -3,7 +3,9 @@
 // 供 综合截图工具.rc 使用
 //
 #define IDD_CUSTOM                      106
-#define idEnergy                        1005
+#define IDD_TARGET                      107
+#define IDD_TARGET1                     108
+#define IDD_MAIL_CARD                   108
 #define idName                          1007
 #define idImage                         1009
 #define idPriority                      1009

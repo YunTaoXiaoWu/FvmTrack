@@ -1,14 +1,14 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Text Include="截图识别count版.txt" />
-  </ItemGroup>
-  <ItemGroup>
     <Filter Include="源文件">
       <UniqueIdentifier>{1e944d09-9205-4a3c-8931-0a32ac1d0104}</UniqueIdentifier>
     </Filter>
     <Filter Include="头文件">
       <UniqueIdentifier>{193af904-d1c5-4473-8d7d-a39377f39383}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{6dacf5b2-1b67-459d-a97c-59acb7f2548b}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -25,6 +25,11 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="综合截图工具.rc" />
+    <Text Include="截图识别count版.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="综合截图工具.rc">
+      <Filter>资源文件</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

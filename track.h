@@ -1,10 +1,13 @@
-﻿//轨道编辑器.cpp|轨道执行器.cpp|头像截取.cpp|卡槽截取.cpp|截图识别.cpp共用头文件
+﻿//轨道编辑器.cpp|轨道执行器.cpp|综合截图工具.cpp 共用头文件
 //1. 窗口、颜色数组、图片文件的相互拷贝
 //2. 字符串的分割、截断
 //3. 文件搜索和目录创建
 //4. 窗口创建及相关绘图操作
 //5. 大厅、flash窗口及选服窗口查找
 #pragma once
+const char version[] = "v6.7.2";//版本号
+#include <winsock2.h>
+#include <iphlpapi.h>
 #include <stdio.h>
 #include <time.h>     //获取系统时间
 #include <type_traits>
@@ -15,16 +18,23 @@
 #include <winhttp.h>
 #include <gdiplus.h>
 #include <graphics.h> //EasyX库
+#include <intrin.h>
+//#include <psapi.h>
 
+#pragma comment(lib, "Bcrypt.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "iphlpapi.lib")
+//#pragma comment(lib, "Psapi.lib")
 extern "C" BOOL WINAPI DeleteUrlCacheEntryA(LPCSTR lpszUrlName);
 
-const char version[] = "v5.0.2";//版本号
+typedef unsigned long long QWORD;
+
 const int zero = 0;//整数的0
+const char hex[17] = "0123456789abcdef";//16进制数字
 const int maxPath = 260;//最大文件路径长度
 const int gameWidth = 950, gameHeight = 596;//游戏窗口尺寸
 const int gridWidth = 60, gridHeight = 64;//地图格子尺寸
@@ -46,6 +56,11 @@ HWND *pHWndExit;//不为nullptr时，ExitMessage必须在窗口*pHWndExit上弹�
 bool banMessage;//是否禁用弹窗
 HWND *pHWndActuator;//执行器窗口句柄指针，用于决定PopMessage是否弹窗
 
+// 生成a,b之间的随机数
+int RandInt(int a, int b)
+{
+  return a + rand() % (b - a + 1);
+}
 //在指定窗口上弹出消息框（forced：是否无视banMessage强制弹窗）
 void PopMessage(HWND hWnd, const char *message, const char *title = "提示")
 {
@@ -148,8 +163,8 @@ void DeleteString(char *begin, int num)
 //在字符串begin位置插入subString
 void InsertString(char *begin, const char *subString)
 {
-  int beginLen = strlen(begin);
-  int subLen = strlen(subString);
+  int beginLen = (int)strlen(begin);
+  int subLen = (int)strlen(subString);
   for (char *c = begin + beginLen; c >= begin; c--)
     c[subLen] = c[0];
   for (int i = 0; i < subLen; i++)
@@ -164,7 +179,7 @@ void ReplaceString(char *begin, int num, const char *subString)
 //将字符串中全部子串oldSubStr替换为子串newSubStr
 void ReplaceString(char *str, const char *oldSubStr, const char *newSubStr)
 {
-  int oldLength = strlen(oldSubStr);
+  int oldLength = (int)strlen(oldSubStr);
   char *begin = strstr(str, oldSubStr);
   while (begin)
   {
@@ -196,12 +211,27 @@ void SetFontSize(int size)
   font.lfHeight = size;
   settextstyle(&font);
 }
+//获取字体粗细
+int GetFontWeight()
+{
+  LOGFONT font;
+  gettextstyle(&font);
+  return font.lfWeight;
+}
+//设置字体粗细
+void SetFontWeight(int weight)
+{
+  LOGFONT font;
+  gettextstyle(&font);
+  font.lfWeight = weight;
+  settextstyle(&font);
+}
 //给定中心坐标(x,y)显示文字s
 void CenterView(const char *s, int x, int y)
 {
   outtextxy(x - textwidth(s) / 2, y - textheight(s) / 2, s);
 }
-//给定中心坐标(x,y)显示文字s
+//给定中心坐标(x,y)显示字符c
 void CenterView(char c, int x, int y)
 {
   if (c == 0)
@@ -295,11 +325,11 @@ bool IsUtf8(const char(&str)[size])
   //UTF首字节记录该字符用几字节表示：110xx=2字节，1110xx=3字节，...，1111110x=6字节
   //后续每个字节以10开头
 
-  size_t length = strlen(str);//字符串长度
+  int length = (int)strlen(str);//字符串长度
   int nBytes = 0;//UTF8可用1-6个字节编码,ASCII用一个字节
   unsigned char ch = 0;
   bool isAllAscii = true;//是否全部为0-127号ASCII
-  for (size_t i = 0; i < length; i++)
+  for (int i = 0; i < length; i++)
   {
     ch = str[i];//拷贝第i个字符串
     if (ch & 0x80)//如果某字节最高位是1，说明不全是0-127号ASCII
@@ -332,11 +362,11 @@ bool IsUtf8(const char(&str)[size])
     return false;
 
   //符合UTF-8编码也可能是ANSI格式，试试能不能转化为ANSI
-  size_t len = strlen(str);
+  int len = (int)strlen(str);
   char *str2 = (char *)malloc(len + 1);//开辟空间
   strcpy_s(str2, len + 1, str);//将str复制到str2
   //将str2中的'?'改为'0'
-  for (size_t i = 0; i < len; i++)
+  for (int i = 0; i < len; i++)
     if (str2[i] == '?')
       str2[i] = '0';
   Utf8ToAnsi(str2);//str2转换为ANSI
@@ -352,9 +382,10 @@ void fgets(FILE *f, char(&s)[size])
 {
   s[0] = 0;//初始值设为空串
   fgets(s, size, f);//从文件中读取1000个字符，如果读取失败，则不改变s（即s仍为空串）
-  size_t n = strlen(s);
-  if (s[n - 1] == '\n') //删除换行符
-    s[n - 1] = 0;
+  int n = (int)strlen(s);
+  if (n > 0)
+    if (s[n - 1] == '\n') //删除换行符
+      s[n - 1] = 0;
   if (IsUtf8(s)) //如果是UTF8，转化为ANSI
     Utf8ToAnsi(s);
 }
@@ -397,13 +428,33 @@ int StrToNat(char *s)
   return IsNature(s) ? atoi(s) : -1;
 }
 //从time_t变量获得“yyyy/mm/dd hh:mm:ss”格式的时间字符串
-template<size_t size>
-void GetTimeString(char(&timeString)[size], time_t time)
+void GetTimeStringYmdhms(char(&timeString)[100], time_t time)
 {
   tm local;//本地时间
   localtime_s(&local, &time);//time_t转化为本地时间
   sprintf_s(timeString, "%d/%02d/%02d %02d:%02d:%02d",
     1900 + local.tm_year, 1 + local.tm_mon, local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
+}
+// 现在是否处于维护时间（周四9:50-10:00）
+bool InFixingTime(time_t now)
+{
+  tm local;
+  localtime_s(&local, &now);
+
+  bool isThursday = local.tm_wday == 4;
+
+  // 当前时间转换成分钟
+  int currentMinutes = local.tm_hour * 60 + local.tm_min;
+  bool inRange = currentMinutes >= 9 * 60 + 50 && currentMinutes < 10 * 60 + 0;
+  return isThursday && inRange;
+}
+//从time_t变量获得“mm/dd hh:mm:ss”格式的时间字符串
+void GetTimeStringMdhms(char(&timeString)[100], time_t time)
+{
+  tm local;//本地时间
+  localtime_s(&local, &time);//time_t转化为本地时间
+  sprintf_s(timeString, "%02d/%02d %02d:%02d:%02d",
+    1 + local.tm_mon, local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
 }
 //秒数（second）转时分秒hh:mm:ss（timeString）
 bool SecondToHms(char(&timeString)[9], int second)
@@ -432,7 +483,7 @@ int HmsToSecond_Strict(const char *timeString)
 //时分秒hh:mm:ss（timeString）转秒数（second），可以没有ss，转换失败返回-1
 int HmsToSecond(const char *timeString)
 {
-  int len = strlen(timeString);
+  int len = (int)strlen(timeString);
   //如果长度为0，或者首尾有冒号，或者有连续的冒号，都不行
   if (len == 0 || timeString[0] == ':' || timeString[len - 1] == ':' || strstr(timeString, "::"))
     return -1;
@@ -771,21 +822,31 @@ bool IsGameWindowVisible(HWND hWnd)
 {
   return IsWindowVisible(hWnd) && !IsIconic(GetHallWindow(hWnd));//窗口可见且大厅没有最小化
 }
-//多次调用PrintWindow直到左上角不是黑色，成功返回true
-bool MultiPrintWindow(HWND hWnd, HDC hMemDC, int times)
+
+//多次调用PrintWindow直到左上角不是黑色，成功返回截图次数，失败返回0
+int MultiPrintWindow(HWND hWnd, HDC hMemDC, int width, int height, int times)
 {
   int counter = 0;
-  while (true)
+  //如果截图times次还没成功，或窗口不可见，则判定截图失败
+  while (counter < times && IsGameWindowVisible(hWnd))
   {
-    if (counter >= times || !IsGameWindowVisible(hWnd)) //如果截图times次还没成功，或窗口不可见
-      return false;//截图失败
     Sleep(1);
     PrintWindow(hWnd, hMemDC, NULL);//将窗口内容复制到内存DC
-    counter++;
-    if (GetPixel(hMemDC, 0, 0)) //如果左上角不是黑色
-      return true;//截图成功
+    counter++;//次数+1
+    //如果四角都不是黑色，则判定截图成功，返回截图次数
+    COLORREF color0 = GetPixel(hMemDC, 0, 0);
+    COLORREF color1 = GetPixel(hMemDC, 3, 3);
+    COLORREF color2 = GetPixel(hMemDC, width - 1, 0);
+    COLORREF color3 = GetPixel(hMemDC, width - 4, 3);
+    COLORREF color4 = GetPixel(hMemDC, 0, height - 1);
+    COLORREF color5 = GetPixel(hMemDC, 3, height - 4);
+    COLORREF color6 = GetPixel(hMemDC, width - 1, height - 1);
+    COLORREF color7 = GetPixel(hMemDC, width - 4, height - 4);
+    if ((color0 || color1) && (color2 || color3)
+      && (color4 || color5) && (color6 || color7))
+      return counter;
   }
-  return false;
+  return 0;
 }
 //将窗口hWnd指定区域保存为bmp/png。times：截图次数，0=截到首格非黑为止
 bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0,
@@ -812,7 +873,7 @@ bool WindowToBitmap(HWND hWnd, const char *path, int x0 = 0, int y0 = 0,
   HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);//创建位图
   SelectObject(hMemDC, hBitmap);//将位图选择到内存DC
   if (times == 0)
-    MultiPrintWindow(hWnd, hMemDC, 5);
+    MultiPrintWindow(hWnd, hMemDC, width, height, 5);
   else
     for (int i = 0; i < times; i++)
       PrintWindow(hWnd, hMemDC, NULL);
@@ -943,24 +1004,48 @@ void ReportLastError()
 //向指定窗口输入一段字符串（仅限ASCII字符）
 void StringToWindow(const char *str, HWND hWnd)
 {
-  int length = strlen(str);
+  int length = (int)strlen(str);
   for (int i = 0; i < length; i++)// 逐个字符发送到窗口
     PostMessageA(hWnd, WM_CHAR, str[i], 0);
-
-  //char tip[1000] = {};
-  //sprintf_s(tip, "在窗口%d内输入了%s", (int)hWnd, str);
-  //PopMessage(nullptr, tip);
+}
+//向指定窗口输入一段字符串（可以包含中文）
+void StringToWindowW(const char *str, HWND hWnd)
+{
+  wchar_t wstr[1000] = {};
+  AnsiToUtf16(str, wstr);
+  int length = (int)wcslen(wstr);
+  for (int i = 0; i < length; i++)// 逐个字符发送到窗口
+    PostMessageW(hWnd, WM_CHAR, wstr[i], 0);
+}
+//在窗口hWnd内拖拽，返回是否成功
+BOOL Drag(HWND hWnd, int x0, int y0, int x1, int y1, int step)
+{
+  BOOL result = PostMessage(hWnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x0, y0));
+  Sleep(1000 / step);
+  for (int i = 1; i <= step; i++)
+  {
+    int x = x0 + i * (x1 - x0) / step;
+    int y = y0 + i * (y1 - y0) / step;
+    PostMessage(hWnd, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+    Sleep(1000 / step);
+  }
+  PostMessage(hWnd, WM_LBUTTONUP, 0, MAKELPARAM(x1, y1));
+  return result;
+}
+//在窗口hWnd内拖拽，位置进行DPI换算，返回是否成功
+BOOL DragDPI(HWND hWnd, int x0, int y0, int x1, int y1, int step)
+{
+  int X0 = x0 * DPI / 96;
+  int Y0 = y0 * DPI / 96;
+  int X1 = x1 * DPI / 96;
+  int Y1 = y1 * DPI / 96;
+  return Drag(hWnd, X0, Y0, X1, Y1, step);
 }
 //在窗口hWnd内点击，返回是否成功
 BOOL LeftClick(HWND hWnd, int x, int y)
 {
   BOOL result = PostMessage(hWnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
   PostMessage(hWnd, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
-
-  //char tip[1000] = {};
-  //sprintf_s(tip, "在窗口%d内点击了(%d,%d)", (int)hWnd, x, y);
-  //PopMessage(nullptr, tip);
-
   return result;
 }
 //在窗口hWnd内点击，返回是否成功
@@ -998,8 +1083,8 @@ RECT DivDPI(RECT &rect)
 //在窗口hWnd内点击，位置进行DPI换算，返回是否成功
 BOOL LeftClickDPI(HWND hWnd, int x, int y)
 {
-  int x1 = int(double(x) * DPI / 96 + 0.5);
-  int y1 = int(double(y) * DPI / 96 + 0.5);
+  int x1 = x * DPI / 96;
+  int y1 = y * DPI / 96;
   return LeftClick(hWnd, x1, y1);
 }
 //在窗口hWnd内点击，位置进行DPI换算，返回是否成功
@@ -1033,7 +1118,7 @@ BOOL PressKey(HWND hWnd, int KeyCode)
 {
   return PostMessage(hWnd, WM_KEYDOWN, KeyCode, 0);//按键
 }
-//判断字符src是不是汉字首字节，pIsChineseFirst指示上一个字符是不是汉字首字节
+//判断字符source是不是汉字首字节，pIsChineseFirst指示上一个字符是不是汉字首字节
 void JudgeChineseFirst(char source, bool *pIsChineseFirst)
 {
   if (*pIsChineseFirst)
@@ -1070,10 +1155,10 @@ void TruncateWithEllipsis(char(&dest)[size], char *source, int fieldWidth)
     strcpy_s(dest, source);
     return;
   }
-  int length = strlen(source);
+  int length = (int)strlen(source);
   bool isChineseFirst = false;//是不是汉字的第1个字节
   int last = 0;//上次截取的位置
-  int tempSize = strlen(source) + 4;
+  int tempSize = (int)strlen(source) + 4;
   char *temp = (char *)malloc(tempSize);
   //用于获取字符串宽度的临时字符串
   for (int i = 0; i < length; i++)
@@ -1121,23 +1206,25 @@ void Truncate(char(&dest)[size], char *source, int fieldWidth)
 }
 //将字符串source按长度length截断，写入dest
 template<size_t size>
-void TruncateInLength(char(&dest)[size], char *source, int length)
+void TruncateInLength(char(&dest)[size], const char *source, int length)
 {
-  if ((int)strlen(source) <= length)//如果字符串长度不超过场宽，则无需分割
+  int sourceLength = (int)strlen(source);
+  if (sourceLength <= length)//如果字符串长度不超过场宽，则无需分割
   {
     strcpy_s(dest, source);
     return;
   }
+
   bool isChineseFirst = false;//是不是汉字的首字节
   char tempString[size + 2] = {};//用于获取字符串宽度的临时字符串
   strcpy_s(dest, "");
-
-  for (size_t i = 0; i < strlen(source); i++) //遍历Src的每个字节
+  //遍历source的每个字节
+  for (int i = 0; i < sourceLength; i++)
   {
     JudgeChineseFirst(source[i], &isChineseFirst);
     if (isChineseFirst)
       continue;
-    strncpy_s(tempString, source, i + 1);//将Src的前i+1个字符写入tempString
+    strncpy_s(tempString, source, i + 1);//将source的前i+1个字符写入tempString
     if ((int)strlen(tempString) > length)//如果字符串宽度超过场宽了，从这里截断
       return;
     strcpy_s(dest, tempString);//如果还没超过场宽，将tempString写入dest
@@ -1153,10 +1240,10 @@ void Truncate(const char *source, char(&dest1)[size1], char(&dest2)[size2], int 
     strcpy_s(dest2, "");
     return;
   }
-  int length = strlen(source);
+  int length = (int)strlen(source);
   bool isChineseFirst = false;//是不是汉字的第1个字节
   int last = 0;//上次截取的位置
-  int tempSize = strlen(source) + 1;
+  int tempSize = (int)strlen(source) + 1;
   char temp[size1 + size2 + 10] = {};
   //用于获取字符串宽度的临时字符串
   for (int i = 0; i < length; i++)
@@ -1559,8 +1646,8 @@ void Swap(Type *pA, Type *pB)
 //交换两个字符串
 void SwapStr(char *strA, char *strB)
 {
-  int lenA = strlen(strA);
-  int lenB = strlen(strB);
+  int lenA = (int)strlen(strA);
+  int lenB = (int)strlen(strB);
   int maxLen = max(lenA, lenB);
   for (int i = 0; i <= maxLen; i++)
     Swap(strA + i, strB + i);
@@ -1654,54 +1741,12 @@ int GetLastFolder(char *direct, char(&lastFolder)[maxPath])
     return 1;
   return 0;
 }
-//（待优化）对游戏窗口的一部分进行截图
-template <size_t width, size_t height>
-int RegionalMapShot(HWND hWnd, COLORREF(&color)[height][width], int x0 = 0, int y0 = 0)
-{
-  if (!IsGameWindowVisible(hWnd))
-    return 0;
-
-  HDC hScreenDC = GetDC(hWnd);
-  HDC hMemDC = CreateCompatibleDC(hScreenDC);
-  HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, gameWidth, gameHeight);//创建位图
-  SelectObject(hMemDC, hBitmap);
-
-  int result = MultiPrintWindow(hWnd, hMemDC, 5);//截图5次直到成功，记录结果
-  InvalidateRect(hWnd, NULL, false);//重画
-
-  if (result == 1)
-  {
-    HDC hMemDC2 = CreateCompatibleDC(hScreenDC);//创建内存DC
-    HBITMAP hBitmap2 = CreateCompatibleBitmap(hScreenDC, width, height);//创建位图
-    SelectObject(hMemDC2, hBitmap2);//将位图选择到内存DC
-    BitBlt(hMemDC2, 0, 0, width, height, hMemDC, x0, y0, SRCCOPY);//将窗口截图hMemDC复制到区域截图hMemDC2
-
-    BITMAPINFO bmi = { 0 };
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);//设置BITMAPINFO结构
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -int(height);
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32; // 32位色深
-    GetDIBits(hMemDC2, hBitmap2, 0, height, color, &bmi, DIB_RGB_COLORS);//获取位图的像素数据
-    for (int y = 0; y < height; y++)
-      for (int x = 0; x < width; x++)
-        color[y][x] &= 0x00ffffff;
-
-    DeleteObject(hBitmap2);
-    DeleteDC(hMemDC2);
-  }
-
-  DeleteObject(hBitmap);
-  DeleteDC(hMemDC);
-  ReleaseDC(NULL, hScreenDC);
-  return result;
-}
 // 允许WM_DROPFILES消息通过UAC过滤器
-void EnableDragDropForHighIntegrity(HWND hwnd)
+void EnableDragDropForHighIntegrity(HWND hWndCpp)
 {
-  ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
-  ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
-  ChangeWindowMessageFilterEx(hwnd, 0x0049 /* WM_COPYGLOBALDATA */, MSGFLT_ALLOW, nullptr);
+  ChangeWindowMessageFilterEx(hWndCpp, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+  ChangeWindowMessageFilterEx(hWndCpp, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+  ChangeWindowMessageFilterEx(hWndCpp, 0x0049 /* WM_COPYGLOBALDATA */, MSGFLT_ALLOW, nullptr);
 }
 //绘制row行column列的栅格
 void PaintGrid(int row, int column, int x, int y, int width, int height)
@@ -1724,7 +1769,7 @@ void PaintCheck(int x, int y, int width, int height, int offsetX)
   CenterView("√", x + width / 2 + dx, y + height / 2 + dy);
 }
 //检查图片尺寸。返回0=检查合格；-1=itemMode模式下遇到"背景.png"；-2=不合格，需要报错
-int CheckBitmapSizez(const char *path, int width0, int height0, bool itemMode,
+int CheckBitmapSize(const char *path, int width0, int height0, bool itemMode,
   char(&info)[1000])
 {
   int width = 0, height = 0;
@@ -1747,7 +1792,7 @@ int CheckBitmapSizez(const char *path, int width0, int height0, bool itemMode,
   }
   return 0;
 }
-//将图像source从(x0,y0)开始的区域拷贝到dest
+// 将图像source从(x0,y0)开始的区域拷贝到dest
 template <size_t destWidth, size_t destHeight, size_t sourceWidth, size_t sourceHeight>
 void CopyMap(COLORREF(&dest)[destHeight][destWidth], COLORREF(&source)[sourceHeight][sourceWidth],
   int sourceX = 0, int sourceY = 0)
@@ -1756,7 +1801,7 @@ void CopyMap(COLORREF(&dest)[destHeight][destWidth], COLORREF(&source)[sourceHei
     for (int x = 0; x < destWidth; x++)
       dest[y][x] = source[sourceY + y][sourceX + x];
 }
-//将图像source从(x0,y0)开始的区域拷贝到dest(x1,y1)
+// 将图像source从(x0,y0)开始的区域拷贝到dest(x1,y1)
 template <size_t destWidth, size_t sourceWidth>
 void CopyMap(COLORREF(*dest)[destWidth], int destX, int destY, int width, int height,
   COLORREF(*source)[sourceWidth], int sourceX = 0, int sourceY = 0)
@@ -1764,6 +1809,17 @@ void CopyMap(COLORREF(*dest)[destWidth], int destX, int destY, int width, int he
   for (int y = 0; y < height; y++)
     for (int x = 0; x < width; x++)
       dest[destY + y][destX + x] = source[sourceY + y][sourceX + x];
+}
+// 将图像source从(x0,y0)开始的区域拷贝到dest(x1,y1)，不拷贝背景颜色background
+template <size_t destWidth, size_t sourceWidth>
+void TransCopyMap(COLORREF(*dest)[destWidth], int destX, int destY, int width,
+  int height, COLORREF(*source)[sourceWidth], int sourceX = 0, int sourceY = 0,
+  COLORREF background = 0)
+{
+  for (int y = 0; y < height; y++)
+    for (int x = 0; x < width; x++)
+      if (source[sourceY + y][sourceX + x] != background)
+        dest[destY + y][destX + x] = source[sourceY + y][sourceX + x];
 }
 const int maxWave = 24;
 const int maxSmallWave = 12;
@@ -1792,6 +1848,16 @@ void GetWaveString(char(&dest)[size], int totalWave)
   else
     sprintf_s(dest, "%d.%d", wave, smallWave);
 }
+template <size_t size>
+void GetWaveString(char(&dest)[size], int mainWave, int smallWave)
+{
+  if (smallWave > 0)
+    sprintf_s(dest, "%d.%d", mainWave, smallWave);
+  else if (mainWave > 0)
+    sprintf_s(dest, "%d", mainWave);
+  else
+    sprintf_s(dest, "");
+}
 //字符串s是否为"--第x波--"格式
 bool IsWaveTitle(const char *s)
 {
@@ -1809,17 +1875,17 @@ bool IsWaveLegal(const char *waveString)
     return true;
   int wave = 0, smallWave = 0;
   char tail[10] = {};
-  int waveResult = sscanf_s(waveString, "%d%s", &wave, tail, sizeof(tail));
+  int waveResult = sscanf_s(waveString, "%d%s", &wave, tail, (unsigned)sizeof(tail));
   if (waveResult == 1 && IsWaveInRange(wave, smallWave))
     return true;
   wave = 0;
   smallWave = 0;
-  int smallWaveResult = sscanf_s(waveString, "%d.%d%s", &wave, &smallWave, tail, sizeof(tail));
+  int smallWaveResult = sscanf_s(waveString, "%d.%d%s", &wave, &smallWave, tail, (unsigned)sizeof(tail));
   if (smallWaveResult == 2 && IsWaveInRange(wave, smallWave))
     return true;
   return false;
 }
-const char waveErrorString[] = "【波次】格式为m或m.n。\n大波m范围0~23，小波n范围0~11。";
+const char waveErrorString[] = "[波次]格式为m或m.n。\n大波m范围0~23，小波n范围0~11。";
 //字符串分割，但是不跳过空串
 char *NewStrTok(char *source, const char *delim, char **context)
 {
@@ -1992,14 +2058,14 @@ struct Monitor
   //输出文字
   void outtextxy(const char *text, int x, int y) const
   {
-    TextOutA(hDCUsed, x, y, text, strlen(text));
+    TextOutA(hDCUsed, x, y, text, (int)strlen(text));
   }
   //输出数字
   void outtextxy(int num, int x, int y) const
   {
     char text[20];
     sprintf_s(text, "%d", num);
-    TextOutA(hDCUsed, x, y, text, strlen(text));
+    TextOutA(hDCUsed, x, y, text, (int)strlen(text));
   }
   //清空窗口
   void ClearWindow() const
@@ -2084,14 +2150,14 @@ struct BitmapWindow
   //输出文字
   void outtextxy(const char *text, int x, int y) const
   {
-    TextOutA(hDC, x, y, text, strlen(text));
+    TextOutA(hDC, x, y, text, (int)strlen(text));
   }
   //输出数字
   void outtextxy(int num, int x, int y) const
   {
     char text[20];
     sprintf_s(text, "%d", num);
-    TextOutA(hDC, x, y, text, strlen(text));
+    TextOutA(hDC, x, y, text, (int)strlen(text));
   }
   // 获取文本宽度
   int textwidth(const char *text) const
@@ -2162,18 +2228,6 @@ HWND InitTransparentWindow(Monitor &wndInfo)
     Sleep(1);
   return wndInfo.hWnd;
 }
-//将窗口hWnd截图到map数组，需要传入map和hDCMap
-int MapShot(HWND hWnd, Map(&map), HDC(&hDCMap))
-{
-  if (!IsGameWindowVisible(hWnd))
-    return 0;
-  int result = MultiPrintWindow(hWnd, hDCMap, 5);//截图5次直到成功，记录结果
-  InvalidateRect(hWnd, NULL, false);//重画
-  for (int y = 0; y < gameHeight; y++)
-    for (int x = 0; x < gameWidth; x++)
-      map[y][x] &= 0x00ffffff;
-  return result;
-}
 //调节变量Variable（下限Minimum，上限Maximum，下调区域TurnDownArea，上调区域TurnUpArea）isCycle：是否循环
 //Variable数值改变返回1
 int Adjust(int &variable, int minimum, int maximum, int step, int turnDownArea, int turnUpArea, int isCycle = 0)
@@ -2208,7 +2262,8 @@ int Adjust(int &variable, int minimum, int maximum, int step, int turnDownArea, 
   return 0;
 }
 //自定卡槽名fileName（带不带.png后缀均可）是否合格，是则填写参数
-bool IsCustomPathLegal(const char *fileName, char(&customName)[10], int *pPriority)
+template <int size>
+bool IsCustomPathLegal(const char *fileName, char(&customName)[size], int *pPriority)
 {
   char name[maxPath] = {};//卡槽名
   strcpy_s(name, fileName);//拷贝图片文件名
@@ -2361,7 +2416,7 @@ void GetFileName(const char *path, char(&fileName)[maxPath])
 //path扩展名是不是.txt
 bool IsTxtFile(const char *path)
 {
-  int length = strlen(path);
+  int length = (int)strlen(path);
   if (length < 4)
     return false;
   return strcmp(path + length - 4, ".txt") == 0;
@@ -2396,10 +2451,9 @@ int CheckFileType(const char *path)
 //报告缺少文件并退出程序
 void ReportMissingFile(const char *path)
 {
-  char message[100 + maxPath] = {};
-  sprintf_s(message, "缺少依赖文件（夹）：\n%s", path);
-  PopMessage(nullptr, message);
-  exit(0);
+  char message[500] = {};
+  sprintf_s(message, "缺少依赖文件（夹）：\n[%s]\n请勿删改或移动任何文件，也不要把软件移出文件夹。\n重新安装可能解决问题。", path);
+  ExitMessage(message);
 }
 //弹出更新公告
 void PopUpdateNotice()
@@ -2438,15 +2492,20 @@ void GetKeyValue(int &value, const char *text, const char *keyword)
   const char *keyString = strstr(text, keyword);
   if (keyString)
   {
-    int length = strlen(keyword);
+    int length = (int)strlen(keyword);
     value = atoi(keyString + length);
   }
 }
-//勾选框idItem是否选中
+//复选框idItem是否选中
 bool GetCheck(HWND hDlg, int idItem)
 {
-  UINT checkState = SendMessage(GetDlgItem(hDlg, idItem), BM_GETCHECK, 0, 0);
+  LRESULT checkState = SendMessageA(GetDlgItem(hDlg, idItem), BM_GETCHECK, 0, 0);
   return checkState == BST_CHECKED;
+}
+//设置复选框是否选中
+void SetCheck(HWND hDlg, int idItem, bool checked)
+{
+  CheckDlgButton(hDlg, idItem, checked ? BST_CHECKED : BST_UNCHECKED);
 }
 //获取选中的单选按钮id
 int GetCheckedRadio(HWND hDlg, int idBegin, int idEnd)
@@ -2455,12 +2514,6 @@ int GetCheckedRadio(HWND hDlg, int idBegin, int idEnd)
     if (IsDlgButtonChecked(hDlg, id) == BST_CHECKED)
       return id;
   return 0;
-}
-
-//设置勾选框状态
-void SetCheck(HWND hDlg, int idItem, bool checked)
-{
-  CheckDlgButton(hDlg, idItem, checked ? BST_CHECKED : BST_UNCHECKED);
 }
 //对话框位置居中
 void CenterDialog(HWND hDlg)
@@ -2507,7 +2560,8 @@ int GameShot(HWND hwndGame, Map &game, HDC &hdcGame)
   if (!IsGameWindowVisible(hwndGame))
     return 0;
 
-  int result = MultiPrintWindow(hwndGame, hdcGame, 5);//截图5次直到成功，记录结果
+  //截图5次直到成功，记录结果
+  int result = MultiPrintWindow(hwndGame, hdcGame, gameWidth, gameHeight, 5);
   InvalidateRect(hwndGame, NULL, false);//重画
 
   //不考虑偏移，原位删除首字节
@@ -2542,4 +2596,679 @@ bool IsWindowTopMost(HWND hWnd)
 {
   LONG exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
   return (exStyle & WS_EX_TOPMOST) != 0;
+}
+//从字符串版本号"a.b.c"获取整数表示的版本号100a+10b+c
+int GetIntegerVersion(const char *versionString)
+{
+  int versions[3] = {};
+  sscanf_s(versionString, "%d.%d.%d", &versions[0], &versions[1], &versions[2]);
+  return versions[0] * 10000 + versions[1] * 100 + versions[2];
+}
+//下移某个控件
+void MoveControlDown(HWND hDlg, int id, int delta)
+{
+  HWND hButton = GetDlgItem(hDlg, id);
+  RECT rcBtn;
+  GetWindowRect(hButton, &rcBtn);
+  MapWindowPoints(NULL, hDlg, (LPPOINT)&rcBtn, 2);
+
+  SetWindowPos(hButton, NULL,
+    rcBtn.left, rcBtn.top + delta,
+    rcBtn.right - rcBtn.left, rcBtn.bottom - rcBtn.top,
+    SWP_NOZORDER);
+}
+//自动调整文本框高度、对话框高度和文本框下方控件的位置
+template <int size>
+void AdjustText(HWND hDlg, int idText, const char *text, int(&idControl)[size])
+{
+  //设置文本框内容
+  HWND hText = GetDlgItem(hDlg, idText);
+  SetWindowTextA(hText, text);
+
+  //获取文本框宽度
+  RECT rcOldText;
+  GetWindowRect(hText, &rcOldText);
+  MapWindowPoints(nullptr, hDlg, (LPPOINT)&rcOldText, 2);
+  int oldWidth = rcOldText.right - rcOldText.left;
+
+  //计算文本框需要的高度
+  HDC hDCText = GetDC(hText);
+  HFONT hFont = (HFONT)SendMessageA(hText, WM_GETFONT, 0, 0);
+  HFONT hOld = (HFONT)SelectObject(hDCText, hFont);
+  RECT rcNewText = { 0, 0, oldWidth, 0 };
+  DrawTextA(hDCText, text, -1, &rcNewText, DT_WORDBREAK | DT_CALCRECT);
+  SelectObject(hDCText, hOld);
+  ReleaseDC(hText, hDCText);
+  int newHeight = rcNewText.bottom - rcNewText.top;
+  int deltaHeight = newHeight - (rcOldText.bottom - rcOldText.top);
+
+  //调整文本框大小
+  SetWindowPos(hText, NULL, rcOldText.left, rcOldText.top,
+    oldWidth, newHeight, SWP_NOZORDER);
+
+  //调整对话框高度
+  RECT rcDlg;
+  GetWindowRect(hDlg, &rcDlg);
+  int dlgWidth = rcDlg.right - rcDlg.left;
+  int dlgHeight = rcDlg.bottom - rcDlg.top;
+  SetWindowPos(hDlg, NULL, rcDlg.left, rcDlg.top,
+    dlgWidth, dlgHeight + deltaHeight,
+    SWP_NOZORDER | SWP_NOMOVE);
+
+  //调整下方控件位置
+  for (int i = 0; i < size; i++)
+    MoveControlDown(hDlg, idControl[i], deltaHeight);
+}const int sha256BlockSize = 32;//加密结果大小
+//SHA256加密信息
+struct Sha256
+{
+  unsigned char data[64];
+  unsigned datalen;
+  unsigned long long bitlen;
+  unsigned state[8];
+};
+
+#define ROTLEFT(a,b) ((a << b) | (a >> (32-b)))
+#define ROTRIGHT(a,b) ((a >> b) | (a << (32-b)))
+#define CH(x,y,z) ((x & y) ^ (~x & z))
+#define MAJ(x,y,z) ((x & y) ^ (x & z) ^ (y & z))
+#define EP0(x) (ROTRIGHT(x,2)  ^ ROTRIGHT(x,13) ^ ROTRIGHT(x,22))
+#define EP1(x) (ROTRIGHT(x,6)  ^ ROTRIGHT(x,11) ^ ROTRIGHT(x,25))
+#define SIG0(x) (ROTRIGHT(x,7) ^ ROTRIGHT(x,18) ^ (x >> 3))
+#define SIG1(x) (ROTRIGHT(x,17) ^ ROTRIGHT(x,19) ^ (x >> 10))
+
+//加密常数
+const unsigned kSha256[64] = {
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+  0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+  0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+  0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+  0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+  0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+  0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+  0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+  0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
+
+void sha256_transform(Sha256 *ctx, const unsigned char data[])
+{
+  unsigned a, b, c, d, e, f, g, h, i, j, t1, t2, m[64];
+
+  for (i = 0, j = 0; i < 16; i++, j += 4)
+    m[i] = (data[j] << 24) | (data[j + 1] << 16) |
+    (data[j + 2] << 8) | (data[j + 3]);
+  for (; i < 64; i++)
+    m[i] = SIG1(m[i - 2]) + m[i - 7] + SIG0(m[i - 15]) + m[i - 16];
+
+  a = ctx->state[0];
+  b = ctx->state[1];
+  c = ctx->state[2];
+  d = ctx->state[3];
+  e = ctx->state[4];
+  f = ctx->state[5];
+  g = ctx->state[6];
+  h = ctx->state[7];
+
+  for (i = 0; i < 64; i++)
+  {
+    t1 = h + EP1(e) + CH(e, f, g) + kSha256[i] + m[i];
+    t2 = EP0(a) + MAJ(a, b, c);
+    h = g;
+    g = f;
+    f = e;
+    e = d + t1;
+    d = c;
+    c = b;
+    b = a;
+    a = t1 + t2;
+  }
+
+  ctx->state[0] += a;
+  ctx->state[1] += b;
+  ctx->state[2] += c;
+  ctx->state[3] += d;
+  ctx->state[4] += e;
+  ctx->state[5] += f;
+  ctx->state[6] += g;
+  ctx->state[7] += h;
+}
+
+void sha256_init(Sha256 *ctx)
+{
+  ctx->datalen = 0;
+  ctx->bitlen = 0;
+  ctx->state[0] = 0x6a09e667;
+  ctx->state[1] = 0xbb67ae85;
+  ctx->state[2] = 0x3c6ef372;
+  ctx->state[3] = 0xa54ff53a;
+  ctx->state[4] = 0x510e527f;
+  ctx->state[5] = 0x9b05688c;
+  ctx->state[6] = 0x1f83d9ab;
+  ctx->state[7] = 0x5be0cd19;
+}
+
+void sha256_update(Sha256 *ctx, const unsigned char data[], size_t len)
+{
+  for (size_t i = 0; i < len; i++)
+  {
+    ctx->data[ctx->datalen] = data[i];
+    ctx->datalen++;
+    if (ctx->datalen == 64)
+    {
+      sha256_transform(ctx, ctx->data);
+      ctx->bitlen += 512;
+      ctx->datalen = 0;
+    }
+  }
+}
+
+void sha256_final(Sha256 *ctx, unsigned char hash[])
+{
+  unsigned i = ctx->datalen;
+
+  // pad
+  if (ctx->datalen < 56)
+  {
+    ctx->data[i++] = 0x80;
+    while (i < 56)
+      ctx->data[i++] = 0x00;
+  }
+  else
+  {
+    ctx->data[i++] = 0x80;
+    while (i < 64)
+      ctx->data[i++] = 0x00;
+    sha256_transform(ctx, ctx->data);
+    memset(ctx->data, 0, 56);
+  }
+
+  ctx->bitlen += (unsigned long long)(ctx->datalen * 8);
+  ctx->data[63] = (unsigned char)(ctx->bitlen);
+  ctx->data[62] = (unsigned char)(ctx->bitlen >> 8);
+  ctx->data[61] = (unsigned char)(ctx->bitlen >> 16);
+  ctx->data[60] = (unsigned char)(ctx->bitlen >> 24);
+  ctx->data[59] = (unsigned char)(ctx->bitlen >> 32);
+  ctx->data[58] = (unsigned char)(ctx->bitlen >> 40);
+  ctx->data[57] = (unsigned char)(ctx->bitlen >> 48);
+  ctx->data[56] = (unsigned char)(ctx->bitlen >> 56);
+  sha256_transform(ctx, ctx->data);
+
+  for (i = 0; i < 32; i++)
+    hash[i] = (ctx->state[i >> 2] >> (24 - (8 * (i & 3)))) & 0xff;
+}
+
+void hmac_sha256_origin(const unsigned char *key, size_t key_len,
+  const unsigned char *msg, size_t msg_len, unsigned char out[32])
+{
+  unsigned char ipad[64], opad[64], keybuf[64];
+  unsigned char tmp[32];
+
+  memset(keybuf, 0, 64);
+  if (key_len > 64)
+  {
+    Sha256 ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, key, key_len);
+    sha256_final(&ctx, keybuf);
+  }
+  else
+    memcpy(keybuf, key, key_len);
+
+  for (int i = 0; i < 64; i++)
+  {
+    ipad[i] = keybuf[i] ^ 0x36;
+    opad[i] = keybuf[i] ^ 0x5c;
+  }
+
+  Sha256 ctx;
+
+  // inner = sha256(ipad || msg)
+  sha256_init(&ctx);
+  sha256_update(&ctx, ipad, 64);
+  sha256_update(&ctx, msg, msg_len);
+  sha256_final(&ctx, tmp);
+
+  // outer = sha256(opad || inner)
+  sha256_init(&ctx);
+  sha256_update(&ctx, opad, 64);
+  sha256_update(&ctx, tmp, 32);
+  sha256_final(&ctx, out);
+}
+//使用密钥key将消息msg加密为校验码checkCode
+void hmac_sha256(const char *key, const char *msg, char(&checkCode)[65])
+{
+  unsigned char out[32];
+  hmac_sha256_origin((const unsigned char *)key, strlen(key),
+    (const unsigned char *)msg, strlen(msg), out);
+  for (int i = 0; i < 32; i++)
+  {
+    checkCode[2 * i] = hex[out[i] / 16];
+    checkCode[2 * i + 1] = hex[out[i] % 16];
+  }
+  checkCode[64] = 0;
+}
+//生成size字节（2*size位）16进制随机数
+template <size_t size>
+bool GetHexRandom(char *hexRandom)
+{
+  unsigned char buffer[size] = {};
+  hexRandom[2 * size] = 0;
+  NTSTATUS status = BCryptGenRandom(NULL, buffer, size, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+  if (status < 0)
+  {
+    for (int i = 0; i < 2 * size; i++)
+      hexRandom[i] = '0';
+    return false;
+  }
+  for (int i = 0; i < size; i++)
+  {
+    hexRandom[2 * i] = hex[buffer[i] / 16];
+    hexRandom[2 * i + 1] = hex[buffer[i] % 16];
+  }
+  return true;
+}
+char shaKey[65];//SHA密钥（固定的64位随机码）
+//生成SHA密钥
+void GetShaKey()
+{
+  unsigned s1 = 0x1234ABCD;
+  unsigned s2 = 0x9F00FF11;
+  unsigned s3 = 0x00ABCDEF;
+  unsigned seed = (s1 ^ s2) + s3;
+  srand(seed);
+  shaKey[64] = 0;
+  for (int i = 0; i < 64; i++)
+    shaKey[i] = hex[rand() % 16];
+}
+const char monthName[12][4] = {
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+// 将HTTP-date格式转化为time_t
+time_t ParseInternetTime(const char *dateStr)
+{
+  struct tm t = {};
+  char week[4], month[4];
+
+  // 解析 HTTP-date 格式: Wed, 29 Jan 2025 04:30:00 GMT
+  sscanf_s(dateStr, "%3s, %d %3s %d %d:%d:%d",
+    week, (unsigned)sizeof(week),
+    &t.tm_mday,
+    month, (unsigned)sizeof(month),
+    &t.tm_year,
+    &t.tm_hour,
+    &t.tm_min,
+    &t.tm_sec
+  );
+  t.tm_year -= 1900;
+
+  for (int i = 0; i < 12; i++)
+    if (!strcmp(month, monthName[i]))
+      t.tm_mon = i;
+
+  // gmtime 的逆操作：_mkgmtime
+  return _mkgmtime(&t);
+}
+
+// 返回 0 表示失败
+time_t GetInternetTime(const wchar_t *address)
+{
+  time_t utc = 0;
+  DWORD size = 0;
+  wchar_t *dateWstr = nullptr;
+
+  HINTERNET hSession = WinHttpOpen(
+    L"WinHTTP Time Client/1.0",
+    WINHTTP_ACCESS_TYPE_NO_PROXY,
+    WINHTTP_NO_PROXY_NAME,
+    WINHTTP_NO_PROXY_BYPASS,
+    0);
+  if (!hSession)
+    return 0;
+
+  WinHttpSetTimeouts(
+    hSession,
+    3000,   // resolve timeout
+    3000,   // connect timeout
+    3000,   // send timeout
+    3000    // receive timeout
+  );
+
+  // 你可以换成任何可靠网站：比如 cloudflare.com, microsoft.com
+  HINTERNET hConnect = WinHttpConnect(hSession, address, 443, 0);
+  if (!hConnect)
+  {
+    WinHttpCloseHandle(hSession);
+    return 0;
+  }
+
+  HINTERNET hRequest = WinHttpOpenRequest(
+    hConnect,
+    L"HEAD",   // 仅请求 HTTP 头
+    L"/",
+    NULL,
+    WINHTTP_NO_REFERER,
+    WINHTTP_DEFAULT_ACCEPT_TYPES,
+    0);
+  if (!hRequest)
+  {
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return 0;
+  }
+
+  if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, NULL, 0, 0, 0))
+    goto cleanup;
+  if (!WinHttpReceiveResponse(hRequest, NULL))
+    goto cleanup;
+
+  WinHttpQueryHeaders(hRequest,
+    WINHTTP_QUERY_DATE,
+    WINHTTP_HEADER_NAME_BY_INDEX,
+    NULL,
+    &size,
+    WINHTTP_NO_HEADER_INDEX);
+
+  if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+    goto cleanup;
+
+  dateWstr = (wchar_t *)malloc(size);
+  if (!dateWstr)
+    goto cleanup;
+
+  if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_DATE, WINHTTP_HEADER_NAME_BY_INDEX,
+    dateWstr, &size, WINHTTP_NO_HEADER_INDEX))
+  {
+    free(dateWstr);
+    goto cleanup;
+  }
+
+  // 转换为 UTF-8
+  char dateStr[128];
+  WideCharToMultiByte(CP_UTF8, 0, dateWstr, -1, dateStr, sizeof(dateStr), NULL, NULL);
+  free(dateWstr);
+
+  // 解析为时间戳（UTC）
+  utc = ParseInternetTime(dateStr);
+
+cleanup:
+  WinHttpCloseHandle(hRequest);
+  WinHttpCloseHandle(hConnect);
+  WinHttpCloseHandle(hSession);
+  return utc;
+}
+
+time_t GetInternetTime()
+{
+  time_t t = GetInternetTime(L"47.246.28.222");
+  if (!t)
+    t = GetInternetTime(L"47.246.28.223");
+  if (!t)
+    t = GetInternetTime(L"47.246.28.224");
+  if (!t)
+    t = GetInternetTime(L"47.246.28.225");
+  if (!t)
+    t = GetInternetTime(L"cloudflare.com");
+  if (!t)
+    t = GetInternetTime(L"www.aliyun.com");
+  if (!t)
+    t = GetInternetTime(L"www.qq.com");
+  if (!t)
+    t = time(nullptr);
+  return t;
+}
+
+// Base64字符表
+static const char base64Table[] =
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"abcdefghijklmnopqrstuvwxyz"
+"0123456789+/";
+
+// 将二进制数据编码为 Base64（返回动态分配的字符串，需自行 free）
+int StringToBase64(const unsigned char *data, int dataLength, char *base64)
+{
+  //原串以3字节为单位读取，base64以4字节为单位输出
+  int groupNum = (dataLength + 2) / 3;
+  for (int i = 0; i < groupNum; i++)
+  {
+    unsigned oct[3] = {};//3个八位组
+    for (int j = 0; j < 3; j++)
+      oct[j] = 3 * i + j < dataLength ? data[3 * i + j] : 0;
+    unsigned triple = (oct[0] << 16) | (oct[1] << 8) | oct[2];
+    base64[4 * i + 0] = base64Table[(triple >> 18) & 0x3F];
+    base64[4 * i + 1] = base64Table[(triple >> 12) & 0x3F];
+    base64[4 * i + 2] = dataLength < 3 * i + 2 ? '=' : base64Table[(triple >> 6) & 0x3F];
+    base64[4 * i + 3] = dataLength < 3 * i + 3 ? '=' : base64Table[(triple) & 0x3F];
+
+  }
+  base64[groupNum * 4] = '\0';
+  return groupNum * 4;
+}
+
+//将文件转换为Base64 字符串
+int FileToBase64(const char *path, char *base64)
+{
+  FILE *f;
+  if (fopen_s(&f, path, "rb"))
+    return 0;
+
+  //获取文件大小
+  fseek(f, 0, SEEK_END);
+  int fileSize = ftell(f);
+  rewind(f);
+
+  //读取文件内容
+  unsigned char *buffer = (unsigned char *)malloc(fileSize);
+  if (!buffer)
+    return 0;
+  fread(buffer, 1, fileSize, f);
+  fclose(f);
+
+  //编码
+  int base64Length = StringToBase64(buffer, fileSize, base64);
+  free(buffer);
+  return base64Length;
+}
+//从控件的对话框坐标计算资源坐标
+void MapResourceRect(HWND hDlg, RECT rcDlg, RECT &rcResource)
+{
+  memset(&rcResource, 0, sizeof(rcResource));
+  RECT rcMap = {};
+  int *resource = (int *)&rcResource;//资源坐标
+  int *dlg = (int *)&rcDlg;//对话框坐标
+  int *map = (int *)&rcMap;//资源坐标对应的对话框坐标
+  for (int i = 0; i < 4; i++)
+  {
+    int left = 0, right = 1000;
+    while (left <= right)
+    {
+      resource[i] = (left + right) / 2;
+      memcpy(&rcMap, &rcResource, sizeof(rcMap));
+      MapDialogRect(hDlg, &rcMap);
+      if (map[i] >= dlg[i])
+        right = resource[i] - 1;
+      else
+        left = resource[i] + 1;
+    }
+    resource[i] = left;
+  }
+}
+//获取控件的资源坐标
+void GetResourceRect(HWND hDlg, int idControl, RECT &rcResource)
+{
+  HWND hControl = GetDlgItem(hDlg, idControl);
+  RECT rcDlg = {};
+  GetWindowRect(hControl, &rcDlg); //获取控件屏幕坐标
+  MapWindowPoints(NULL, hDlg, (LPPOINT)&rcDlg, 2); //转换为对话框坐标
+  MapResourceRect(hDlg, rcDlg, rcResource);
+}
+// 获取 MAC 地址
+int GetMacAddress(char *macStr, int maxLen)
+{
+  IP_ADAPTER_ADDRESSES *pAddrs = NULL;
+  ULONG size = 0;
+
+  if (GetAdaptersAddresses(AF_UNSPEC, 0, NULL, pAddrs, &size)
+    != ERROR_BUFFER_OVERFLOW)
+    return 0;
+
+  pAddrs = (IP_ADAPTER_ADDRESSES *)malloc(size);
+  if (!pAddrs)
+    return 0;
+
+  if (GetAdaptersAddresses(AF_UNSPEC, 0, NULL, pAddrs, &size) != NO_ERROR)
+  {
+    free(pAddrs);
+    return 0;
+  }
+
+  IP_ADAPTER_ADDRESSES *cur = pAddrs;
+  while (cur)
+  {
+    // 过滤掉虚拟网卡、无MAC的
+    if (cur->PhysicalAddressLength == 6 &&
+      cur->IfType != IF_TYPE_SOFTWARE_LOOPBACK)
+    {
+      sprintf_s(macStr, maxLen,
+        "%02X-%02X-%02X-%02X-%02X-%02X",
+        cur->PhysicalAddress[0],
+        cur->PhysicalAddress[1],
+        cur->PhysicalAddress[2],
+        cur->PhysicalAddress[3],
+        cur->PhysicalAddress[4],
+        cur->PhysicalAddress[5]);
+      free(pAddrs);
+      return 1;
+    }
+    cur = cur->Next;
+  }
+
+  free(pAddrs);
+  return 0;
+}
+
+// 获取 CPU ID
+void GetCpuId(char *cpuIdStr, int maxLen)
+{
+  int cpuInfo[4] = { 0 };
+  __cpuid(cpuInfo, 0);
+
+  sprintf_s(cpuIdStr, maxLen,
+    "%08X%08X%08X%08X",
+    cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
+}
+
+// 获取 MachineGuid（系统 UUID）
+int GetMachineGuid(char *guidStr, int maxLen)
+{
+  HKEY hKey;
+  const char *path = "SOFTWARE\\Microsoft\\Cryptography";
+
+  if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, path, 0, KEY_READ | KEY_WOW64_64KEY, &hKey) != ERROR_SUCCESS)
+    return 0;
+
+  DWORD type = 0;
+  DWORD size = maxLen;
+
+  int ret = RegQueryValueExA(
+    hKey,
+    "MachineGuid",
+    NULL,
+    &type,
+    (LPBYTE)guidStr,
+    &size
+  );
+
+  RegCloseKey(hKey);
+  return (ret == ERROR_SUCCESS);
+}
+//从窗口获取exe路径
+int GetExePathFromWindow(HWND hWnd, char(&exePath)[maxPath])
+{
+  DWORD pid = 0;
+  HANDLE hProcess = NULL;
+  DWORD size = maxPath;
+
+  if (!IsWindow(hWnd))
+    return 0;
+
+  GetWindowThreadProcessId(hWnd, &pid);
+  if (pid == 0)
+    return 0;
+
+  hProcess = OpenProcess(
+    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+    FALSE,
+    pid
+  );
+
+  if (!hProcess)
+    return 0;
+
+  if (!QueryFullProcessImageNameA(hProcess, 0, exePath, &size))
+  {
+    CloseHandle(hProcess);
+    return 0;
+  }
+
+  CloseHandle(hProcess);
+  return 1;
+}
+
+// 内测权限表
+const char alphaHash[][65] = {
+  "3e86009cd7c4836403416d03645b54c266246bf4ecf768a17e169e8e81988736",
+  "38f09a4c9fd325005a8539202b351a45c65612e6374fa01f4fbb5c589be00c98",
+  "b1761160d2ebd31cd85513647bfe314893cce5fd279f7155f807b4918087e0f8",
+  "b5f714ef35c343a26eb57de8d2c0f5b16f86f26bfc60782d9086ebd8692d0ab6",
+  "6e67731ac7c5dd930d901300c647f374c84cf99da3248684b09014f9baad118e",
+  "5bc3b5a4395604baa9a1b15227eaed2ca9c0527381beeac5fcd83fd55d00f623",
+  // 220授权
+  "1ed019e0db83ffea4f6bd694675422ad3ff262bc70ec39f8a918f8ee8544756e",
+  "ded57bb95f9c87b31afa132bc240b63424292ecd5fc54a3af812a39475f7e5b7",
+  "38ee79726f8cc7e825060acf4972b928458b64b837c7e3f30162f9926d4a76d5",
+  "80f07cb9654ed693e96b20f7224ee05028908400a56fe7b44beef50c94248d98",
+  "77b419756e46fb0f941b340d6d82eb519f13a6876368bc658dc39cbae80feffc",
+  "e9e8a0ed9bb5c6663caa2b1a01db0887701528135765f502937beb289d8b455d",
+  // 300授权
+  "5b082555be41812bcd909e9b98ce5fa934ec7b095cd74d36b6824d230644350e"
+};
+// 本机是否拥有内测权限
+bool IsAlphaMode()
+{
+  char mac[64] = {};
+  char cpuId[64] = {};
+  char uuid[128] = {};
+  char totalStr[256] = {};
+  GetMacAddress(mac, sizeof(mac));
+  GetCpuId(cpuId, sizeof(cpuId));
+  GetMachineGuid(uuid, sizeof(uuid));
+  sprintf_s(totalStr, "%s|%s|%s", mac, cpuId, uuid);
+  char hmacHash[65] = {};
+  hmac_sha256(shaKey, totalStr, hmacHash);
+  for (int i = 0; i < sizeof(alphaHash) / sizeof(alphaHash[0]); i++)
+    if (strcmp(hmacHash, alphaHash[i]) == 0)
+      return true;
+  return false;
+}
+
+//居中显示窗口
+void CenterShow(HWND hWnd)
+{
+  if (!IsWindow(hWnd))
+    return;//没有窗口则结束
+  ShowWindow(hWnd, SW_SHOW);//显示窗口
+  RECT rect;
+  GetWindowRect(hWnd, &rect);
+  int wndWidth = rect.right - rect.left;
+  int wndHeight = rect.bottom - rect.top;
+  int scrWidth = GetSystemMetrics(SM_CXFULLSCREEN);
+  int scrHeight = GetSystemMetrics(SM_CYFULLSCREEN);
+  MoveWindow(hWnd, (scrWidth - wndWidth) / 2, (scrHeight - wndHeight * 29 / 30) / 2,
+    wndWidth, wndHeight, true);//窗口回到屏幕并居中
 }
